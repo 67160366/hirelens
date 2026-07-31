@@ -21,8 +21,10 @@ Verified by actually running it, not just by tests:
 | Browser: register → upload Thai PDF → read profile | works; 10/10 claims verified, all exact matches |
 | Browser: same with `FAKE_MODE=hallucinating` | works; 12/13 verified, 7.7% unverifiable, fabricated claim excluded and reported |
 
-**Nothing is committed yet.** Branch `main` has zero commits. Everything described
-here is working-tree only.
+**Committed and pushed.** `main` is on GitHub at
+<https://github.com/67160366/hirelens> and CI is green — the workflow needed one
+fix on its first real run, because `uv pip install --system` is refused on the
+runner's PEP 668 system Python.
 
 ---
 
@@ -170,7 +172,8 @@ API, upload again.
 
 ## 7. Next steps
 
-Three setup items first, in this order — each unblocks real work:
+Two setup items are done: the code is committed and pushed with CI green, and
+the evidence viewer (M2 #8 below) is built. What remains:
 
 1. **Install Docker Desktop**, then `docker compose up -d` and switch
    `DATABASE_URL` in `.env` to the Postgres URL from `.env.example`. Re-run
@@ -184,9 +187,8 @@ Three setup items first, in this order — each unblocks real work:
    reformatted Thai, `response_schema` rejecting the `RawClaim | None` optionals, and
    `max_output_tokens` truncating mid-JSON. Record the hallucination rate you see;
    it is the project's headline number.
-3. **Make the first commit.** Nothing is committed. Suggested split: scaffold +
-   config, then evidence + parse (+ tests), then LLM seam, then API, then web, then
-   CI + docs.
+   The key slot is already in `.env`; only the value and `LLM_PROVIDER` are
+   missing.
 
 Then M2, in dependency order:
 
@@ -199,7 +201,7 @@ Then M2, in dependency order:
 | 5 | DOCX parser | `parse_document_bytes` already dispatches on extension and raises `UnsupportedFileTypeError` |
 | 6 | **Two-column fix** via bbox column detection | Task #11. The xfail test defines "done" |
 | 7 | MinIO storage backend | `build_storage` has the `MINIO` branch stubbed with a clear error |
-| 8 | **PDF viewer with highlighted evidence spans** | The single most valuable UI piece for the portfolio. The API already returns `document_text` plus char offsets so no re-parsing is needed. |
+| 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay on the rendered page is *not* done: it needs bbox geometry, which `ParsedDocument` does not keep, plus an endpoint serving the original file. Do it with #6, which needs the same bbox extraction. |
 
 M3 onward (matching engine, backend depth, frontend, ship) is in the milestone
 plan, which is kept outside this repository.
