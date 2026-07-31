@@ -1,0 +1,139 @@
+"""Tables for M1: a candidate, their uploaded resumes, and what we learned.
+
+Two deliberate shape choices:
+
+*   The verified profile is stored as one JSON document rather than normalized into
+    claim/evidence tables. Its shape is still moving, and M3 introduces
+    requirement-level tables anyway — normalizing twice would be wasted work.
+*   The verification counters are lifted out of that JSON into real columns. Cost
+    and hallucination dashboards should be plain SQL, not JSON path digging.
+"""
+
+from __future__ import annotations
+
+import uuid
+from enum import StrEnum
+from typing import Any
+
+from sqlalchemy import Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import JSON_VARIANT, Base, Timestamps, UUIDPrimaryKey
+
+
+class ResumeStatus(StrEnum):
+    PENDING = "pending"
+    """Stored, not yet parsed."""
+
+    PARSED = "parsed"
+    """Text extracted; extraction not run or not finished."""
+
+    EXTRACTED = "extracted"
+    """A verified profile exists."""
+
+    FAILED = "failed"
+    """Parsing or extraction failed; see `failure_reason`."""
+
+
+class Candidate(UUIDPrimaryKey, Timestamps, Base):
+    __tablename__ = "candidates"
+
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(200))
+    password_hash: Mapped[str | None] = mapped_column(String(200))
+
+    resumes: Mapped[list[Resume]] = relationship(
+        back_populates="candidate", cascade="all, delete-orphan"
+    )
+
+
+class Resume(UUIDPrimaryKey, Timestamps, Base):
+    __tablename__ = "resumes"
+    __table_args__ = (
+        # Re-uploading the same bytes should resolve to the existing row rather
+        # than paying to extract it twice.
+        UniqueConstraint("candidate_id", "content_hash", name="uq_resumes_candidate_content"),
+        Index("ix_resumes_status", "status"),
+    )
+
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    """SHA-256 of the uploaded bytes. Drives dedupe and idempotent re-upload."""
+
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    """Opaque to the app: a filesystem path in M1, an object key once MinIO lands."""
+
+    status: Mapped[ResumeStatus] = mapped_column(
+        Enum(ResumeStatus, native_enum=False, length=20),
+        default=ResumeStatus.PENDING,
+        nullable=False,
+    )
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    pages_without_text: Mapped[list[int] | None] = mapped_column(JSON_VARIANT)
+    """The OCR work list, kept so M2 can retry only the pages that need it."""
+
+    document_text: Mapped[str | None] = mapped_column(Text)
+    """The parsed text. Evidence offsets index into exactly this string, so it has
+    to be stored verbatim — re-parsing later could shift every offset."""
+
+    candidate: Mapped[Candidate] = relationship(back_populates="resumes")
+    profile: Mapped[ExtractedProfileRow | None] = relationship(
+        back_populates="resume", cascade="all, delete-orphan", uselist=False
+    )
+    llm_calls: Mapped[list[LLMCallLog]] = relationship(
+        back_populates="resume", cascade="all, delete-orphan"
+    )
+
+
+class ExtractedProfileRow(UUIDPrimaryKey, Timestamps, Base):
+    __tablename__ = "extracted_profiles"
+
+    resume_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("resumes.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+
+    profile: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    """A serialized `ExtractedProfile`, including its dropped claims."""
+
+    # Lifted out of the JSON so the metrics query is a GROUP BY, not a JSON walk.
+    claims_verified: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claims_dropped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    hallucination_rate: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    resume: Mapped[Resume] = relationship(back_populates="profile")
+
+
+class LLMCallLog(UUIDPrimaryKey, Timestamps, Base):
+    """One row per model call.
+
+    Recorded unconditionally, including for the fake backend, so "cost per
+    application" and "cache hit rate" are measured rather than estimated.
+    """
+
+    __tablename__ = "llm_call_logs"
+    __table_args__ = (Index("ix_llm_call_logs_provider_model", "provider", "model"),)
+
+    resume_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("resumes.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(60), nullable=False)
+    """Which prompt produced this row — otherwise comparing prompt revisions is guesswork."""
+
+    attempt: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    """Null when the provider's price is unknown — never a misleading zero."""
+
+    resume: Mapped[Resume | None] = relationship(back_populates="llm_calls")
