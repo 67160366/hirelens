@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { DocumentPane, EvidenceSelectionProvider } from "@/components/DocumentPane";
 import { ProfileView } from "@/components/ProfileView";
 import { ApiError, api, type ProfileResponse } from "@/lib/api";
 
@@ -126,7 +127,7 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-5 py-12">
+    <main className="mx-auto max-w-6xl px-5 py-12">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">HireLens</h1>
         <p className="mt-1.5 max-w-xl text-sm text-stone-600 dark:text-stone-400">
@@ -178,7 +179,19 @@ export default function Home() {
             </p>
           )}
 
-          {result && <ProfileView resume={result.resume} profile={result.profile} />}
+          {/* The document pane only appears when there is text to point into. A
+              failed parse has no offsets, so citations stay non-interactive. */}
+          {result &&
+            (result.document_text ? (
+              <EvidenceSelectionProvider>
+                <div className="grid items-start gap-5 lg:grid-cols-2">
+                  <ProfileView resume={result.resume} profile={result.profile} />
+                  <DocumentPane text={result.document_text} profile={result.profile} />
+                </div>
+              </EvidenceSelectionProvider>
+            ) : (
+              <ProfileView resume={result.resume} profile={result.profile} />
+            ))}
         </div>
       )}
     </main>
