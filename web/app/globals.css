@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "IBM Plex Sans Thai", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+/* A quote lifted verbatim from the source document. Styled distinctly everywhere
+   it appears so a reader can always tell the difference between what the model
+   concluded and what the document actually says. */
+.evidence-quote {
+  @apply font-mono text-xs leading-relaxed;
+}
