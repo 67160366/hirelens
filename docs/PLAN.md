@@ -26,11 +26,12 @@ should review them before anyone treats the details as commitments.
   `docker compose up -d`, point `DATABASE_URL` at Postgres, `alembic upgrade head`,
   and verify the JSONB path on real Postgres — tests only prove the SQLite variant.
 - [x] Gemini API key obtained (slot filled in `.env`).
-- [ ] **First live Gemini run** over every fixture via `python -m app.cli`; record
-  the observed hallucination rate — it is the project's headline number. Expect the
-  first real run to surface problems the fake cannot: Thai reformatted so quotes
-  fail verification, `response_schema` rejecting `RawClaim | None` optionals,
-  `max_output_tokens` truncating mid-JSON.
+- [x] **First live Gemini run** (2026-08-06) over every fixture via
+  `python -m app.cli` — results and the two adapter fixes it forced
+  (`gemini-2.5-flash` is 404 for new keys → `gemini-3.6-flash`;
+  `response_schema` → `response_json_schema`) are recorded in
+  `docs/llm-providers.md`. Headline: 0% final hallucination rate, every match
+  tier-1 exact including Thai; the two-column fixture needed the retry loop.
 
 ## M2 — in dependency order (from HANDOFF §7)
 

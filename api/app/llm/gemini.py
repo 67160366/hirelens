@@ -18,6 +18,7 @@ from typing import ClassVar
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+from pydantic import ValidationError
 
 from app.llm.base import (
     LLMConfigError,
@@ -35,9 +36,13 @@ from app.llm.base import (
 # rates — a wrong price here silently corrupts the cost dashboard.
 FREE_TIER = TokenPrice(input_usd=0.0, output_usd=0.0, cached_input_usd=0.0)
 _PRICES: dict[str, TokenPrice] = {
+    # The 2.5 line is closed to new API keys (404 as of 2026-08); kept priced
+    # for keys that still carry access.
     "gemini-2.5-flash": FREE_TIER,
     "gemini-2.5-flash-lite": FREE_TIER,
     "gemini-2.5-pro": FREE_TIER,
+    "gemini-3.5-flash": FREE_TIER,
+    "gemini-3.6-flash": FREE_TIER,
 }
 
 
@@ -48,7 +53,7 @@ class GeminiExtractor(StructuredExtractor):
         self,
         *,
         api_key: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.6-flash",
         thinking_budget: int | None = None,
         max_output_tokens: int | None = None,
         timeout_seconds: float = 120.0,
@@ -81,7 +86,12 @@ class GeminiExtractor(StructuredExtractor):
         config = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
-            response_schema=schema,
+            # Not `response_schema=schema`: the SDK renders `extra="forbid"` as
+            # `additionalProperties`, which the Developer API rejects with a 400.
+            # `response_json_schema` takes the standard JSON Schema unchanged;
+            # the trade-off is that the SDK no longer parses the reply, so
+            # validation happens explicitly below.
+            response_json_schema=schema.model_json_schema(),
             max_output_tokens=self._max_output_tokens,
             thinking_config=(
                 types.ThinkingConfig(thinking_budget=self._thinking_budget)
@@ -105,17 +115,20 @@ class GeminiExtractor(StructuredExtractor):
             raise LLMUnavailableError(f"Gemini call failed: {exc}") from exc
         latency_ms = int((time.perf_counter() - started) * 1000)
 
-        parsed = response.parsed
-        if not isinstance(parsed, schema):
+        raw_text = response.text or ""
+        try:
+            parsed = schema.model_validate_json(raw_text)
+        except ValidationError as exc:
             # Happens when the model is cut off mid-JSON, or a safety filter fires.
             raise LLMResponseError(
-                f"Gemini did not return a valid {schema.__name__}; got {type(parsed).__name__}"
-            )
+                f"Gemini did not return a valid {schema.__name__}: "
+                f"{exc.error_count()} validation error(s)"
+            ) from exc
 
         return StructuredResult(
             value=parsed,
             usage=self._usage(response, latency_ms),
-            raw_text=response.text or "",
+            raw_text=raw_text,
         )
 
     def _usage(self, response: types.GenerateContentResponse, latency_ms: int) -> LLMUsage:

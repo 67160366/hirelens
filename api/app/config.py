@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     fake_mode: FakeMode = FakeMode.FAITHFUL
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5"

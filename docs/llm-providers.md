@@ -30,7 +30,7 @@ waiting for a real model to misbehave.
 
 ## `gemini`
 
-Uses `gemini-2.5-flash` through the [google-genai](https://github.com/googleapis/python-genai)
+Uses `gemini-3.6-flash` through the [google-genai](https://github.com/googleapis/python-genai)
 SDK. Get a key at <https://aistudio.google.com/apikey> — no card required.
 
 ```bash
@@ -39,17 +39,55 @@ GEMINI_API_KEY=...
 ```
 
 Chosen as the default real provider because the free tier is enough to develop and
-demo against, it accepts a Pydantic model directly as `response_schema` (so one
-schema drives every backend), and its 1M-token context swallows a long resume
-without chunking.
+demo against, and its long context swallows a resume without chunking.
 
-Note that thinking tokens are billed as output on Gemini 2.5, so
+Two things the first live run taught us (2026-08-06), now baked into the adapter:
+
+- **Model turnover is real.** `gemini-2.5-flash` — the original choice — returns
+  `404 "no longer available to new users"` for API keys created after mid-2026.
+  The adapter defaults to `gemini-3.6-flash`; if a model 404s, list what your key
+  can use with `client.models.list()`.
+- **`response_schema` rejects our Pydantic models.** The SDK renders
+  `extra="forbid"` as `additionalProperties`, which the Developer API refuses with
+  a 400. The adapter therefore sends `response_json_schema` (the plain JSON Schema
+  from `model_json_schema()`) and validates the reply with Pydantic itself.
+
+Note that thinking tokens are billed as output on Gemini, so
 `thoughts_token_count` is folded into `output_tokens` when recording usage —
 otherwise cost-per-document reads low for exactly the calls that cost most.
 
 Prices in [`api/app/llm/gemini.py`](../api/app/llm/gemini.py) are zero, reflecting
 the free tier. **If you move to a paid tier, update them** — a stale price silently
 corrupts the cost figures.
+
+### First live run — `gemini-3.6-flash` over every fixture (2026-08-06)
+
+Via `python -m app.cli`, one run per fixture:
+
+| Fixture | Verified | Hallucination rate | Attempts | Latency | Match kinds |
+|---|---|---|---|---|---|
+| `resume_th.pdf` | 10/10 | 0.0% | 1 | ~9.0 s | exact ×10 |
+| `resume_en.pdf` | 12/12 | 0.0% | 1 | ~7.5 s | exact ×12 |
+| `resume_two_column.pdf` | 7/7 | 0.0% | 2 | ~21.4 s | exact ×7 |
+| `resume_mixed_scan.pdf` | 4/4 | 0.0% | 1 | ~5.5 s | exact ×4 |
+| `resume_multipage.pdf` | 0/0 | — | 1 | ~3.5 s | (correctly empty — the fixture is a page-marker document, not a resume) |
+
+Observations worth keeping:
+
+- **Final hallucination rate 0% across the board**, and every verified quote was a
+  tier-1 exact match — including all the Thai. The feared failure modes (Thai
+  reformatting breaking verification, `RawClaim | None` rejected by the schema
+  path, mid-JSON truncation) did not appear on these documents.
+- **The two-column fixture needed the retry loop**: the first attempt cited quotes
+  that did not verify against the interleaved text, and the second attempt
+  recovered to 7/7. The guardrail and the retry both earned their keep on the
+  exact document class M2's column detection targets.
+- The multipage fixture extracting to nothing is the honest result — the model
+  declined to invent a candidate from a project list.
+- Cost recorded: $0.000000 per document (free tier).
+
+These are single runs over synthetic fixtures — a smoke signal, not the M6
+evaluation.
 
 ## Cost, if you were to use Claude instead
 

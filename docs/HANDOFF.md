@@ -146,7 +146,7 @@ even without an editable install.
 |---|---|
 | Database | **SQLite** at `api/var/dev.db` (`.env` → `DATABASE_URL`). Postgres not used yet. |
 | Docker | **Not installed.** `docker-compose.yml` is written and ready. |
-| LLM provider | **`fake`.** No Gemini key has been used yet — the real provider path is written but has never made a live call. |
+| LLM provider | **`gemini`** (`gemini-3.6-flash`) in `.env`; live-verified against every fixture on 2026-08-06 — see `docs/llm-providers.md`. Tests and CI still run on `fake`. |
 | Storage | Local filesystem at `var/uploads` |
 
 ### Start it

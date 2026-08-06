@@ -183,7 +183,7 @@ tests do not depend on a Thai-capable system font being installed.
 ## Tests
 
 ```bash
-cd api && pytest -q            # 111 tests, no database or API key needed
+cd api && pytest -q            # 130 tests, no database or API key needed
 cd web && npm run typecheck
 ```
 
