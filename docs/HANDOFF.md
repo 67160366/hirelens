@@ -62,7 +62,7 @@ Roughly 30 minutes to get oriented.
 | 7 | `api/app/llm/fake.py` | Load-bearing infrastructure, not a stub — read before touching the provider seam |
 | 8 | `api/app/services/resume_service.py` | Where storage, parsing, extraction and persistence meet |
 | 9 | `docs/llm-providers.md` | Provider choice, `FAKE_MODE`, real cost figures |
-| 10 | The plan file (see §7) | Milestones M2–M6 and the reasoning behind the scope calls |
+| 10 | `docs/PLAN.md` | Milestones M2–M6 and the reasoning behind the scope calls |
 
 Skim only when needed: `api/app/api/routes/*`, `api/app/security.py`,
 `api/app/storage.py`, `web/*`.
@@ -92,7 +92,7 @@ api/app/
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
   app/page.tsx         auth + upload + result
-  components/Evidence.tsx, ProfileView.tsx
+  components/Evidence.tsx, ProfileView.tsx, DocumentPane.tsx (citation highlighting)
 ```
 
 Design decisions worth not re-litigating:
@@ -203,8 +203,8 @@ Then M2, in dependency order:
 | 7 | MinIO storage backend | `build_storage` has the `MINIO` branch stubbed with a clear error |
 | 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay on the rendered page is *not* done: it needs bbox geometry, which `ParsedDocument` does not keep, plus an endpoint serving the original file. Do it with #6, which needs the same bbox extraction. |
 
-M3 onward (matching engine, backend depth, frontend, ship) is in the milestone
-plan, which is kept outside this repository.
+M3 onward (matching engine, backend depth, frontend, ship) is in
+[`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.
 
 ---
 

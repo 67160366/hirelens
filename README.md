@@ -3,8 +3,9 @@
 Resume screening where **every claim the system makes cites the exact text it came
 from** — and anything it cannot cite is dropped and reported rather than shown.
 
-Built from the HR Tech user journey (#19) in `userjourneysthailand.md.pdf`, whose
-pain points name the problem directly: *"เรซูเม่ไม่ผ่านการคัดกรองอัตโนมัติ (ATS)
+Built from the HR Tech user journey (#19) in `userjourneysthailand.md.pdf` — a
+source document kept out of the repository (it may contain third-party content),
+so a fresh clone will not have it. Its pain points name the problem directly: *"เรซูเม่ไม่ผ่านการคัดกรองอัตโนมัติ (ATS)
 โดยไม่รู้สาเหตุ"* — candidates rejected by automated screening with no explanation.
 
 Handles Thai and English resumes.
@@ -51,7 +52,8 @@ to the source.
 | M5 | Full recruiter UI, observability, deploy |
 
 Picking the project up after a break: **[docs/HANDOFF.md](docs/HANDOFF.md)** — what
-exists, which files to read in what order, and what to do next.
+exists, which files to read in what order, and what to do next. The full milestone
+plan with per-item status lives in [docs/PLAN.md](docs/PLAN.md).
 
 ---
 
@@ -72,6 +74,9 @@ cd ../web
 npm install
 npm run dev                   # http://localhost:3000
 ```
+
+The web app expects the API at `http://localhost:8000`; if it lives elsewhere,
+`cp web/.env.local.example web/.env.local` and set `NEXT_PUBLIC_API_BASE`.
 
 For Postgres, Redis and MinIO instead of SQLite and the local filesystem:
 
