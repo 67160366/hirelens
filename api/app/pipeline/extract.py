@@ -15,6 +15,7 @@ something unverifiable.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from app.llm.base import LLMUsage, StructuredExtractor
@@ -40,6 +41,8 @@ from app.schemas.profile import (
     Experience,
     ExtractedProfile,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -212,6 +215,13 @@ async def extract_profile(
         usages.append(result.usage)
 
         candidate = _Verifier(document).verify(result.value, attempts=attempt)
+        logger.debug(
+            "extraction attempt %d/%d: %d verified, %d dropped",
+            attempt,
+            max_attempts,
+            candidate.stats.verified,
+            candidate.stats.dropped,
+        )
 
         if best is None or candidate.stats.dropped < best.stats.dropped:
             best = candidate

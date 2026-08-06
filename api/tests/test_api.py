@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
+from app.api.routes.resumes import MAX_UPLOAD_BYTES
 from app.llm.fake import FakeMode
 from app.models import ResumeStatus
 from tests.conftest import resume_upload
@@ -86,6 +87,33 @@ class TestAuth:
         assert response.status_code == 200
         assert response.json()["email"] == "candidate@example.com"
 
+    async def test_refresh_rotates_the_token_pair(self, client: AsyncClient):
+        registered = await client.post(
+            "/auth/register", json={"email": "fresh@example.com", "password": "a-good-password"}
+        )
+        pair = registered.json()
+
+        response = await client.post("/auth/refresh", json={"refresh_token": pair["refresh_token"]})
+        assert response.status_code == 200
+        rotated = response.json()
+        assert rotated["refresh_token"] != pair["refresh_token"]
+
+        client.headers["Authorization"] = f"Bearer {rotated['access_token']}"
+        assert (await client.get("/auth/me")).status_code == 200
+
+    async def test_an_access_token_is_not_accepted_for_refresh(self, client: AsyncClient):
+        registered = await client.post(
+            "/auth/register", json={"email": "mixed-up@example.com", "password": "a-good-password"}
+        )
+        response = await client.post(
+            "/auth/refresh", json={"refresh_token": registered.json()["access_token"]}
+        )
+        assert response.status_code == 401
+
+    async def test_refresh_rejects_a_forged_token(self, client: AsyncClient):
+        response = await client.post("/auth/refresh", json={"refresh_token": "not.a.token"})
+        assert response.status_code == 401
+
 
 class TestUpload:
     async def test_upload_requires_auth(self, client: AsyncClient):
@@ -134,8 +162,24 @@ class TestUpload:
         assert body["status"] == ResumeStatus.FAILED
         assert "OCR" in body["failure_reason"]
 
-    async def test_corrupt_pdf_fails_with_an_explanation(self, authed_client: AsyncClient):
+    async def test_a_disguised_non_pdf_is_rejected_by_magic_bytes(self, authed_client: AsyncClient):
+        """The extension is caller-chosen; the first bytes are not."""
         response = await authed_client.post("/resumes", files=resume_upload("not_a_pdf.pdf"))
+        assert response.status_code == 415
+
+    async def test_an_oversized_upload_is_rejected(self, authed_client: AsyncClient):
+        big = b"%PDF-1.7\n" + b"0" * MAX_UPLOAD_BYTES
+        response = await authed_client.post(
+            "/resumes", files={"file": ("resume.pdf", big, "application/pdf")}
+        )
+        assert response.status_code == 413
+
+    async def test_corrupt_pdf_fails_with_an_explanation(self, authed_client: AsyncClient):
+        """Right magic bytes, garbage body: passes the gate, fails the parser."""
+        corrupt = b"%PDF-1.7\n" + b"this is not a real pdf body " * 4
+        response = await authed_client.post(
+            "/resumes", files={"file": ("resume.pdf", corrupt, "application/pdf")}
+        )
         assert response.json()["status"] == ResumeStatus.FAILED
 
     async def test_partial_scan_reports_the_pages_needing_ocr(self, authed_client: AsyncClient):

@@ -13,7 +13,15 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CandidateDep, SessionDep, SettingsDep
 from app.models import Candidate
-from app.security import create_access_token, create_refresh_token, hash_password, verify_password
+from app.security import (
+    TOKEN_TYPE_REFRESH,
+    AuthError,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -33,6 +41,10 @@ class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class CandidateOut(BaseModel):
@@ -80,6 +92,33 @@ async def login(payload: LoginRequest, session: SessionDep, settings: SettingsDe
         raise invalid
     if not verify_password(payload.password, candidate.password_hash):
         raise invalid
+
+    return TokenPair(
+        access_token=create_access_token(settings, candidate.id),
+        refresh_token=create_refresh_token(settings, candidate.id),
+    )
+
+
+@router.post("/refresh", response_model=TokenPair)
+async def refresh(payload: RefreshRequest, session: SessionDep, settings: SettingsDep) -> TokenPair:
+    """Trade a refresh token for a fresh pair.
+
+    The refresh token is rotated on every use; `decode_token` enforces the type,
+    so an access token presented here is rejected just as a refresh token is on
+    protected routes.
+    """
+    try:
+        subject = decode_token(settings, payload.refresh_token, expected_type=TOKEN_TYPE_REFRESH)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
+        ) from exc
+
+    candidate = await session.get(Candidate, subject)
+    if candidate is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
+        )
 
     return TokenPair(
         access_token=create_access_token(settings, candidate.id),

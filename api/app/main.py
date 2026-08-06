@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -13,17 +14,29 @@ from app.config import get_settings
 from app.llm.registry import build_extractor
 from app.storage import build_storage
 
+logger = logging.getLogger(__name__)
+
 # The dev-time Next.js origin. Tighten this before deploying.
 ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+
+def configure_logging() -> None:
+    """One root handler at INFO. Resumes are PII: log ids and counts, never text."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Build the storage and extraction backends once, not per request."""
+    configure_logging()
     settings = get_settings()
     app.state.settings = settings
     app.state.storage = build_storage(settings)
     app.state.extractor = build_extractor(settings)
+    logger.info("started: provider=%s storage=%s", settings.llm_provider, settings.storage_backend)
     try:
         yield
     finally:

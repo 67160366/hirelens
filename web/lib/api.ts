@@ -151,6 +151,13 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
 
+  refresh: (refreshToken: string) =>
+    request<TokenPair>("/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }),
+
   uploadResume: (file: File, token: string) => {
     const form = new FormData();
     form.append("file", file);

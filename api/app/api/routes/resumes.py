@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -18,6 +18,10 @@ router = APIRouter(prefix="/resumes", tags=["resumes"])
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_SUFFIXES = {".pdf"}
+# Slack for multipart boundaries and headers when judging Content-Length.
+MULTIPART_OVERHEAD_BYTES = 4 * 1024
+# Every real PDF starts with this; the extension check alone accepts any bytes.
+PDF_MAGIC = b"%PDF-"
 
 
 class ResumeOut(BaseModel):
@@ -57,6 +61,7 @@ async def upload_resume(
     settings: SettingsDep,
     storage: StorageDep,
     extractor: ExtractorDep,
+    request: Request,
     response: Response,
     file: Annotated[UploadFile, File(description="A PDF resume.")],
 ) -> ResumeOut:
@@ -65,6 +70,20 @@ async def upload_resume(
     Idempotent on file content: re-uploading the same bytes returns the existing
     resource with 200 rather than creating a duplicate or re-billing extraction.
     """
+    too_large = HTTPException(
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+        detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+    )
+    # Judge the declared size before buffering the body into memory. The
+    # post-read length check below stays as the authoritative backstop.
+    declared_size = request.headers.get("content-length")
+    if (
+        declared_size is not None
+        and declared_size.isdigit()
+        and int(declared_size) > MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES
+    ):
+        raise too_large
+
     filename = file.filename or "resume.pdf"
     suffix = filename[filename.rfind(".") :].lower() if "." in filename else ""
     if suffix not in ALLOWED_SUFFIXES:
@@ -79,9 +98,13 @@ async def upload_resume(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty"
         )
     if len(data) > MAX_UPLOAD_BYTES:
+        raise too_large
+    # The suffix is caller-chosen; the magic bytes are not. Anything that is not
+    # a PDF fails parsing anyway, so reject it before storing and billing.
+    if not data.startswith(PDF_MAGIC):
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="File is not a valid PDF",
         )
 
     result = await resume_service.ingest_resume(

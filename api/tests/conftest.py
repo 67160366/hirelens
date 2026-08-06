@@ -28,7 +28,10 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
+    # _env_file=None keeps the suite hermetic: whatever provider or key the
+    # developer's .env selects must not change what the tests exercise.
     return Settings(
+        _env_file=None,
         jwt_secret="test-secret-not-used-anywhere-real",
         storage_dir=tmp_path / "uploads",
         extraction_max_attempts=2,

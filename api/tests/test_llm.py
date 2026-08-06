@@ -169,7 +169,9 @@ class TestFakeExtractorFailureModes:
 
 class TestRegistry:
     def test_fake_is_the_default_provider(self):
-        extractor = build_extractor(Settings())
+        # _env_file=None: the developer's .env may select a real provider; the
+        # test is about the built-in default, not this machine's configuration.
+        extractor = build_extractor(Settings(_env_file=None))
         assert extractor.provider_name == "fake"
 
     def test_gemini_without_a_key_fails_loudly_with_a_next_step(self):
