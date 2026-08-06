@@ -1,6 +1,9 @@
-# Handoff — end of M1
+# Handoff
 
-Written 2026-07-30. Read this first when picking the project back up.
+Written 2026-07-30 at the end of M1; updated 2026-08-06 after the hardening pass
+and the first live Gemini runs. Read this first when picking the project back up —
+then `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item
+milestone status.
 
 ---
 
@@ -14,17 +17,43 @@ Verified by actually running it, not just by tests:
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 111 passed, 1 xfailed (the xfail is deliberate — see §5) |
+| `pytest -q` | 130 passed, 1 xfailed (the xfail is deliberate — see §5) |
 | `ruff check` / `ruff format --check` | clean |
 | `mypy app` (strict) | clean, 31 files |
 | Alembic `upgrade head` → `downgrade base` | round-trips |
 | Browser: register → upload Thai PDF → read profile | works; 10/10 claims verified, all exact matches |
 | Browser: same with `FAKE_MODE=hallucinating` | works; 12/13 verified, 7.7% unverifiable, fabricated claim excluded and reported |
+| CLI with `LLM_PROVIDER=gemini`, every fixture | 0% final hallucination rate, all matches tier-1 exact incl. Thai (2026-08-06 — see `docs/llm-providers.md`) |
 
 **Committed and pushed.** `main` is on GitHub at
 <https://github.com/67160366/hirelens> and CI is green — the workflow needed one
 fix on its first real run, because `uv pip install --system` is refused on the
 runner's PEP 668 system Python.
+
+### Updated 2026-08-06 — what changed since the M1 handoff
+
+- **Agent guidance now exists.** `CLAUDE.md` holds the rules, commands, and
+  working style; `docs/PLAN.md` holds M1–M6 with per-item status (**M3–M6 are a
+  draft awaiting the owner's review**); `.claude/settings.json` allowlists the
+  routine check commands.
+- **A hardening pass over the M1 seams**, each behaviour pinned by a test:
+  logging throughout (ids and counters only — never document text), the
+  duplicate-upload race resolves to the winner's row instead of a 500, a failed
+  ingest deletes the blob it wrote, uploads are judged by `Content-Length` and
+  `%PDF-` magic bytes, the API refuses to boot on the placeholder JWT secret
+  outside `APP_ENV=dev`, and `POST /auth/refresh` rotates the token pair with the
+  web client retrying once on 401 before signing out.
+- **Dependencies are locked**: `api/uv.lock`, installed with `uv sync --locked`
+  in CI, so builds stop resolving a fresh tree per run.
+- **Gemini ran live for the first time** and broke exactly where §7 predicted:
+  `gemini-2.5-flash` is 404 for keys created after mid-2026 (the default is now
+  `gemini-3.6-flash`), and `response_schema` rejects the `additionalProperties`
+  that `extra="forbid"` generates (the adapter now sends `response_json_schema`
+  and validates the reply with Pydantic itself). Results and observations are in
+  `docs/llm-providers.md`; the adapter contract is pinned by mocked tests in
+  `api/tests/test_gemini.py`.
+- The suite is hermetic against the developer's `.env` (which now selects the
+  real provider) and grew from 111 to 130 tests.
 
 ---
 
@@ -172,25 +201,18 @@ API, upload again.
 
 ## 7. Next steps
 
-Two setup items are done: the code is committed and pushed with CI green, and
-the evidence viewer (M2 #8 below) is built. What remains:
+Three setup items are done: the code is pushed with CI green, the evidence
+viewer (M2 #8 below) is built, and the first live Gemini run happened on
+2026-08-06 — it surfaced two adapter problems, both fixed (see §1 and
+`docs/llm-providers.md`). One remains:
 
 1. **Install Docker Desktop**, then `docker compose up -d` and switch
    `DATABASE_URL` in `.env` to the Postgres URL from `.env.example`. Re-run
    `alembic upgrade head`. This is worth doing before M2 because the worker needs
    Redis and OCR output belongs in MinIO. Verify the JSONB path works on real
    Postgres — the tests only prove the SQLite variant.
-2. **Get a Gemini API key** (<https://aistudio.google.com/apikey>, free, no card),
-   set `LLM_PROVIDER=gemini`, and run the CLI against every fixture. **Expect the
-   first real run to surface problems the fake cannot** — that is the point of doing
-   it early. Watch specifically for: quotes that fail verification because the model
-   reformatted Thai, `response_schema` rejecting the `RawClaim | None` optionals, and
-   `max_output_tokens` truncating mid-JSON. Record the hallucination rate you see;
-   it is the project's headline number.
-   The key slot is already in `.env`; only the value and `LLM_PROVIDER` are
-   missing.
 
-Then M2, in dependency order:
+Then M2, in dependency order (live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
