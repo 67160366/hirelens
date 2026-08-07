@@ -377,6 +377,20 @@ Python's `site` module reads `.pth` files using the system codepage, hit byte
 was moved to `D:\work\webapp_dev` and the problem is gone. Do not move it back
 under a non-ASCII path, and prefer ASCII paths for anything Docker bind-mounts.
 
+**Binary fixtures must stay binary.** `core.autocrlf=true` is the Git-for-Windows
+default, and until 2026-08-08 this repo had no `.gitattributes`. Git guessed the PDF
+fixtures were text and rewrote `0x0A` inside their compressed streams on checkout,
+so `resume_scanned.pdf` arrived 35293 bytes instead of 35214, its xref offsets no
+longer pointed anywhere real, and `test_image_only_pdf_reports_a_scan` failed on a
+clone where nothing was wrong with the code. That made "`git clone && pytest -q`
+works" false on a default Windows install. `.gitattributes` now marks `*.pdf`,
+`*.docx` and the image types `binary` — **do not remove those lines, and add a line
+for any new binary fixture type**.
+
+If you ever suspect this has happened, **compare file sizes, not hashes**:
+`git hash-object` re-normalizes while hashing and will report a corrupted file as
+identical to the blob.
+
 `api/pyproject.toml` sets `pythonpath = ["."]` for pytest, so the suite works
 without an editable install at all.
 
@@ -483,6 +497,13 @@ M3 onward (matching engine, backend depth, frontend, ship) is in
   only. `test_resume_service.py` pins this, and the storage key counts too — it
   embeds the candidate id and the file's content hash.
 - **`ruff format` is enforced in CI.** Run it before pushing.
+- **Before believing a live run, prove you are testing what you built.** Three things
+  have each caused a wrong conclusion here: a zombie server on the old port serving
+  old code, a *second* ARQ worker left running from an earlier session quietly taking
+  the job (2026-08-08 — the giveaway was the old wording in `failure_reason`), and a
+  dev server on a port the API's CORS list did not allow. Check the route exists
+  (`curl /openapi.json | grep <new-field>`) and that nothing else is polling the
+  queue.
 - **Test data is synthetic and must stay that way.** No real person's resume goes in
   this repo. Regenerate fixtures with `python api/tests/fixtures/generate.py`
   (needs a Thai-capable font locally; the generated PDFs are committed so CI does

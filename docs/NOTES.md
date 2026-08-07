@@ -6,137 +6,203 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-08 (later) — M2 #4: a scan is no longer a dead end
+## 2026-08-08 (later) — M2 #4 and #5, plus a repo bug that had been there all along
+
+Six commits, none pushed. A scan and a `.docx` are both readable now, and M2 has
+only the two-column fix and MinIO left.
+
+| | Commit |
+|---|---|
+| `23b3d1e` | Recover scanned pages with OCR before offsets are measured |
+| `1a7f9b8` | Make the CORS allowlist a setting and drop the dead workers package |
+| `82bc00a` | Pin the SSE frame parser with vitest |
+| `f3d5348` | Normalize OCR line endings, and measure where OCR actually breaks |
+| `e5bfaa3` | Mark binary fixtures binary, so a fresh clone can still read them |
+| `4433c7d` | Read .docx resumes, tables included |
+
+Suite: **173 → 209 passing** (12 skipped: 4 Postgres + 8 Tesseract, both opt-in),
+1 xfail still deliberate. `web/` went from **no tests at all to 9**.
+
+---
 
 ### What was done
 
-`OCR_ENGINE=tesseract` turns a scanned resume from a permanent `failed` into a
-normal, fully cited profile. Tesseract 5.5.3 was installed this session with
-`eng`, `tha` and `osd`.
+**M2 #4 — OCR.** `OCR_ENGINE=tesseract` turns a scanned resume from a permanent
+`failed` into a normal, fully cited profile. Tesseract 5.5.3 installed this session
+with `eng`, `tha`, `osd`.
 
-- **`app/pipeline/ocr.py`** is the seam: an `OCREngine` ABC, `TesseractEngine`
-  driven over stdin/stdout, and `build_ocr_engine`. Subprocess rather than a
-  wrapper library — no new Python dependency, and the page image never touches
-  disk, which matters because it is a picture of somebody's resume.
-- **`parse.py` substitutes recognized text before `_assemble` measures spans.**
-  That single decision is why nothing downstream changed: evidence offsets, page
-  mapping and `DocumentPane` highlighting all kept working untouched. Same move as
-  the NUL strip from the §11 incident.
-- **Off by default** (`OCR_ENGINE=none`), so CI and a fresh clone are exactly as
-  they were. The suite drives the whole path through a stub engine;
-  `tests/test_ocr_tesseract.py` is opt-in on `OCR_TESSERACT_CMD`, in the shape of
-  `tests/test_postgres.py`.
-- **`pages_from_ocr`** is recorded on the resume (migration `0003`), returned by the
-  API and surfaced in `ProfileView`, because a citation into an OCR'd page is
-  faithful to what was *read*, not to what was printed.
-- Suite grew 173 → 188 (`tests/test_ocr.py`), plus 6 opt-in. All gates green,
-  including `tests/test_postgres.py` and the migration round-trip on real Postgres.
+- `app/pipeline/ocr.py` is the seam: an `OCREngine` ABC, `TesseractEngine` driven
+  over stdin/stdout, and `build_ocr_engine`. A subprocess rather than a wrapper
+  library — no new Python dependency, and the page image never touches disk, which
+  matters because it is a picture of somebody's resume.
+- **`parse.py` substitutes recognized text before `_assemble` measures spans.** That
+  one decision is why nothing downstream changed: evidence offsets, page mapping and
+  `DocumentPane` highlighting all kept working untouched. Same move as the NUL strip
+  from the §11 incident.
+- Off by default, so CI and a fresh clone are unchanged. The suite drives the whole
+  path through a stub engine; `tests/test_ocr_tesseract.py` is opt-in on
+  `OCR_TESSERACT_CMD`, shaped like `tests/test_postgres.py`.
+- `pages_from_ocr` on the resume (migration `0003`), in the API, and in the UI —
+  because a citation into an OCR'd page is faithful to what was *read*, not to what
+  was printed.
+
+**M2 #5 — DOCX.** `parse_docx` reads paragraphs *and tables* in document order.
+Tables are the whole point: `document.paragraphs` skips anything inside one, and
+resumes routinely put skills in a table, so the loss would have looked like a model
+that missed them. A `.docx` has no pages — Word decides that at render time — so it
+is reported as one page rather than having numbers invented for it. The upload gate
+now holds a signature per type (`%PDF-`, and `PK\x03\x04` for the zip a .docx is).
+
+**Two items off the long-standing list**, both because they stopped being cosmetic:
+`CORS_ORIGINS` is a setting now (it was blocking the browser check), the empty
+`app/workers/` package is gone, and vitest pins `readFrames` with nine cases wired
+into CI.
 
 ### Verified live, not only by tests
 
-Against Postgres + ARQ + real Gemini, on a fresh port:
+- **`resume_scanned.pdf`** through Postgres + ARQ + real Gemini: `pending` →
+  `processing` → `extracted` in 5.7 s with `pages_from_ocr=[1]`. 7/7 verified,
+  0 dropped, every match tier-1 exact, all 7 spans slicing back out of the stored
+  text. **Three skills were cited straight out of the Thai OCR line**
+  `ทักษะ: Python, FastAPI, PostgreSQL`.
+- **`resume_mixed_scan.pdf`**: page 1 kept its text layer, page 2 came from the
+  image, 5/5 verified.
+- **In a browser** at :3002 — the amber banner reads "Page 1 had no text layer and
+  was read by OCR. Quotes from it match what was recognized, which may differ from
+  what was printed", `7/7 claims verified`, and the document pane carries six
+  highlights over the recognized text, two inside the Thai line.
+- **`resume_th.docx`** via `python -m app.cli`: 7/7 verified, all exact, Thai and
+  table cells cited.
+- Migration `0003` round-tripped on real Postgres; `pages_from_ocr` is real `jsonb`
+  and `alembic check` reports no drift.
 
-- **`resume_scanned.pdf`**: `pending` → `processing` → `extracted` in 5.7 s with
-  `pages_from_ocr=[1]`. 7/7 verified, 0 dropped, every match tier-1 exact, all 7
-  spans slicing back out of the stored text. **Three skills were cited straight out
-  of the Thai OCR line** `ทักษะ: Python, FastAPI, PostgreSQL`.
-- **`resume_mixed_scan.pdf`**: `pages_from_ocr=[2]` — page 1 kept its text layer,
-  page 2 came from the image, 5/5 verified.
-- Before/after on the CLI is the clearest single artifact: `parse failed: …requires
-  OCR` becomes a profile with four exact citations.
+---
 
-### The decisions inside it
+### Bugs found this session
 
-- **`OCREngine | None`, and `None` means off.** A null-object engine returns `""`
-  both when OCR is disabled and when it read a page and found nothing. The second is
-  a real answer about the document and must stay distinguishable.
-- **The language pack is checked at startup, not per document.** A Tesseract without
-  `tha` would keep working for English and return noise for Thai — the failure this
-  project can least afford, and invisible until someone reads the output. Same class
-  of silent corruption as a stale price table.
-- **Recognized text below the text-layer threshold is thrown away** rather than
-  stored. A handful of noise characters is not text anybody wrote, and this project
-  only quotes text somebody did.
+**1. Binary fixtures were corrupted by `git checkout` on Windows.** The important
+one, and it had been latent since the fixtures were committed.
 
-### What bit, and what to do about it
+`core.autocrlf=true` is the Git-for-Windows default, and with no `.gitattributes`
+Git guessed the PDF fixtures were text. A `0x0A` inside a compressed stream became
+`0x0D 0x0A` on checkout, and the xref offsets stopped pointing where they claim.
+Measured on a fresh `git -c core.autocrlf=true clone` of the previous commit:
 
-- **A stale ARQ worker from the previous session stole the first job** and marked the
-  scan `failed` with the *old* error message — pre-OCR code, still polling the same
-  Redis queue. `NOTES.md` already warned "stop the other workers first"; it cost ten
-  minutes anyway because the symptom looks exactly like a bug in the new code. The
-  giveaway was the wording of `failure_reason` in the database. **Check
-  `Get-CimInstance Win32_Process | Where CommandLine -like '*arq*'` before believing
-  any live run.** All arq workers are stopped now — start one when you next need it.
-- **The zombie API on :8000 and a dev server on :3000 are still there**, unchanged
-  from the last entry. Still worth a reboot.
-- **`ALLOWED_ORIGINS` blocked the browser check**, so it was fixed in the same
-  session rather than deferred a third time: it is now the `CORS_ORIGINS` setting
-  (comma-separated, `NoDecode` so it does not demand JSON), pinned by
-  `TestCorsOrigins` in `tests/test_config.py`. The empty `app/workers/` package went
-  with it. Both had been sitting on this list for two sessions; the trigger for
-  finally doing them was one of them blocking verification of real work.
-  **With that unblocked the banner was checked by eye** on :3002 — it reads "Page 1
-  had no text layer and was read by OCR…", `7/7 claims verified`, and the document
-  pane carries six highlights over the recognized text, two of them inside the Thai
-  line. The lesson worth keeping: the cleanup was not cosmetic, it was the thing
-  standing between the work and its verification.
+| | on disk | in repo |
+|---|---|---|
+| `resume_scanned.pdf` | 35293 | 35214 |
+| `empty.pdf` | 1376 | 1308 |
 
-### Also landed this session
+`test_image_only_pdf_reports_a_scan` fails on that clone, and several OCR, API and
+retry tests lean on the same fixture. **That made "`git clone && pytest -q` works
+with no servers" false on a default Windows install** — a property `HANDOFF.md` §2
+calls load-bearing — and the symptom reads as a parser bug, not a checkout bug.
+Fixed by `.gitattributes` marking binaries; a fresh clone of current main gives
+35214 and 1308 back and the parse and OCR suites are green.
 
-- **M2 #5 — DOCX.** `parse_docx` reads paragraphs *and tables* in document order.
-  The table part is the whole point: `document.paragraphs` skips anything inside
-  one, and resumes routinely put skills in a table, so the loss would have looked
-  like a model that missed them. A `.docx` has no pages — Word decides that at
-  render time — so it is reported as one page rather than having numbers invented
-  for it. The upload gate now holds a signature per type (`%PDF-`, and `PK\x03\x04`
-  for the zip a .docx is), so relabelling one as the other is still refused.
-- **A latent repo bug, found by accident.** Checking a PDF fixture out during this
-  work corrupted it: `core.autocrlf=true` (the Git-for-Windows default) plus no
-  `.gitattributes` meant checkout rewrote 0x0A inside compressed streams.
-  `resume_scanned.pdf` grew 35214 → 35293 bytes and stopped parsing. Verified by
-  cloning the previous commit with `autocrlf=true` — the scan test fails on a clone
-  where the code is fine — and re-verified fixed on current main. **This made
-  "git clone && pytest -q works" false on a default Windows install**, and it would
-  have read as a parser bug. Fixed with a `.gitattributes` marking binaries.
+*Method note worth keeping:* `git hash-object` said the file was fine, because it
+re-normalizes while hashing. **Compare sizes, not hashes, when checking for CRLF
+damage.** The first two attempts at this diagnosis were wrong for that reason.
 
-### Next, in order
+**2. OCR and pdfplumber disagreed about line endings.** Tesseract ends lines with
+CRLF on Windows and LF elsewhere; pdfplumber emits LF. So a part-scanned document
+carried *both* conventions in one `document_text`, and the same scan would have
+produced different evidence offsets depending on the machine that read it. One-line
+fix in the engine (before `_assemble`, so no offset moved), pinned by two cases in
+the opt-in module. Found only because of the degradation experiment — nothing in the
+clean-fixture tests could have shown it.
 
-1. **Push and watch CI** — small batches, per the standing advice below. Six
-   commits are waiting.
-2. **M2 #6 — the two-column fix** (the strict xfail in `test_parse.py` defines
-   done, and the bboxes are cleanly separable — the left column ends at x≈154 and
-   the right starts at x=300 in the fixture), then MinIO (#7). That closes M2.
-3. **Decide on OCR confidence gating** — see the degradation findings below. It is
-   the one open question the OCR work leaves behind.
+**3. A stale ARQ worker silently stole the first live run.** A worker left running
+from the previous session, on pre-OCR code, was still polling the same Redis queue.
+It grabbed the job and marked the scan `failed`. The symptom is indistinguishable
+from "the new code does not work"; the giveaway was the *wording* of
+`failure_reason` in the database, which was the old message. Cost ten minutes.
 
-### Worth knowing
+**4. Not a bug, but recorded because it will look like one:** `npm audit` reports 3
+high-severity advisories in `web/` production dependencies — `postcss` and `sharp`,
+both transitive through Next 15. Pre-existing, unrelated to anything added here, and
+they need a Next upgrade rather than a local fix.
 
-- **The fixtures OCR perfectly, so they prove less than they look like they do.**
-  Rather than leave that as a caveat, `resume_scanned.pdf` was degraded sixteen ways
-  and scored by how many known lines still resolve as evidence. Full table in
-  `HANDOFF.md` §7; the short version:
-  - **Rotation is the only steep, common cliff.** 2° perfect → 5° loses a line →
-    8° collapses → 12° fails outright. A phone photo is rotated far more often than
-    it is blurred, so **deskew is the one preprocessing step with evidence behind
-    it**. Everything else stays out.
-  - Contrast, brightness, JPEG down to quality 3, and heavy speckle had **no
-    measurable effect at all**. Tesseract 5 is much tougher than expected.
-  - **The dangerous failure is not failure.** At 6px blur the page yields 169
-    characters of confident nonsense — "Somchai Jaidee" becomes "Sore hector" —
-    which sails past `MIN_CHARS_PER_TEXT_PAGE`, so the resume is reported as
-    successfully read. Fabrication is still impossible (a quote must be located in
-    that text) and the banner still says the page was OCR'd, but a character count
-    cannot tell text from noise. Reading Tesseract's per-word confidence and
-    rejecting a page below a threshold is what would close it — **not done**, and
-    worth a decision rather than a silent default.
-- **The experiment paid for itself immediately**: it surfaced that Tesseract emits
-  **CRLF** on Windows while pdfplumber emits LF, so a part-scanned document carried
-  both in one `document_text` and the same scan would have produced different
-  offsets on Linux. One-line fix in the engine, pinned by two cases in the opt-in
-  module. Nothing in the clean-fixture tests could have shown that.
-- **OCR costs about a second per page** at 300 dpi, capped at `OCR_MAX_PAGES=10`.
+---
+
+### Still open, in order
+
+1. **Push and watch CI.** Six commits are waiting, and CI has seen none of them.
+   This is the largest outstanding risk, as it was last time.
+2. **M2 #6 — the two-column fix.** The strict xfail in `test_parse.py` defines done.
+   The bboxes are cleanly separable: in the fixture the left column ends at x≈154 and
+   the right starts at x=300. This also produces the geometry the true pdf.js overlay
+   (#8) needs.
+3. **M2 #7 — MinIO.** `build_storage` has the branch stubbed and the container is
+   already running. That closes M2.
+4. **Decide on OCR confidence gating** — the one open question the OCR work leaves
+   behind. See below.
+
+### Things to watch, and to improve
+
+- **A badly degraded scan does not fail — it succeeds with nonsense.** This is the
+  most important thing to understand about the OCR feature. At 6px blur the page
+  still yields 169 characters, well past `MIN_CHARS_PER_TEXT_PAGE`, so the resume is
+  reported as read: "Somchai Jaidee" comes back as "Sore hector". Fabrication is
+  still impossible — a quote must be located in that text — and the banner still
+  says the page was OCR'd, but **a character count cannot tell text from noise**.
+  Reading Tesseract's per-word confidence and rejecting a page below a threshold is
+  what would close it. Deliberately **not done**: it is a product decision about how
+  much to trust a bad scan, and it deserves a choice rather than a silent default.
+- **Rotation is the only steep, common failure.** 2° is perfect, 5° loses a line, 8°
+  collapses to 1/5, 12° fails outright. Contrast, brightness, JPEG down to quality 3
+  and heavy speckle had *no measurable effect*. So preprocessing stays out except
+  that **deskew now has evidence behind it** rather than being a guess — a phone
+  photo is rotated far more often than it is blurred. Full table in `HANDOFF.md` §7.
+- **The fixtures OCR perfectly, which makes them prove less than they look like they
+  do.** They are synthetic renders of known text. No test in this repo can show what
+  a real photographed resume does.
+- **OCR costs about a second per page** at 300 dpi, capped by `OCR_MAX_PAGES=10`.
   Parsing now runs in `asyncio.to_thread`, so it no longer blocks the worker's event
   loop or the progress streams the API is serving.
+- **The zombie API on :8000 and the dev server on :3000 are still there**, unchanged
+  from the previous entry. All ARQ workers are stopped — start one when you next need
+  it. Still worth a reboot.
+- Still open from previous entries: the missing malformed-PDF fixture, the visibility
+  timeout for a worker that dies mid-job (M5), cost figures reading `$0.000000` on
+  Gemini's free tier, and statuses stored as enum *names* in raw SQL.
+
+### Advice for the owner, for the rest of the project
+
+- **Before believing any live run, prove three things:** that the server you are
+  hitting has the code you just wrote (`curl /openapi.json | grep <new-field>`), that
+  no *other* worker is competing for the queue
+  (`Get-CimInstance Win32_Process | Where CommandLine -like '*arq*'`), and that you
+  are on the port you think you are. Two of the three bit this session. The stale
+  worker is the nastiest, because a wrong result looks exactly like a code bug.
+- **Do the cleanup when it starts blocking you, not before and not never.**
+  `ALLOWED_ORIGINS` sat on the "should fix" list for two sessions as a nice-to-have.
+  It was fixed the moment it stood between finished work and its verification — and
+  that turned out to be the right trigger. A cleanup that blocks verification is not
+  cosmetic any more.
+- **Write the experiment instead of the caveat.** "Real scans will be worse than the
+  fixtures" was a true, useless sentence. Two hours of degrading images turned it
+  into a table with numbers, a preprocessing decision with evidence behind it, and a
+  real bug (the CRLF one) that no amount of caveat-writing would have found.
+- **When a check says "everything is fine", ask what instrument you used.**
+  `git hash-object` reported the corrupted PDFs as intact because it normalizes while
+  hashing. The tool was answering a different question than the one being asked.
+- **Keep pushing in small batches.** Six commits are unpushed right now; that is
+  already at the edge of comfortable. Green locally means little until a clean
+  machine with no `.env`, no Docker and no key agrees.
+- **Feed it ugly documents on purpose** — real scans, phone photos, Canva exports,
+  Word files with tables. Every one is a free fuzz test, and every real defect this
+  project has found came from a real document rather than from a test.
+- **Guard the scope lines.** The baseline-ranking evaluation stays in M6 with its
+  one-week timebox; the strict two-column xfail stays until column detection makes it
+  pass; `LLM_PROVIDER=anthropic` stays an error until a live verification run. These
+  hold only if they are not quietly renegotiated mid-milestone.
+- **Watch the Gemini free-tier quota.** The re-ask loop can spend 2× calls per resume
+  and retries multiply that. If uploads start dead-lettering with provider errors,
+  check quota before debugging code.
+- **Keep real resumes out of the repo.** Testing with real documents locally is fine
+  — they live in `var/uploads` and the dev database, and both should be wiped before
+  the machine is shared or the project is demoed. PDPA work lands in M4.
 
 ---
 
