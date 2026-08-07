@@ -50,8 +50,10 @@ and MinIO (#7) are what remain.**
 ### Repository state
 
 `main` is on GitHub at <https://github.com/67160366/hirelens>, and everything
-through the §11 bug fixes is pushed and green on CI (2026-08-07). Check
-`git rev-list --count origin/main..main` before assuming that is still true —
+through M2 #5 is pushed and green on CI (run `31212427540`, 2026-08-08): 209
+passed, 12 skipped on a runner with no Tesseract, no database and no API key —
+which is the opt-in test design doing its job — plus 9 vitest cases in `web/`.
+Check `git rev-list --count origin/main..main` before assuming that is still true —
 a batch of verified-but-unpushed commits is the easiest way for local and CI to
 drift apart, and CI is the only thing that tests a clean machine with no `.env`,
 no Docker and no API key.

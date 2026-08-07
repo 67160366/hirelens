@@ -8,8 +8,8 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ## 2026-08-08 (later) — M2 #4 and #5, plus a repo bug that had been there all along
 
-Six commits, none pushed. A scan and a `.docx` are both readable now, and M2 has
-only the two-column fix and MinIO left.
+Seven commits, **pushed and green on CI** (run `31212427540`). A scan and a `.docx`
+are both readable now, and M2 has only the two-column fix and MinIO left.
 
 | | Commit |
 |---|---|
@@ -127,8 +127,11 @@ they need a Next upgrade rather than a local fix.
 
 ### Still open, in order
 
-1. **Push and watch CI.** Six commits are waiting, and CI has seen none of them.
-   This is the largest outstanding risk, as it was last time.
+1. ~~Push and watch CI.~~ **Done** — all seven commits are green on run
+   `31212427540`. The number worth noticing: **209 passed, 12 skipped** on a runner
+   with no Tesseract, no database and no API key. The opt-in split is doing exactly
+   what it was built for, and OCR added a system dependency without costing the
+   project its "clone and run" property.
 2. **M2 #6 — the two-column fix.** The strict xfail in `test_parse.py` defines done.
    The bboxes are cleanly separable: in the fixture the left column ends at x≈154 and
    the right starts at x=300. This also produces the geometry the true pdf.js overlay
@@ -163,6 +166,10 @@ they need a Next upgrade rather than a local fix.
 - **The zombie API on :8000 and the dev server on :3000 are still there**, unchanged
   from the previous entry. All ARQ workers are stopped — start one when you next need
   it. Still worth a reboot.
+- **CI warns that `actions/checkout@v4` and `astral-sh/setup-uv@v5` target Node 20**,
+  which GitHub has deprecated and is force-running on Node 24. Harmless today, a
+  broken build whenever they drop the shim. Bumping both to their v5/v6 majors is a
+  two-line change worth doing before it becomes urgent.
 - Still open from previous entries: the missing malformed-PDF fixture, the visibility
   timeout for a worker that dies mid-job (M5), cost figures reading `$0.000000` on
   Gemini's free tier, and statuses stored as enum *names* in raw SQL.
