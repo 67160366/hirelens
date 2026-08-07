@@ -5,10 +5,10 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Safe to import: app.llm.fake depends only on the LLM base types and schemas,
 # never on settings, so there is no cycle.
@@ -91,6 +91,16 @@ class Settings(BaseSettings):
     # status is terminal; `inline` simply gets there before the response returns.
     queue_backend: QueueBackend = QueueBackend.INLINE
 
+    # Browser origins allowed to call the API. Settable so a dev server that lands
+    # on a different port is one env var away from working, instead of a CORS error
+    # that says nothing about the real cause — and it has to be settable before
+    # deploying anyway. `NoDecode` keeps pydantic-settings from insisting on JSON,
+    # so the natural form works:
+    #   CORS_ORIGINS=http://localhost:3000,http://localhost:3002
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default=["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
+
     jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_access_ttl_minutes: int = 30
     jwt_refresh_ttl_days: int = 14
@@ -138,6 +148,14 @@ class Settings(BaseSettings):
     sse_poll_seconds: float = Field(default=0.5, gt=0)
     sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
     sse_max_stream_seconds: float = Field(default=300.0, gt=0)
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, value: object) -> object:
+        """Accept `a,b` from the environment as well as a real list."""
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     @model_validator(mode="after")
     def _refuse_placeholder_secret_outside_dev(self) -> Self:

@@ -69,12 +69,12 @@ Against Postgres + ARQ + real Gemini, on a fresh port:
   any live run.** All arq workers are stopped now — start one when you next need it.
 - **The zombie API on :8000 and a dev server on :3000 are still there**, unchanged
   from the last entry. Still worth a reboot.
-- **`ALLOWED_ORIGINS` blocked the browser check.** It is hard-coded to :3000 in
-  `app/main.py`, :3000 was occupied, and a dev server on :3002 would have every call
-  refused by CORS. So the `pages_from_ocr` banner is verified by typecheck, lint and
-  build plus the API returning the field — **not by eye**. This is the second session
-  this hard-coded list has cost time; it is a three-line change and it is now
-  blocking verification, not just convenience.
+- **`ALLOWED_ORIGINS` blocked the browser check**, so it was fixed in the same
+  session rather than deferred a third time: it is now the `CORS_ORIGINS` setting
+  (comma-separated, `NoDecode` so it does not demand JSON), pinned by
+  `TestCorsOrigins` in `tests/test_config.py`. The empty `app/workers/` package went
+  with it. Both had been sitting on this list for two sessions; the trigger for
+  finally doing them was one of them blocking verification of real work.
 
 ### Next, in order
 
@@ -212,18 +212,17 @@ demonstration the project has that the job layer works.
   and nothing pins it. A minimal vitest setup with three or four cases (a frame
   split across chunks, a comment line, a frame with no `event:`) is cheap and
   would be the natural place for every client test after it.
-- **`ALLOWED_ORIGINS` in `app/main.py` is a hard-coded list.** It cost time this
+- ~~**`ALLOWED_ORIGINS` in `app/main.py` is a hard-coded list.**~~ It cost time this
   session: the Next dev server landed on :3001 because :3000 was taken, and every
   API call from it would have been blocked with a CORS error that says nothing
-  about the real cause. Making it a setting is a three-line change and removes a
-  whole class of confusing dev failures. It has to be settable before deploying
-  anyway.
+  about the real cause. — **fixed 2026-08-08**: it is now the `CORS_ORIGINS`
+  setting, comma-separated.
 - **A state shorter than `SSE_POLL_SECONDS` is not streamed.** The live retry run
   showed it: each failure was so fast that `processing` came and went inside one
   0.5 s read. Every resting state and every reason still arrived, which is what
   the UI shows — but do not read the stream as a complete history.
-- **`api/app/workers/` is an empty leftover package** (a 0-byte `__init__.py`);
-  the real module is `app/worker.py`. Delete it in a cleanup commit.
+- ~~**`api/app/workers/` is an empty leftover package**~~ (a 0-byte `__init__.py`);
+  the real module is `app/worker.py`. — **deleted 2026-08-08**.
 - ~~The Chrome extension has blocked the browser walkthrough twice~~ — connected
   on 2026-08-08 and the walkthrough is done; see the entry above.
 - **The machine had two stale dev servers** when this session started: a broken

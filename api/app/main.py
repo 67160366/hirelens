@@ -21,9 +21,6 @@ from app.storage import build_storage
 
 logger = logging.getLogger(__name__)
 
-# The dev-time Next.js origin. Tighten this before deploying.
-ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -75,7 +72,9 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
+        # Read here rather than from `app.state`: middleware is added at
+        # construction, which happens before the lifespan runs.
+        allow_origins=get_settings().cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
