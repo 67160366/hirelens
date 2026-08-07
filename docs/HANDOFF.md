@@ -39,10 +39,11 @@ DOCX, the two-column fix, MinIO and the SSE progress stream are still open.
 ### Repository state
 
 `main` is on GitHub at <https://github.com/67160366/hirelens>. **The local branch
-is 7 commits ahead of `origin/main`** — the Postgres cutover, the ARQ worker, the
-retry/dead-letter work, three documentation commits, and the §11 bug fixes. They
-have not been pushed, so CI has not run against them. It was green on the last
-pushed commit.
+is ahead of `origin/main`** (`git rev-list --count origin/main..main` for the
+current number) — everything since the Postgres cutover: the ARQ worker, the
+retry/dead-letter work, the §11 bug fixes, and documentation. None of it has been
+pushed, so CI has not run against any of it. It was green on the last pushed
+commit.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`,
 `mypy app`, `pytest -q`, then `npm ci`/`typecheck`/`lint`/`build`. It has no
@@ -361,7 +362,7 @@ the JSONB path is verified, Gemini has run live, and the queue is real.
 
 Two things worth doing whenever convenient, neither blocking:
 
-- **Push the seven local commits** and confirm CI is green on them.
+- **Push the local commits** and confirm CI is green on them.
 - **Re-do the browser walkthrough.** The last one was on 2026-07-30, before the
   queue existed; the polling loop and the "Try again" button have been verified at
   the HTTP level but not in a browser (the Chrome extension was not connected).

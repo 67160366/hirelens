@@ -30,7 +30,7 @@ Commit `669e793` (one slice: fixes + tests + docs). Full write-up: `HANDOFF.md` 
 
 ### Next, in order
 
-1. **Push the 7 local commits and watch CI.** CI has never run against the
+1. **Push the local commits and watch CI.** CI has never run against the
    Postgres cutover, the ARQ worker, or these fixes. This is the cheapest
    outstanding risk reduction there is.
 2. **Re-do the browser walkthrough** (register → upload → poll → profile, plus
@@ -65,8 +65,8 @@ Commit `669e793` (one slice: fixes + tests + docs). Full write-up: `HANDOFF.md` 
 
 ### Advice for the owner, for the rest of the project
 
-- **Push in small, frequent batches.** Seven verified-but-unpushed commits is
-  the current largest process risk: green locally means little until CI — a
+- **Push in small, frequent batches.** A week of verified-but-unpushed commits
+  is the current largest process risk: green locally means little until CI — a
   clean machine with no `.env`, no Docker and no key — agrees.
 - **Run the definition-of-done gate before every commit**, from `api/` in the
   venv: `pytest -q && ruff check app tests migrations && ruff format --check
