@@ -86,43 +86,21 @@ From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm ru
 
 ## Map
 
-```
-api/app/
-  pipeline/evidence.py   ★ locate quotes, three-tier matching, rejection reasons
-  pipeline/parse.py        PDF → text + char offsets + page spans; scan detection
-  pipeline/extract.py      ask → verify → retry → keep the cleanest result
-  pipeline/prompts.py      versioned prompts (EXTRACTION_PROMPT_VERSION)
-  llm/                     StructuredExtractor seam: fake ★ / gemini / registry
-  schemas/                 extraction.py = model output (quotes only) vs
-                           profile.py = stored form (offsets, pages, stats)
-  models/core.py           candidates, resumes, extracted_profiles, llm_call_logs
-  services/resume_service.py  upload stores + queues; process_resume does the work
-  jobs.py                  run_resume_job: the unit of background work, arq-free
-  queue.py                 JobQueue seam: inline (no server) / arq (Redis)
-  worker.py                the `arq app.worker.WorkerSettings` entrypoint
-  api/routes/              auth.py, resumes.py
-web/
-  app/page.tsx             auth + upload + result (single screen)
-  components/              Evidence.tsx, ProfileView.tsx, DocumentPane.tsx
-  lib/api.ts               typed API client (NEXT_PUBLIC_API_BASE)
-```
+Three files carry the weight: `api/app/pipeline/evidence.py` locates quotes and
+rejects what it cannot find, `api/app/llm/fake.py` is load-bearing test
+infrastructure rather than a stub, and `api/app/jobs.py` holds the background work
+and the whole retry policy. Annotated tree of everything else: `docs/HANDOFF.md` §4.
 
 Environment quirks: dev runs on Postgres + Redis from `docker compose up -d` +
 local storage (`var/uploads`); SQLite (`api/var/dev.db`) is a commented fallback
 in `.env`. MinIO is up but unused until M2 #7. The test suite runs on its own
-in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server.
+in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server. `.env`
+selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating` demos
+the dropped-claims path.
 
-Upload no longer returns a profile: it stores the file, queues the work and
-answers `pending`. Clients poll `GET /resumes/{id}` until the status is neither
-`pending` nor `processing` (M2 #3 replaces the polling with SSE). That contract is
-identical under both queue backends on purpose — `inline` just gets there sooner.
-
-Two failure statuses, and the difference is the point: `failed` means this
-document cannot be processed and retrying changes nothing; `dead_lettered` means
-transient failures used up the retry budget, so it is worth replaying via
-`POST /resumes/{id}/retry`. The classification lives in `is_retryable`
-(`app/jobs.py`) and errs toward retrying — an unrecognised failure is more likely
-a blip than a fact about the document. `InlineQueue` has nowhere to defer work to
-and so never retries; that is a property of running without a queue, not a bug.
-`.env` selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating`
-demos the dropped-claims path.
+Upload stores the file, queues the work and answers `pending`; clients poll
+`GET /resumes/{id}` until the status is neither `pending` nor `processing`. Two
+failure statuses: `failed` means the document cannot be processed, while
+`dead_lettered` means transient failures used up the retry budget and it is worth
+replaying via `POST /resumes/{id}/retry`. Both, and why the split matters, are in
+`docs/HANDOFF.md` §6.
