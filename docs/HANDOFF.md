@@ -3,7 +3,8 @@
 Written 2026-07-30 at the end of M1, rewritten 2026-08-07 after the Postgres
 cutover and the first two M2 items. Read this first when picking the project back
 up — then `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item
-milestone status.
+milestone status. Short dated session notes and owner advice live in
+`docs/NOTES.md`.
 
 ---
 
