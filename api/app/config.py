@@ -99,6 +99,14 @@ class Settings(BaseSettings):
     # an upload is not abandoned.
     job_retry_base_seconds: float = Field(default=5.0, gt=0)
 
+    # The progress stream: how often it re-reads the resume, how long it may go
+    # quiet before sending a keep-alive comment, and how long one connection may
+    # stay open at all. Each is a number a deployment behind a proxy may have to
+    # change, and the tests set all three low so they finish in milliseconds.
+    sse_poll_seconds: float = Field(default=0.5, gt=0)
+    sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
+    sse_max_stream_seconds: float = Field(default=300.0, gt=0)
+
     @model_validator(mode="after")
     def _refuse_placeholder_secret_outside_dev(self) -> Self:
         # A deploy that forgets JWT_SECRET must fail at startup, not silently

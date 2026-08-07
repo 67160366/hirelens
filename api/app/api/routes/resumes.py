@@ -1,18 +1,34 @@
-"""Upload a resume and read back the verified profile."""
+"""Upload a resume, follow its progress, and read back the verified profile."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
+from collections.abc import AsyncIterator
+from time import monotonic
 from typing import Annotated, Any
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CandidateDep, QueueDep, SessionDep, StorageDep
+from app.api.deps import (
+    CandidateDep,
+    QueueDep,
+    SessionDep,
+    SessionFactoryDep,
+    SettingsDep,
+    StorageDep,
+)
+from app.config import Settings
 from app.models import Candidate, Resume, ResumeStatus
 from app.services import resume_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -33,6 +49,11 @@ PDF_MAGIC = b"%PDF-"
 RETRYABLE_STATUSES = frozenset(
     {ResumeStatus.DEAD_LETTERED, ResumeStatus.FAILED, ResumeStatus.PARSED}
 )
+
+# Statuses a worker will still move on its own. Everything else is a resting
+# state, which is what ends a progress stream — the server-side twin of
+# `isSettled` in `web/lib/api.ts`.
+IN_FLIGHT_STATUSES = frozenset({ResumeStatus.PENDING, ResumeStatus.PROCESSING})
 
 
 class ResumeOut(BaseModel):
@@ -209,4 +230,123 @@ async def get_resume_profile(
         resume=ResumeOut.of(resume),
         profile=resume.profile.profile if resume.profile else None,
         document_text=resume.document_text,
+    )
+
+
+def _frame(event: str, data: str) -> str:
+    """One server-sent event. The blank line terminates the frame.
+
+    `data` has to be a single line, which is why every payload here is compact
+    JSON — `model_dump_json` never emits a newline.
+    """
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+async def _resume_events(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    request: Request,
+    resume_id: uuid.UUID,
+) -> AsyncIterator[str]:
+    """The resume's state now, then again on every change, until it settles.
+
+    Reading the row on an interval is deliberately the mechanism rather than the
+    contract. The worker could publish to Redis instead and this endpoint could
+    subscribe, but that would put Redis on the API's critical path and break the
+    no-server default the inline queue and the whole test suite depend on. The
+    stream a client sees would not change either way, so the cheap version is the
+    one worth having now.
+
+    A short session per read, not one held open for the stream's lifetime: an idle
+    stream has no business holding a pooled connection, and the request's own
+    session is closed before this generator ever runs.
+    """
+    deadline = monotonic() + settings.sse_max_stream_seconds
+    last_payload: str | None = None
+    last_write = monotonic()
+    frames = 0
+
+    while True:
+        async with sessionmaker() as session:
+            resume = await session.get(Resume, resume_id)
+
+        if resume is None:
+            # Deleted while the client was watching. Saying so beats leaving the
+            # stream open until the cap for a row that will never change again.
+            yield _frame("gone", "{}")
+            frames += 1
+            break
+
+        payload = ResumeOut.of(resume).model_dump_json()
+        if payload != last_payload:
+            yield _frame("status", payload)
+            last_payload = payload
+            last_write = monotonic()
+            frames += 1
+
+        if resume.status not in IN_FLIGHT_STATUSES:
+            yield _frame("done", payload)
+            frames += 1
+            break
+
+        now = monotonic()
+        if now >= deadline:
+            # A resume stranded at `processing` by a worker that died is never
+            # swept back (see `docs/HANDOFF.md` §7), so without a cap this stream
+            # would stay open forever. The client falls back to polling.
+            yield _frame("timeout", "{}")
+            frames += 1
+            break
+
+        if now - last_write >= settings.sse_heartbeat_seconds:
+            # A comment rather than an event: proxies drop a connection that goes
+            # quiet, and a client is required to ignore this line.
+            yield ": ping\n\n"
+            last_write = now
+
+        if await request.is_disconnected():
+            break
+
+        await asyncio.sleep(settings.sse_poll_seconds)
+
+    # Ids and counts only. The payload above carries the candidate's own filename.
+    logger.info("resume %s: progress stream closed after %d frames", resume_id, frames)
+
+
+@router.get("/{resume_id}/events")
+async def stream_resume_progress(
+    resume_id: uuid.UUID,
+    candidate: CandidateDep,
+    session: SessionDep,
+    sessionmaker: SessionFactoryDep,
+    settings: SettingsDep,
+    request: Request,
+) -> StreamingResponse:
+    """Follow a resume until it settles, over server-sent events.
+
+    What the client used to do by re-fetching `GET /resumes/{id}` in a loop, minus
+    a round trip and an authentication per tick — and with the intermediate states
+    it could never see: `processing` starting, and a failed attempt going back to
+    `pending` with the reason attached.
+
+    Frames are `status` (on connect and on every change), then one of `done` when
+    the resume reaches a resting state, `timeout` when the connection cap is hit,
+    or `gone` if the row is deleted. Each carries a `ResumeOut` and nothing else:
+    the profile and `document_text` stay behind `GET /resumes/{id}`, which the
+    client calls once, when `done` arrives.
+
+    Ownership is settled here rather than inside the stream, so an unknown resume
+    is a 404 instead of an error event inside a 200 response.
+    """
+    await _owned_resume(session, resume_id=resume_id, candidate=candidate)
+    return StreamingResponse(
+        _resume_events(sessionmaker, settings, request, resume_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # nginx buffers proxied responses by default, which would hold every
+            # frame back until the stream closed and defeat the whole endpoint.
+            "X-Accel-Buffering": "no",
+        },
     )

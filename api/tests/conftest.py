@@ -104,6 +104,9 @@ async def client(
     app.state.storage = storage
     app.state.extractor = extractor
     app.state.queue = queue
+    # The progress stream opens its own sessions, so it needs the factory rather
+    # than the `get_session` override below.
+    app.state.sessionmaker = sessionmaker_for_tests
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         async with sessionmaker_for_tests() as session:

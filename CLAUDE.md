@@ -98,9 +98,10 @@ in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server. `.env`
 selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating` demos
 the dropped-claims path.
 
-Upload stores the file, queues the work and answers `pending`; clients poll
-`GET /resumes/{id}` until the status is neither `pending` nor `processing`. Two
-failure statuses: `failed` means the document cannot be processed, while
+Upload stores the file, queues the work and answers `pending`; clients follow
+`GET /resumes/{id}/events` until the status is neither `pending` nor `processing`,
+and fall back to polling `GET /resumes/{id}` when the stream ends without a
+verdict. Two failure statuses: `failed` means the document cannot be processed, while
 `dead_lettered` means transient failures used up the retry budget and it is worth
 replaying via `POST /resumes/{id}/retry`. Both, and why the split matters, are in
 `docs/HANDOFF.md` §6.

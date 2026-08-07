@@ -32,12 +32,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.storage = build_storage(settings)
     app.state.extractor = build_extractor(settings)
+    # Held on state because the progress stream needs to open its own sessions:
+    # its generator runs after FastAPI has closed the request's session.
+    app.state.sessionmaker = get_sessionmaker()
     # The context is only used by the inline queue; the ARQ worker builds its own
     # in its own process.
     app.state.queue = await build_queue(
         settings,
         JobContext(
-            sessionmaker=get_sessionmaker(),
+            sessionmaker=app.state.sessionmaker,
             storage=app.state.storage,
             extractor=app.state.extractor,
             settings=settings,

@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings, get_settings
 from app.db import get_session
@@ -42,9 +42,22 @@ def get_queue(request: Request) -> JobQueue:
     return request.app.state.queue  # type: ignore[no-any-return]
 
 
+def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
+    """The sessionmaker held on app state, for code that outlives its request.
+
+    A streaming endpoint cannot use `SessionDep`: FastAPI closes dependencies with
+    `yield` *before* the response body starts flowing, so by the time a stream
+    emits its first frame that session is gone. Handing out the factory instead
+    lets the generator open a short session per read — which also means an open
+    stream does not hold a pooled connection while nothing is happening.
+    """
+    return request.app.state.sessionmaker  # type: ignore[no-any-return]
+
+
 StorageDep = Annotated[Storage, Depends(get_storage)]
 ExtractorDep = Annotated[StructuredExtractor, Depends(get_extractor)]
 QueueDep = Annotated[JobQueue, Depends(get_queue)]
+SessionFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
 
 
 async def get_current_candidate(

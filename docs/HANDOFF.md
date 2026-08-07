@@ -14,16 +14,17 @@ milestone status. Short dated session notes and owner advice live in
 profile in which every field cites the exact text it came from, and anything the
 model could not cite is dropped and reported.
 
-**M2 is in progress: items #1, #2 and #8 are done.** Parsing and extraction run on
-a background worker with retry, backoff and a dead-letter queue around them. OCR,
-DOCX, the two-column fix, MinIO and the SSE progress stream are still open.
+**M2 is in progress: items #1, #2, #3 and #8 are done.** Parsing and extraction run
+on a background worker with retry, backoff and a dead-letter queue around them, and
+the web client follows a resume over a progress stream instead of polling for it.
+OCR, DOCX, the two-column fix and MinIO are still open.
 
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 159 passed, 3 skipped, 1 xfailed (the xfail is deliberate — §7) |
-| `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 3 passed against real Postgres |
+| `pytest -q` | 173 passed, 4 skipped, 1 xfailed (the xfail is deliberate — §7) |
+| `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `ruff check` / `ruff format --check` | clean |
 | `mypy app` (strict) | clean, 35 files |
 | `npm run typecheck` / `lint` / `build` | clean |
@@ -38,12 +39,12 @@ DOCX, the two-column fix, MinIO and the SSE progress stream are still open.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>. **The local branch
-is ahead of `origin/main`** (`git rev-list --count origin/main..main` for the
-current number) — everything since the Postgres cutover: the ARQ worker, the
-retry/dead-letter work, the §11 bug fixes, and documentation. None of it has been
-pushed, so CI has not run against any of it. It was green on the last pushed
-commit.
+`main` is on GitHub at <https://github.com/67160366/hirelens>, and everything
+through the §11 bug fixes is pushed and green on CI (2026-08-07). Check
+`git rev-list --count origin/main..main` before assuming that is still true —
+a batch of verified-but-unpushed commits is the easiest way for local and CI to
+drift apart, and CI is the only thing that tests a clean machine with no `.env`,
+no Docker and no API key.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`,
 `mypy app`, `pytest -q`, then `npm ci`/`typecheck`/`lint`/`build`. It has no
@@ -126,11 +127,11 @@ api/app/
   queue.py             JobQueue seam: inline (no server) / arq (Redis)
   worker.py            `arq app.worker.WorkerSettings` — adapter only
   logging_config.py    shared by API and worker so the worker need not import the app
-  api/routes/          auth.py, resumes.py
+  api/routes/          auth.py, resumes.py — upload, profile, retry, progress stream
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
-  app/page.tsx         auth + upload + poll + result + retry
-  lib/api.ts           typed client; `waitForProfile` is the polling loop
+  app/page.tsx         auth + upload + live progress + result + retry
+  lib/api.ts           typed client; `waitForProfile` streams, then falls back to polling
   components/Evidence.tsx, ProfileView.tsx, DocumentPane.tsx (citation highlighting)
 ```
 
@@ -181,6 +182,18 @@ Worth reading once, because the request no longer does the work.
 - **The job returns a decision (`JobOutcome`), it does not raise arq's `Retry`.**
   That is what keeps `app/jobs.py` free of arq and lets the entire retry policy be
   tested without Redis. `app/worker.py` is the only module that knows arq exists.
+- **The progress stream is the contract; polling the row is only the mechanism.**
+  `GET /resumes/{id}/events` re-reads the resume on an interval and emits when it
+  changes. The worker publishing to Redis would be a truer push, but it would put
+  Redis on the API's critical path and break the no-server default that
+  `QUEUE_BACKEND=inline` and the entire test suite rely on. Swapping the mechanism
+  later changes nothing a client can see.
+- **The web client streams with `fetch`, not `EventSource`.** `EventSource` cannot
+  set an `Authorization` header, so the token would have to travel in the query
+  string — into proxy access logs and browser history, in a project whose rules
+  forbid logging personal data. The cost is parsing SSE frames by hand in
+  `web/lib/api.ts`; the bearer header, the `ApiError` taxonomy and the 401-refresh
+  path all keep working in exchange.
 - **Two attempt counters, because one cannot do both jobs.** `failed_attempts` is
   the retry budget and is cleared by a success or a manual retry. `attempts` is the
   honest total and never resets — it is also what makes each dispatch's queue job id
@@ -265,8 +278,15 @@ want the retry policy run the ARQ worker.
   nothing sweeps the row back to `pending`; the job that redelivers it will skip it
   as already claimed. A visibility timeout on `last_attempt_at` would fix it and
   belongs with M5's observability work.
-- **The web client polls.** `api.waitForProfile` is the placeholder M2 #3 replaces
-  with SSE; it is deliberately the one place that waits.
+- **The client still knows how to poll.** `api.waitForProfile` opens the stream
+  first and falls back to the old loop when the stream ends without a verdict — a
+  proxy that buffers `text/event-stream`, or a connection the server capped. It is
+  still deliberately the one place that waits. Deleting the fallback would trade a
+  working page for a purer one.
+- **A stream capped at `SSE_MAX_STREAM_SECONDS` is not a failure.** It is how a
+  resume stranded at `processing` by a dead worker (below) stops holding a
+  connection open. The client polls on from there, and sees the same nothing —
+  which is the honest answer until the reaper lands with M5.
 - **Statuses are stored as enum *names*** (`EXTRACTED`, `DEAD_LETTERED`), because
   SQLAlchemy's `Enum` persists names by default, while the API serializes the
   values (`extracted`). Pre-existing, harmless, and worth knowing before writing a
@@ -337,6 +357,7 @@ the API and the worker, upload again. To see the dead-letter path: set
 | `test_resume_service.py` | The duplicate-upload race, blob cleanup, PII-safe logging |
 | `test_worker.py` | Upload enqueues; the job runs; the arq adapter |
 | `test_retry.py` | Error classification, backoff, dead-lettering, replay |
+| `test_events.py` | The progress stream: ownership, the frame sequence, the cap, keep-alives |
 | `test_postgres.py` | JSONB, Thai round-trip, JSON queries. **Opt-in**, needs `TEST_DATABASE_URL` |
 | `test_config.py` | Settings validation, including the JWT-secret refusal |
 
@@ -347,25 +368,24 @@ the API and the worker, upload again. To see the dead-letter path: set
 **All setup items are done.** Docker is installed, development runs on Postgres,
 the JSONB path is verified, Gemini has run live, and the queue is real.
 
-**Next is M2 #3.** In dependency order (live status in `docs/PLAN.md`):
+**Next is M2 #4.** In dependency order (live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
 | 1 | ~~ARQ worker + Redis~~ **done** | `app/jobs.py` (work), `app/queue.py` (seam), `app/worker.py` (entrypoint) |
 | 2 | ~~Job state, retry with backoff, dead-letter queue~~ **done** | §6 above |
-| 3 | SSE progress endpoint; wire the web UI's "Parsing…" state to it | Replace `api.waitForProfile` in `web/lib/api.ts` — the one place that waits. The statuses it needs already exist; `processing` is the event worth streaming |
+| 3 | ~~SSE progress endpoint~~ **done** | `GET /resumes/{id}/events` (`api/app/api/routes/resumes.py`), consumed by `waitForProfile` in `web/lib/api.ts`, which keeps polling as the fallback. Pinned by `api/tests/test_events.py` |
 | 4 | OCR fallback for scans (Tesseract + `tha`) | `ParsedDocument.pages_without_text` is already the work list; `resume_scanned.pdf` and `resume_mixed_scan.pdf` are real image-based fixtures. Note this turns a `failed` scan into work: `NoTextLayerError` is caught in `process_resume`, which marks the row `failed` and returns before the retry policy ever sees it |
 | 5 | DOCX parser | `parse_document_bytes` already dispatches on extension and raises `UnsupportedFileTypeError`; the upload route's `ALLOWED_SUFFIXES` gate also needs opening |
 | 6 | **Two-column fix** via bbox column detection | The strict xfail defines "done" |
 | 7 | MinIO storage backend | `build_storage` has the `MINIO` branch stubbed with a clear error. The worker and the API both build storage independently, so both pick it up |
 | 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay on the rendered page is *not* done: it needs bbox geometry, which `ParsedDocument` does not keep, plus an endpoint serving the original file. Do it with #6, which needs the same bbox extraction. |
 
-Two things worth doing whenever convenient, neither blocking:
+One thing worth doing whenever convenient, not blocking:
 
-- **Push the local commits** and confirm CI is green on them.
 - **Re-do the browser walkthrough.** The last one was on 2026-07-30, before the
-  queue existed; the polling loop and the "Try again" button have been verified at
-  the HTTP level but not in a browser (the Chrome extension was not connected).
+  queue existed; the progress stream and the "Try again" button have been verified
+  at the HTTP level but not in a browser.
 
 M3 onward (matching engine, backend depth, frontend, ship) is in
 [`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.

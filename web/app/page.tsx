@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { DocumentPane, EvidenceSelectionProvider } from "@/components/DocumentPane";
 import { ProfileView } from "@/components/ProfileView";
-import { ApiError, api, type ProfileResponse, type TokenPair } from "@/lib/api";
+import { ApiError, api, type ProfileResponse, type Resume, type TokenPair } from "@/lib/api";
 
 // M1 keeps the tokens in localStorage, which is readable by any script on
 // the page. Acceptable while the API and web app are separate dev origins; the
@@ -13,6 +13,20 @@ const TOKEN_KEY = "hirelens.access_token";
 const REFRESH_KEY = "hirelens.refresh_token";
 
 type Mode = "login" | "register";
+
+/**
+ * What is happening to the resume right now, in the user's terms.
+ *
+ * `pending` carrying a reason is a failed attempt waiting out its backoff — the
+ * state polling could not tell apart from "just queued", because the status is
+ * the same one it started at and only the reason underneath it moved.
+ */
+function progressMessage(resume: Resume | null): string {
+  if (!resume) return "Uploading…";
+  if (resume.status === "processing") return "Parsing and verifying evidence…";
+  if (resume.failure_reason) return resume.failure_reason;
+  return "Queued — waiting for a worker…";
+}
 
 function AuthPanel({ onAuthenticated }: { onAuthenticated: (tokens: TokenPair) => void }) {
   const [mode, setMode] = useState<Mode>("register");
@@ -90,6 +104,9 @@ export default function Home() {
   const [result, setResult] = useState<ProfileResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The last state the progress stream reported, which is what the waiting
+  // message is written from.
+  const [progress, setProgress] = useState<Resume | null>(null);
 
   useEffect(() => {
     setToken(localStorage.getItem(TOKEN_KEY));
@@ -128,7 +145,8 @@ export default function Home() {
     // Upload only stores the file and queues the work, so the result has to be
     // waited for rather than read straight out of the response.
     const resume = await api.uploadResume(file, accessToken);
-    return api.waitForProfile(resume.id, accessToken);
+    setProgress(resume);
+    return api.waitForProfile(resume.id, accessToken, setProgress);
   }
 
   /** Replay a resume the worker gave up on, and wait for the new run. */
@@ -137,12 +155,13 @@ export default function Home() {
     setError(null);
     setBusy(true);
     try {
-      await api.retryResume(result.resume.id, token);
-      setResult(await api.waitForProfile(result.resume.id, token));
+      setProgress(await api.retryResume(result.resume.id, token));
+      setResult(await api.waitForProfile(result.resume.id, token, setProgress));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not retry");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -151,6 +170,7 @@ export default function Home() {
     setError(null);
     setBusy(true);
     setResult(null);
+    setProgress(null);
     try {
       setResult(await uploadOnce(file, token));
     } catch (caught) {
@@ -173,6 +193,7 @@ export default function Home() {
       }
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -218,9 +239,11 @@ export default function Home() {
             </button>
           </div>
 
+          {/* Live, because the API streams every state change rather than making
+              the page ask. A retry waiting out its backoff says so here. */}
           {busy && (
             <p className="text-sm text-stone-500 dark:text-stone-400">
-              Parsing and verifying evidence…
+              {progressMessage(progress)}
             </p>
           )}
           {/* A resume the worker gave up on after retrying is kept rather than

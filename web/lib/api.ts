@@ -110,7 +110,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
+async function send(path: string, init: RequestInit = {}, token?: string): Promise<Response> {
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
@@ -126,7 +126,11 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
   if (!response.ok) {
     throw new ApiError(response.status, await readError(response));
   }
-  return (await response.json()) as T;
+  return response;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
+  return (await send(path, init, token)).json() as Promise<T>;
 }
 
 /** FastAPI returns `detail` as either a string or a list of validation errors. */
@@ -160,6 +164,48 @@ const POLL_INTERVAL_MS = 700;
 const POLL_TIMEOUT_MS = 120_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Called with the resume every time the server reports it has changed. */
+export type ProgressHandler = (resume: Resume) => void;
+
+/**
+ * Cut the byte stream back into server-sent events.
+ *
+ * A frame ends at a blank line; whatever follows is the start of the next one and
+ * has to be held until the rest of it arrives. Lines opening with `:` are
+ * keep-alive comments and carry no meaning — they exist so that proxies do not
+ * drop a connection that has gone quiet.
+ */
+async function* readFrames(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+
+      for (let end = buffer.indexOf("\n\n"); end !== -1; end = buffer.indexOf("\n\n")) {
+        const frame = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+
+        let event = "";
+        let data = "";
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data = line.slice(5).trim();
+        }
+        if (event) yield { event, data };
+      }
+    }
+  } finally {
+    // Closes the connection when the caller stops reading early, and is a no-op
+    // once the stream has ended on its own.
+    await reader.cancel();
+  }
+}
 
 export const api = {
   register: (email: string, password: string) =>
@@ -198,21 +244,74 @@ export const api = {
   getProfile: (id: string, token: string) => request<ProfileResponse>(`/resumes/${id}`, {}, token),
 
   /**
-   * Poll until the worker has finished with a resume.
+   * Follow a resume over the progress stream until it reaches a resting state.
    *
-   * Parsing and extraction moved off the request, so an upload only tells us the
-   * work was accepted. Polling is the placeholder: M2 #3 replaces it with an SSE
-   * progress stream, which is why the waiting lives behind one function.
+   * `EventSource` would be less code, but it cannot set an `Authorization`
+   * header — which leaves the token in the query string, and so in proxy access
+   * logs and browser history. `fetch` keeps the bearer header and reuses the
+   * error handling every other call goes through; parsing the frames is the price.
+   *
+   * Resolves with the settled resume, or `null` when the stream ended without one:
+   * the server capped the connection, or the row is gone. The caller falls back.
    */
-  async waitForProfile(id: string, token: string): Promise<ProfileResponse> {
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
-    for (;;) {
-      const response = await api.getProfile(id, token);
-      if (isSettled(response.resume.status)) return response;
-      if (Date.now() >= deadline) {
-        throw new ApiError(0, "Still processing after two minutes. Try again in a moment.");
-      }
-      await sleep(POLL_INTERVAL_MS);
+  async streamResume(id: string, token: string, onProgress?: ProgressHandler) {
+    const response = await send(
+      `/resumes/${id}/events`,
+      { headers: { Accept: "text/event-stream" } },
+      token,
+    );
+    if (!response.body) return null;
+
+    for await (const frame of readFrames(response.body)) {
+      if (frame.event === "status") onProgress?.(JSON.parse(frame.data) as Resume);
+      else if (frame.event === "done") return JSON.parse(frame.data) as Resume;
+      else return null; // `timeout` or `gone`
     }
+    return null;
+  },
+
+  /**
+   * Wait for the worker to finish with a resume, reporting each state on the way.
+   *
+   * Parsing and extraction happen off the request, so an upload only says the work
+   * was accepted. This is the one place that waits for the rest.
+   *
+   * The stream is tried first — one connection, and every change as it lands.
+   * Polling stays as the fallback rather than being deleted with it: a proxy that
+   * buffers `text/event-stream`, or a connection the server capped, would
+   * otherwise leave the page with no result at all. An `ApiError` is an answer
+   * from the API itself — 401 in particular has to reach the caller, which trades
+   * the refresh token for a new pair — so only a broken stream falls back.
+   */
+  async waitForProfile(
+    id: string,
+    token: string,
+    onProgress?: ProgressHandler,
+  ): Promise<ProfileResponse> {
+    try {
+      const settled = await api.streamResume(id, token, onProgress);
+      if (settled) return await api.getProfile(id, token);
+    } catch (caught) {
+      if (caught instanceof ApiError) throw caught;
+    }
+    return pollForProfile(id, token, onProgress);
   },
 };
+
+/** The fallback: what the client did before the stream existed. */
+async function pollForProfile(
+  id: string,
+  token: string,
+  onProgress?: ProgressHandler,
+): Promise<ProfileResponse> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  for (;;) {
+    const response = await api.getProfile(id, token);
+    onProgress?.(response.resume);
+    if (isSettled(response.resume.status)) return response;
+    if (Date.now() >= deadline) {
+      throw new ApiError(0, "Still processing after two minutes. Try again in a moment.");
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+}

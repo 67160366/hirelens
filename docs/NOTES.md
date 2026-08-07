@@ -6,6 +6,61 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
+## 2026-08-07 (later) — pushed to CI, and M2 #3 lands
+
+### What was done
+
+- **The nine unpushed commits went to `origin/main` and CI is green on them.**
+  The Postgres cutover, the ARQ worker, the retry/dead-letter policy and the §11
+  fixes have now been built on a clean machine with no `.env`, no Docker and no
+  API key. That was the largest outstanding process risk and it is closed.
+- **M2 #3: `GET /resumes/{id}/events`**, a server-sent progress stream. It sends
+  the resume on connect and again on every change, then `done` when it settles.
+  The client (`waitForProfile` in `web/lib/api.ts`) opens it with `fetch` and
+  reads frames off the `ReadableStream`, keeping the old polling loop as the
+  fallback. The waiting message is now written from live state, so a user can
+  finally see "attempt 1 failed, retrying" instead of one static line.
+- Suite grew 164 → 173 (`tests/test_events.py`). All gates green: `pytest -q`,
+  `ruff check`, `ruff format --check`, `mypy app`, and `npm run typecheck / lint /
+  build`.
+
+### The two decisions inside it
+
+- **The stream is the contract; re-reading the row is only the mechanism.** The
+  worker could publish to Redis and the endpoint could subscribe, but that puts
+  Redis on the API's critical path and breaks the no-server default the inline
+  queue and the whole test suite depend on. Nothing a client sees would change,
+  so the cheap version is the one worth having.
+- **`fetch`, not `EventSource`.** `EventSource` cannot set an `Authorization`
+  header, and a token in the query string lands in proxy logs and browser
+  history. ~30 lines of frame parsing buys the bearer header back.
+
+### Next, in order
+
+1. **The browser walkthrough** — register → upload → watch the status narrate →
+   profile → forced failure → "Try again". Still the one thing never checked in a
+   real browser.
+2. **M2 #4 — OCR fallback for scans** (Tesseract + `tha`), then DOCX (#5), the
+   two-column fix (#6), MinIO (#7). `PLAN.md` has the order and the reasons.
+
+### Worth knowing
+
+- **httpx's ASGI transport buffers a whole response** before handing it back, so
+  `client.stream(...)` in a test does not deliver frames as they are written.
+  `tests/test_events.py` therefore tests the endpoint over HTTP only where the
+  stream ends by itself, and drives `_resume_events` directly for the sequence —
+  which is the more deterministic test anyway, since the job runs to completion
+  between two `anext` calls instead of racing the stream.
+- **FastAPI closes `yield` dependencies before a streaming body runs** (since
+  0.106). A `StreamingResponse` generator cannot use the request's session, which
+  is why `app.state.sessionmaker` exists and the stream opens a short session per
+  read.
+- The three stream timings are settings (`SSE_POLL_SECONDS`,
+  `SSE_HEARTBEAT_SECONDS`, `SSE_MAX_STREAM_SECONDS`) because a proxy in front of
+  the API may well need different ones.
+
+---
+
 ## 2026-08-07 — the three §11 bugs are fixed and verified
 
 ### What was done

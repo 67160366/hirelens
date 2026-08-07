@@ -78,7 +78,20 @@ should review them before anyone treats the details as commitments.
   nobody can run again is just a status. Verified live: 5s → 10s → dead-lettered
   against a downed provider, then replayed to a verified profile on attempt 4,
   reusing the text parsed before the first failure.
-- [ ] 3. SSE progress endpoint; wire the web UI's "Parsing…" state to it.
+- [x] 3. **SSE progress endpoint; the web UI's waiting state wired to it**
+  (2026-08-07). `GET /resumes/{id}/events` sends the resume's state on connect and
+  again on every change, then `done` once it settles — replacing a re-fetch of
+  `GET /resumes/{id}` every 700 ms, an authentication per tick, and a waiting
+  message that could not tell "queued" apart from "attempt 1 failed, retrying".
+  The endpoint re-reads the row on an interval rather than subscribing to Redis:
+  the stream is the contract and the mechanism behind it can be replaced, while
+  putting Redis on the API's critical path would break the no-server default the
+  inline queue and the whole test suite depend on. The client uses `fetch` and a
+  `ReadableStream` rather than `EventSource`, which cannot carry an
+  `Authorization` header — the only alternative is a token in the query string,
+  and so in proxy access logs and browser history. Polling survives as the
+  fallback for a proxy that buffers `text/event-stream` or a connection the
+  server caps.
 - [ ] 4. OCR fallback for scans (Tesseract + `tha`). `ParsedDocument.pages_without_text`
   is the work list; `resume_scanned.pdf` / `resume_mixed_scan.pdf` are ready fixtures.
 - [ ] 5. DOCX parser. `parse_document_bytes` already dispatches on extension.
