@@ -81,15 +81,33 @@ Against Postgres + ARQ + real Gemini, on a fresh port:
   line. The lesson worth keeping: the cleanup was not cosmetic, it was the thing
   standing between the work and its verification.
 
+### Also landed this session
+
+- **M2 #5 — DOCX.** `parse_docx` reads paragraphs *and tables* in document order.
+  The table part is the whole point: `document.paragraphs` skips anything inside
+  one, and resumes routinely put skills in a table, so the loss would have looked
+  like a model that missed them. A `.docx` has no pages — Word decides that at
+  render time — so it is reported as one page rather than having numbers invented
+  for it. The upload gate now holds a signature per type (`%PDF-`, and `PK\x03\x04`
+  for the zip a .docx is), so relabelling one as the other is still refused.
+- **A latent repo bug, found by accident.** Checking a PDF fixture out during this
+  work corrupted it: `core.autocrlf=true` (the Git-for-Windows default) plus no
+  `.gitattributes` meant checkout rewrote 0x0A inside compressed streams.
+  `resume_scanned.pdf` grew 35214 → 35293 bytes and stopped parsing. Verified by
+  cloning the previous commit with `autocrlf=true` — the scan test fails on a clone
+  where the code is fine — and re-verified fixed on current main. **This made
+  "git clone && pytest -q works" false on a default Windows install**, and it would
+  have read as a parser bug. Fixed with a `.gitattributes` marking binaries.
+
 ### Next, in order
 
-1. **Push and watch CI** — small batches, per the standing advice below.
-2. **M2 #5 — DOCX** (`parse_document_bytes` already dispatches on extension, and
-   `ALLOWED_SUFFIXES` in the upload route needs opening), then the two-column fix
-   (#6) and MinIO (#7).
-3. The cleanup commit that was deliberately kept out of this slice: the empty
-   `app/workers/` package, `ALLOWED_ORIGINS` as a setting, and vitest for
-   `web/lib/api.ts`.
+1. **Push and watch CI** — small batches, per the standing advice below. Six
+   commits are waiting.
+2. **M2 #6 — the two-column fix** (the strict xfail in `test_parse.py` defines
+   done, and the bboxes are cleanly separable — the left column ends at x≈154 and
+   the right starts at x=300 in the fixture), then MinIO (#7). That closes M2.
+3. **Decide on OCR confidence gating** — see the degradation findings below. It is
+   the one open question the OCR work leaves behind.
 
 ### Worth knowing
 

@@ -137,10 +137,22 @@ async def authed_client(client: AsyncClient) -> AsyncClient:
     return client
 
 
+CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
 def resume_upload(name: str = "resume_en.pdf") -> dict[str, tuple[str, bytes, str]]:
-    """A multipart payload for one of the PDF fixtures."""
+    """A multipart payload for one of the fixtures.
+
+    The content type follows the extension. The upload gate does not read it — it
+    trusts the magic bytes instead — but a test that announced every file as a PDF
+    would misdescribe what a browser actually sends.
+    """
     data = (FIXTURES / name).read_bytes()
-    return {"file": (name, data, "application/pdf")}
+    suffix = Path(name).suffix.lower()
+    return {"file": (name, data, CONTENT_TYPES.get(suffix, "application/octet-stream"))}
 
 
 async def upload_and_read(client: AsyncClient, name: str = "resume_en.pdf") -> dict[str, Any]:

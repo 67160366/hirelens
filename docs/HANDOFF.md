@@ -14,11 +14,12 @@ milestone status. Short dated session notes and owner advice live in
 profile in which every field cites the exact text it came from, and anything the
 model could not cite is dropped and reported.
 
-**M2 is in progress: items #1, #2, #3, #4 and #8 are done.** Parsing and extraction
-run on a background worker with retry, backoff and a dead-letter queue around them,
-the web client follows a resume over a progress stream instead of polling for it,
-and a scanned page is recovered with OCR instead of being a permanent failure.
-DOCX, the two-column fix and MinIO are still open.
+**M2 is in progress: items #1, #2, #3, #4, #5 and #8 are done.** Parsing and
+extraction run on a background worker with retry, backoff and a dead-letter queue
+around them, the web client follows a resume over a progress stream instead of
+polling for it, a scanned page is recovered with OCR instead of being a permanent
+failure, and `.docx` uploads are read as well as PDFs. **The two-column fix (#6)
+and MinIO (#7) are what remain.**
 
 ### Verified by running it, not only by tests
 
@@ -119,7 +120,7 @@ Skim only when needed: `api/app/api/routes/*`, `api/app/security.py`,
 api/app/
   pipeline/
     evidence.py      ★ locate quotes in the source; reject what cannot be found
-    parse.py           PDF → text + char offsets + page spans; detects scans vs blank
+    parse.py           PDF/DOCX → text + char offsets + page spans; scans vs blank
     ocr.py             OCREngine seam + Tesseract; recovers pages with no text layer
     extract.py         orchestrates: ask → verify → re-ask → keep the cleanest result
     prompts.py         versioned prompts (EXTRACTION_PROMPT_VERSION)
@@ -329,6 +330,14 @@ want the retry policy run the ARQ worker.
   system does report success. Closing this properly means reading Tesseract's
   per-word confidence and rejecting a page below a threshold; the character count
   cannot tell text from noise.
+- **A `.docx` citation says "page 1" because a `.docx` has no pages.** Word decides
+  where a page breaks when it renders, so the file does not contain the answer.
+  Reporting the whole document as one page is the honest version; author-inserted
+  page breaks *are* in the file and could split it later, but automatic ones never
+  will be.
+- **An image-only `.docx` is reported blank, not scanned.** OCR here reads pages
+  rendered from a PDF; images embedded in a Word file are not run through it, and
+  calling one a scan would send the user after a setting that would not help.
 - **Ambiguous citations are flagged, not resolved.** A quote like `Python` appearing
   in both a bullet and a skills list is reported ambiguous rather than guessed.
   A worthwhile refinement is to prefer the skills-section span for skill claims.
@@ -416,6 +425,7 @@ the API and the worker, upload again. To see the dead-letter path: set
 |---|---|
 | `test_evidence.py` | Three-tier matching, rejection reasons, Thai. The specification. |
 | `test_parse.py` | Offsets, page spans, scan detection, the two-column xfail |
+| `test_docx.py` | Paragraphs, tables, document order, and that a page-less format is not given invented page numbers |
 | `test_ocr.py` | The OCR fallback through a stub engine: which pages are chosen, the offset contract across a rescued page, and what happens when recognition finds nothing |
 | `test_ocr_tesseract.py` | The real binary, including Thai. **Opt-in**, needs `OCR_TESSERACT_CMD` |
 | `test_extract.py` | The re-ask loop and how it picks a result |
@@ -435,7 +445,7 @@ the API and the worker, upload again. To see the dead-letter path: set
 **All setup items are done.** Docker is installed, development runs on Postgres,
 the JSONB path is verified, Gemini has run live, and the queue is real.
 
-**Next is M2 #5.** In dependency order (live status in `docs/PLAN.md`):
+**Next is M2 #6.** In dependency order (live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
@@ -443,7 +453,7 @@ the JSONB path is verified, Gemini has run live, and the queue is real.
 | 2 | ~~Job state, retry with backoff, dead-letter queue~~ **done** | §6 above |
 | 3 | ~~SSE progress endpoint~~ **done** | `GET /resumes/{id}/events` (`api/app/api/routes/resumes.py`), consumed by `waitForProfile` in `web/lib/api.ts`, which keeps polling as the fallback. Pinned by `api/tests/test_events.py` |
 | 4 | ~~OCR fallback for scans~~ **done** | `app/pipeline/ocr.py` is the seam; `parse.py` substitutes recognized text before spans are measured. Off by default (`OCR_ENGINE=none`), so CI and a fresh clone are unchanged. Pinned by `tests/test_ocr.py` (stub engine) plus the opt-in `tests/test_ocr_tesseract.py` |
-| 5 | DOCX parser | `parse_document_bytes` already dispatches on extension and raises `UnsupportedFileTypeError`; the upload route's `ALLOWED_SUFFIXES` gate also needs opening |
+| 5 | ~~DOCX parser~~ **done** | `parse_docx` in `parse.py` reads paragraphs and tables in document order; a `.docx` has no pages so it is reported as one. The upload gate keeps a magic-byte signature per type. Pinned by `tests/test_docx.py` |
 | 6 | **Two-column fix** via bbox column detection | The strict xfail defines "done" |
 | 7 | MinIO storage backend | `build_storage` has the `MINIO` branch stubbed with a clear error. The worker and the API both build storage independently, so both pick it up |
 | 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay on the rendered page is *not* done: it needs bbox geometry, which `ParsedDocument` does not keep, plus an endpoint serving the original file. Do it with #6, which needs the same bbox extraction. |

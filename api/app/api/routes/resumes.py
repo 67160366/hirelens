@@ -33,11 +33,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
-ALLOWED_SUFFIXES = {".pdf"}
 # Slack for multipart boundaries and headers when judging Content-Length.
 MULTIPART_OVERHEAD_BYTES = 4 * 1024
-# Every real PDF starts with this; the extension check alone accepts any bytes.
-PDF_MAGIC = b"%PDF-"
+
+# The leading bytes each accepted type really starts with. The extension is
+# caller-chosen and proves nothing, so the magic bytes are what the gate trusts —
+# a mislabelled file fails parsing anyway, and rejecting it here is before it is
+# stored and before extraction is billed. A .docx is a zip, hence the PK header.
+MAGIC_BY_SUFFIX = {
+    ".pdf": b"%PDF-",
+    ".docx": b"PK\x03\x04",
+}
+ALLOWED_SUFFIXES = frozenset(MAGIC_BY_SUFFIX)
 
 # Where a retry can help. `pending` and `processing` are already in hand;
 # `extracted` is done, and redoing it would bill a second extraction to produce
@@ -105,7 +112,7 @@ async def upload_resume(
     queue: QueueDep,
     request: Request,
     response: Response,
-    file: Annotated[UploadFile, File(description="A PDF resume.")],
+    file: Annotated[UploadFile, File(description="A PDF or DOCX resume.")],
 ) -> ResumeOut:
     """Store a resume and queue it for parsing and extraction.
 
@@ -145,12 +152,10 @@ async def upload_resume(
         )
     if len(data) > MAX_UPLOAD_BYTES:
         raise too_large
-    # The suffix is caller-chosen; the magic bytes are not. Anything that is not
-    # a PDF fails parsing anyway, so reject it before storing and billing.
-    if not data.startswith(PDF_MAGIC):
+    if not data.startswith(MAGIC_BY_SUFFIX[suffix]):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="File is not a valid PDF",
+            detail=f"File does not look like a valid {suffix.lstrip('.').upper()}",
         )
 
     result = await resume_service.ingest_resume(

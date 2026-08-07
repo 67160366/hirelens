@@ -1,4 +1,4 @@
-"""Generate the PDF fixtures used by the parser tests.
+"""Generate the PDF and DOCX fixtures used by the parser tests.
 
 Run this to (re)create the fixtures, then commit the results:
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from docx import Document
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
@@ -234,6 +235,39 @@ def write_not_a_pdf(path: Path) -> None:
     path.write_bytes(b"This is plainly not a PDF file.\n" * 4)
 
 
+def write_docx(path: Path) -> None:
+    """A Word resume whose skills sit in a table.
+
+    The table is the point: resumes routinely use one for layout, and a parser that
+    reads only `document.paragraphs` drops it silently — which looks like a model
+    that missed the skills rather than a parser that never saw them. Thai is here
+    for the same reason it is in the PDF fixtures.
+    """
+    document = Document()
+    document.add_paragraph("Kanya Sriwong")
+    document.add_paragraph("วิศวกรข้อมูล  |  kanya.s@example.com  |  เชียงใหม่")
+
+    document.add_paragraph("EXPERIENCE")
+    document.add_paragraph("Lanna Data — Data Engineer (Feb 2022 - Present)")
+    document.add_paragraph("  สร้างไปป์ไลน์ ETL ด้วย Python และ Airflow")
+
+    document.add_paragraph("SKILLS")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Python"
+    table.cell(0, 1).text = "6 years"
+    table.cell(1, 0).text = "Airflow, dbt"
+    table.cell(1, 1).text = "4 years"
+
+    document.add_paragraph("การศึกษา")
+    document.add_paragraph("มหาวิทยาลัยเชียงใหม่ — วิศวกรรมคอมพิวเตอร์")
+    document.save(str(path))
+
+
+def write_empty_docx(path: Path) -> None:
+    """A structurally valid .docx with nothing in it."""
+    Document().save(str(path))
+
+
 def main() -> int:
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     write_single_page(FIXTURE_DIR / "resume_en.pdf", RESUME_EN, thai=False)
@@ -244,9 +278,11 @@ def main() -> int:
     write_mixed_scan(FIXTURE_DIR / "resume_mixed_scan.pdf")
     write_empty(FIXTURE_DIR / "empty.pdf")
     write_not_a_pdf(FIXTURE_DIR / "not_a_pdf.pdf")
+    write_docx(FIXTURE_DIR / "resume_th.docx")
+    write_empty_docx(FIXTURE_DIR / "empty.docx")
 
-    for pdf in sorted(FIXTURE_DIR.glob("*.pdf")):
-        print(f"  {pdf.name:28} {pdf.stat().st_size:>8,} bytes")
+    for fixture in sorted(FIXTURE_DIR.glob("*.pdf")) + sorted(FIXTURE_DIR.glob("*.docx")):
+        print(f"  {fixture.name:28} {fixture.stat().st_size:>8,} bytes")
     return 0
 
 

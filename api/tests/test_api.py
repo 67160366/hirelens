@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from app.api.routes.resumes import MAX_UPLOAD_BYTES
 from app.llm.fake import FakeMode
 from app.models import ResumeStatus
-from tests.conftest import resume_upload, upload_and_read
+from tests.conftest import FIXTURES, resume_upload, upload_and_read
 
 
 class TestHealth:
@@ -153,11 +153,31 @@ class TestUpload:
         listing = await authed_client.get("/resumes")
         assert len(listing.json()) == 1
 
-    async def test_rejects_a_non_pdf_extension(self, authed_client: AsyncClient):
+    async def test_rejects_an_unsupported_extension(self, authed_client: AsyncClient):
         response = await authed_client.post(
-            "/resumes", files={"file": ("resume.docx", b"not a pdf", "application/octet-stream")}
+            "/resumes", files={"file": ("resume.rtf", b"{\\rtf1}", "application/rtf")}
         )
         assert response.status_code == 415
+
+    async def test_accepts_a_docx(self, authed_client: AsyncClient):
+        body = await upload_and_read(authed_client, "resume_th.docx")
+        assert body["resume"]["status"] == ResumeStatus.EXTRACTED
+        # A .docx has no pages, so it is reported as the single page it is.
+        assert body["resume"]["page_count"] == 1
+        assert body["profile"] is not None
+
+    async def test_a_pdf_renamed_to_docx_is_rejected_by_magic_bytes(
+        self, authed_client: AsyncClient
+    ):
+        """Each accepted type has its own signature, so the gate cannot be fooled
+        by relabelling one as the other."""
+        data = (FIXTURES / "resume_en.pdf").read_bytes()
+        response = await authed_client.post(
+            "/resumes",
+            files={"file": ("resume.docx", data, "application/octet-stream")},
+        )
+        assert response.status_code == 415
+        assert "DOCX" in response.json()["detail"]
 
     async def test_rejects_an_empty_upload(self, authed_client: AsyncClient):
         response = await authed_client.post(

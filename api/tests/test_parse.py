@@ -145,9 +145,10 @@ class TestFailureModes:
             parse_pdf(FIXTURES / "not_a_pdf.pdf")
 
     def test_unsupported_extension_names_the_extension(self):
+        # `.docx` used to be the example here; it routes to a real parser now.
         with pytest.raises(UnsupportedFileTypeError) as exc:
-            parse_document(Path("resume.docx"))
-        assert exc.value.suffix == ".docx"
+            parse_document(Path("resume.rtf"))
+        assert exc.value.suffix == ".rtf"
 
     def test_missing_file_raises_rather_than_returning_empty(self):
         with pytest.raises((CorruptDocumentError, FileNotFoundError)):

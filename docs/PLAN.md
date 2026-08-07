@@ -109,7 +109,16 @@ should review them before anyone treats the details as commitments.
   read rather than to what was printed. Verified live against Postgres + ARQ + real
   Gemini: `resume_scanned.pdf` went from a permanent `failed` to `extracted` with 7/7
   claims verified, including three skills cited out of the **Thai** OCR line.
-- [ ] 5. DOCX parser. `parse_document_bytes` already dispatches on extension.
+- [x] 5. **DOCX parser** (2026-08-08). `parse_docx` reads paragraphs *and tables* in
+  document order — `document.paragraphs` skips anything inside a table, and resumes
+  routinely put their skills in one, so the loss would have looked like a model that
+  missed them rather than a parser that never saw them. A `.docx` has no pages (Word
+  decides where page 2 falls at render time), so the whole document is reported as
+  one page rather than having page numbers invented for it. The upload gate now
+  keeps a signature per accepted type — `%PDF-` and the zip `PK\x03\x04` — so a
+  relabelled file is still refused before it is stored or billed. Pinned by
+  `tests/test_docx.py`; verified end to end with `python -m app.cli`: 7/7 verified,
+  every match exact, Thai and table cells cited.
 - [ ] 6. Two-column fix via bbox column detection. The strict xfail in
   `api/tests/test_parse.py` defines "done".
 - [ ] 7. MinIO storage backend. `build_storage` has the `MINIO` branch stubbed.

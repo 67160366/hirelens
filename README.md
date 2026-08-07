@@ -171,6 +171,10 @@ baseline it has not measured invites unbounded work. It is scoped as optional
 
 Recorded honestly, with tests pinning current behaviour so fixes are visible:
 
+- **A `.docx` citation always says page 1.** Word decides where pages break when it
+  renders, so the file does not say — and inventing a page number would be a guess
+  presented as a fact. Tables *are* read, in document order, because that is where a
+  resume usually keeps its skills.
 - **Two-column PDFs interleave.** pdfplumber reads in visual order, so a job title
   from the right column can land beside contact details from the left. Quotes stay
   truthful; adjacency misleads. Pinned by

@@ -1,4 +1,4 @@
-"""Turn an uploaded document into text with stable character offsets.
+"""Turn an uploaded document (PDF or DOCX) into text with stable character offsets.
 
 Two things make this more than a wrapper around `extract_text()`:
 
@@ -21,11 +21,17 @@ import io
 import logging
 import unicodedata
 from bisect import bisect_right
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import docx
+import docx.document
 import pdfplumber
+from docx.oxml.ns import qn
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
 
@@ -160,13 +166,12 @@ class ParsedDocument:
 
 
 def parse_document(path: Path, *, ocr: OCREngine | None = None) -> ParsedDocument:
-    """Parse a document by file extension.
-
-    DOCX arrives in M2; the dispatcher exists now so callers do not have to change.
-    """
+    """Parse a document by file extension."""
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         return parse_pdf(path, ocr=ocr)
+    if suffix == ".docx":
+        return parse_docx(path)
     raise UnsupportedFileTypeError(suffix)
 
 
@@ -181,6 +186,8 @@ def parse_document_bytes(
     suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
         return parse_pdf(io.BytesIO(data), ocr=ocr)
+    if suffix == ".docx":
+        return parse_docx(io.BytesIO(data))
     raise UnsupportedFileTypeError(suffix)
 
 
@@ -217,6 +224,55 @@ def parse_pdf(source: Path | io.BytesIO, *, ocr: OCREngine | None = None) -> Par
         pages_from_ocr=from_ocr,
         ocr_attempted=ocr is not None,
     )
+
+
+def parse_docx(source: Path | io.BytesIO) -> ParsedDocument:
+    """Read a .docx into the same offset space a PDF produces.
+
+    **A .docx has no pages.** Word reflows text at render time, so where page 2
+    begins depends on the fonts, the printer and the zoom level — it is not in the
+    file. Rather than invent page numbers, the whole document is reported as one
+    page: a citation then says "somewhere in this document", which is true, instead
+    of "page 2", which would be a guess dressed as a fact. Explicit author-inserted
+    page breaks *are* in the file and could split it later; automatic ones never
+    will be.
+
+    Tables are read in document order along with paragraphs, because resumes
+    routinely use a table for layout and skipping them would silently lose the
+    skills section — the failure would look like a model that missed things.
+    """
+    try:
+        # python-docx takes a path as `str` rather than `Path`; a BytesIO passes
+        # straight through as the file object it already is.
+        document = docx.Document(str(source) if isinstance(source, Path) else source)
+        text = "\n".join(_iter_docx_text(document))
+    except ParseError:
+        raise
+    except Exception as exc:  # python-docx/lxml raise a wide variety of types
+        raise CorruptDocumentError(f"Could not read DOCX: {exc}") from exc
+
+    # `has_images=False`: an image-only .docx is not a scan in the sense OCR could
+    # rescue, and reporting it as one would send the user chasing a setting that
+    # would not help.
+    return _assemble([text])
+
+
+def _iter_docx_text(document: docx.document.Document) -> Iterator[str]:
+    """Yield paragraph and table text in the order the document declares it.
+
+    `document.paragraphs` skips anything inside a table, so the body's own child
+    order is walked instead — it is the only place that knows a table sits between
+    two paragraphs rather than after all of them.
+    """
+    for child in document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            yield Paragraph(child, document).text
+        elif child.tag == qn("w:tbl"):
+            for row in Table(child, document).rows:
+                # Tab between cells, newline between rows: it keeps a row that
+                # reads as one line in Word reading as one line here, which is
+                # what a quote from it will look like.
+                yield "\t".join(cell.text.strip() for cell in row.cells)
 
 
 def _recover_pages_with_ocr(
