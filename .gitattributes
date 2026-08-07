@@ -1,0 +1,24 @@
+# Line-ending policy.
+#
+# The reason this file exists: Git for Windows defaults to `core.autocrlf=true`,
+# which rewrites LF to CRLF on checkout for anything it decides is text. It guesses
+# wrong on PDFs — a byte that happens to be 0x0A inside a compressed stream becomes
+# 0x0D 0x0A, the file grows, and the xref offsets no longer point where they claim.
+# The result is `Could not read PDF: Unexpected EOF` on a fresh clone, which would
+# take the whole parser suite down with it and make "git clone && pytest -q works"
+# false on a default Windows install.
+#
+# Normalize text in the repository, and never touch binaries.
+
+* text=auto
+
+*.pdf   binary
+*.docx  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.traineddata binary
