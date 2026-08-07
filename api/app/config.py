@@ -42,6 +42,14 @@ class QueueBackend(StrEnum):
     """Hand the job to an ARQ worker over Redis. The real thing."""
 
 
+class OCREngineName(StrEnum):
+    NONE = "none"
+    """No OCR: a page with no text layer stays unreadable, as it was before M2 #4."""
+
+    TESSERACT = "tesseract"
+    """Shell out to Tesseract. Needs the binary and its language packs installed."""
+
+
 DEFAULT_JWT_SECRET = "change-me-before-deploying"
 
 
@@ -86,6 +94,30 @@ class Settings(BaseSettings):
     jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_access_ttl_minutes: int = 30
     jwt_refresh_ttl_days: int = 14
+
+    # OCR for pages with no text layer. Off by default for the same reason the
+    # extractor defaults to `fake`: Tesseract is a system binary, CI will never
+    # have one, and a fresh clone has to run the whole suite with no servers.
+    ocr_engine: OCREngineName = OCREngineName.NONE
+
+    # The binary's name or full path. A portable Tesseract is not on PATH, so this
+    # is not as redundant as it looks.
+    ocr_command: str = "tesseract"
+
+    # Tesseract's `+`-joined language codes. Thai first because that is what this
+    # project is for; a missing pack is refused at startup rather than silently
+    # returning noise for half the document.
+    ocr_languages: str = "tha+eng"
+
+    # 300 dpi is the usual floor for reliable OCR — below it Thai tone marks start
+    # to blur into the characters they sit on.
+    ocr_dpi: int = Field(default=300, ge=72, le=600)
+
+    # Rendering and recognizing a page costs roughly a second, so a long scan is
+    # capped rather than allowed to hold a worker. Pages past the cap stay reported
+    # as having no text.
+    ocr_max_pages: int = Field(default=10, ge=1, le=50)
+    ocr_timeout_seconds: float = Field(default=60.0, gt=0)
 
     # How many times to re-ask the model when its evidence fails validation.
     extraction_max_attempts: int = Field(default=2, ge=1, le=5)

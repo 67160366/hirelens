@@ -19,6 +19,7 @@ from app.config import LLMProvider, get_settings
 from app.llm.base import LLMError
 from app.llm.registry import build_extractor
 from app.pipeline.extract import ExtractionOutcome, extract_profile
+from app.pipeline.ocr import OCRError, build_ocr_engine
 from app.pipeline.parse import ParseError, parse_document
 from app.schemas.profile import EvidenceRef
 
@@ -96,21 +97,35 @@ async def _run(paths: list[Path], provider: LLMProvider | None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    print(f"provider: {extractor.provider_name}")
+    try:
+        ocr = build_ocr_engine(settings)
+    except OCRError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"provider: {extractor.provider_name}  ocr: {settings.ocr_engine}")
     exit_code = 0
     try:
         for path in paths:
             try:
-                document = parse_document(path)
-            except ParseError as exc:
+                document = parse_document(path, ocr=ocr)
+            except (ParseError, OCRError) as exc:
                 print(f"\n=== {path.name} ===\nparse failed: {exc}", file=sys.stderr)
                 exit_code = 1
                 continue
 
+            if document.pages_from_ocr:
+                print(
+                    f"note: {path.name} page(s) "
+                    f"{', '.join(map(str, document.pages_from_ocr))} were read by OCR — "
+                    "quoted text from them may contain recognition errors",
+                    file=sys.stderr,
+                )
             if document.pages_without_text:
                 print(
                     f"note: {path.name} has no text on page(s) "
-                    f"{', '.join(map(str, document.pages_without_text))} — needs OCR (M2)",
+                    f"{', '.join(map(str, document.pages_without_text))} — "
+                    "nothing there can be cited",
                     file=sys.stderr,
                 )
 

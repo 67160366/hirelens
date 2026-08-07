@@ -6,6 +6,100 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
+## 2026-08-08 (later) — M2 #4: a scan is no longer a dead end
+
+### What was done
+
+`OCR_ENGINE=tesseract` turns a scanned resume from a permanent `failed` into a
+normal, fully cited profile. Tesseract 5.5.3 was installed this session with
+`eng`, `tha` and `osd`.
+
+- **`app/pipeline/ocr.py`** is the seam: an `OCREngine` ABC, `TesseractEngine`
+  driven over stdin/stdout, and `build_ocr_engine`. Subprocess rather than a
+  wrapper library — no new Python dependency, and the page image never touches
+  disk, which matters because it is a picture of somebody's resume.
+- **`parse.py` substitutes recognized text before `_assemble` measures spans.**
+  That single decision is why nothing downstream changed: evidence offsets, page
+  mapping and `DocumentPane` highlighting all kept working untouched. Same move as
+  the NUL strip from the §11 incident.
+- **Off by default** (`OCR_ENGINE=none`), so CI and a fresh clone are exactly as
+  they were. The suite drives the whole path through a stub engine;
+  `tests/test_ocr_tesseract.py` is opt-in on `OCR_TESSERACT_CMD`, in the shape of
+  `tests/test_postgres.py`.
+- **`pages_from_ocr`** is recorded on the resume (migration `0003`), returned by the
+  API and surfaced in `ProfileView`, because a citation into an OCR'd page is
+  faithful to what was *read*, not to what was printed.
+- Suite grew 173 → 188 (`tests/test_ocr.py`), plus 6 opt-in. All gates green,
+  including `tests/test_postgres.py` and the migration round-trip on real Postgres.
+
+### Verified live, not only by tests
+
+Against Postgres + ARQ + real Gemini, on a fresh port:
+
+- **`resume_scanned.pdf`**: `pending` → `processing` → `extracted` in 5.7 s with
+  `pages_from_ocr=[1]`. 7/7 verified, 0 dropped, every match tier-1 exact, all 7
+  spans slicing back out of the stored text. **Three skills were cited straight out
+  of the Thai OCR line** `ทักษะ: Python, FastAPI, PostgreSQL`.
+- **`resume_mixed_scan.pdf`**: `pages_from_ocr=[2]` — page 1 kept its text layer,
+  page 2 came from the image, 5/5 verified.
+- Before/after on the CLI is the clearest single artifact: `parse failed: …requires
+  OCR` becomes a profile with four exact citations.
+
+### The decisions inside it
+
+- **`OCREngine | None`, and `None` means off.** A null-object engine returns `""`
+  both when OCR is disabled and when it read a page and found nothing. The second is
+  a real answer about the document and must stay distinguishable.
+- **The language pack is checked at startup, not per document.** A Tesseract without
+  `tha` would keep working for English and return noise for Thai — the failure this
+  project can least afford, and invisible until someone reads the output. Same class
+  of silent corruption as a stale price table.
+- **Recognized text below the text-layer threshold is thrown away** rather than
+  stored. A handful of noise characters is not text anybody wrote, and this project
+  only quotes text somebody did.
+
+### What bit, and what to do about it
+
+- **A stale ARQ worker from the previous session stole the first job** and marked the
+  scan `failed` with the *old* error message — pre-OCR code, still polling the same
+  Redis queue. `NOTES.md` already warned "stop the other workers first"; it cost ten
+  minutes anyway because the symptom looks exactly like a bug in the new code. The
+  giveaway was the wording of `failure_reason` in the database. **Check
+  `Get-CimInstance Win32_Process | Where CommandLine -like '*arq*'` before believing
+  any live run.** All arq workers are stopped now — start one when you next need it.
+- **The zombie API on :8000 and a dev server on :3000 are still there**, unchanged
+  from the last entry. Still worth a reboot.
+- **`ALLOWED_ORIGINS` blocked the browser check.** It is hard-coded to :3000 in
+  `app/main.py`, :3000 was occupied, and a dev server on :3002 would have every call
+  refused by CORS. So the `pages_from_ocr` banner is verified by typecheck, lint and
+  build plus the API returning the field — **not by eye**. This is the second session
+  this hard-coded list has cost time; it is a three-line change and it is now
+  blocking verification, not just convenience.
+
+### Next, in order
+
+1. **Push and watch CI** — small batches, per the standing advice below.
+2. **M2 #5 — DOCX** (`parse_document_bytes` already dispatches on extension, and
+   `ALLOWED_SUFFIXES` in the upload route needs opening), then the two-column fix
+   (#6) and MinIO (#7).
+3. The cleanup commit that was deliberately kept out of this slice: the empty
+   `app/workers/` package, `ALLOWED_ORIGINS` as a setting, and vitest for
+   `web/lib/api.ts`.
+
+### Worth knowing
+
+- **A real scan will not OCR as cleanly as the fixtures.** They are synthetic
+  renders of known text, so Tesseract gets them perfect and the tests are
+  deterministic — which also means no test in this repo can show what a photographed
+  resume does. Feed it ugly scans on purpose, the same advice as for ugly PDFs.
+- **No image preprocessing** (deskew, threshold, upscale) — deliberately, until a
+  real document shows it is needed.
+- **OCR costs about a second per page** at 300 dpi, capped at `OCR_MAX_PAGES=10`.
+  Parsing now runs in `asyncio.to_thread`, so it no longer blocks the worker's event
+  loop or the progress streams the API is serving.
+
+---
+
 ## 2026-08-08 — the browser walkthrough, finally
 
 The Chrome extension connected, so the one thing outstanding since 2026-07-30 is

@@ -176,9 +176,14 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
   truthful; adjacency misleads. Pinned by
   `tests/test_parse.py::TestTwoColumnLayout`, including a `strict` xfail that will
   start passing when M2 adds bbox column detection.
-- **Scanned PDFs are rejected, not read.** Detected and reported with an actionable
-  message (and distinguished from genuinely blank documents, which OCR cannot
-  rescue). OCR lands in M2.
+- **OCR text is faithful to what was read, not to what was printed.** A scanned page
+  is recovered with Tesseract (`OCR_ENGINE=tesseract`), and the recognized text
+  becomes the document every quote is checked against — so the guardrail is
+  unchanged and a fabricated quote is still dropped. What OCR cannot promise is that
+  it read the page correctly, so a citation into an OCR'd page can faithfully quote a
+  misrecognition. Those pages are named in `pages_from_ocr` and the UI says so. With
+  `OCR_ENGINE=none` (the default) a scan is still reported rather than read, and
+  genuinely blank documents stay distinct from scans, since OCR cannot rescue them.
 - **Ambiguous citations are flagged, not resolved.** A quote such as `Python` that
   appears in both a bullet and a skills list is reported as ambiguous rather than
   guessed at.

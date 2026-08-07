@@ -15,6 +15,7 @@ from app.db import get_sessionmaker
 from app.jobs import JobContext
 from app.llm.registry import build_extractor
 from app.logging_config import configure_logging
+from app.pipeline.ocr import build_ocr_engine
 from app.queue import build_queue
 from app.storage import build_storage
 
@@ -32,6 +33,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.storage = build_storage(settings)
     app.state.extractor = build_extractor(settings)
+    # Probes the binary and its language packs, so a misconfigured OCR setup fails
+    # here rather than once per uploaded scan.
+    app.state.ocr = build_ocr_engine(settings)
     # Held on state because the progress stream needs to open its own sessions:
     # its generator runs after FastAPI has closed the request's session.
     app.state.sessionmaker = get_sessionmaker()
@@ -44,13 +48,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             storage=app.state.storage,
             extractor=app.state.extractor,
             settings=settings,
+            ocr=app.state.ocr,
         ),
     )
     logger.info(
-        "started: provider=%s storage=%s queue=%s",
+        "started: provider=%s storage=%s queue=%s ocr=%s",
         settings.llm_provider,
         settings.storage_backend,
         settings.queue_backend,
+        settings.ocr_engine,
     )
     try:
         yield

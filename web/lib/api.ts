@@ -81,7 +81,13 @@ export interface Resume {
   status: ResumeStatus;
   size_bytes: number;
   page_count: number | null;
+  /** Pages with no usable text even after OCR — nothing on them can be cited. */
   pages_without_text: number[];
+  /**
+   * Pages whose text was recognized from an image. A citation into one of these is
+   * faithful to what was read, not necessarily to what was printed.
+   */
+  pages_from_ocr: number[];
   failure_reason: string | null;
   attempts: number;
   /** Whether the API would accept a retry, so this does not reimplement the rule. */

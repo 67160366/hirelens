@@ -27,6 +27,7 @@ from app.db import build_engine, build_sessionmaker
 from app.jobs import JobContext, run_resume_job
 from app.llm.registry import build_extractor
 from app.logging_config import configure_logging
+from app.pipeline.ocr import build_ocr_engine
 from app.queue import PROCESS_RESUME_TASK
 from app.storage import build_storage
 
@@ -45,7 +46,7 @@ async def process_resume(ctx: dict[str, Any], resume_id: str) -> None:
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:
-    """Build the engine, storage and extractor once per worker process."""
+    """Build the engine, storage, extractor and OCR once per worker process."""
     configure_logging()
     settings = get_settings()
     engine = build_engine(settings)
@@ -55,11 +56,15 @@ async def on_startup(ctx: dict[str, Any]) -> None:
         storage=build_storage(settings),
         extractor=build_extractor(settings),
         settings=settings,
+        # Probed here too: the worker is a separate process, and it is the one
+        # that actually runs OCR.
+        ocr=build_ocr_engine(settings),
     )
     logger.info(
-        "worker started: provider=%s storage=%s",
+        "worker started: provider=%s storage=%s ocr=%s",
         settings.llm_provider,
         settings.storage_backend,
+        settings.ocr_engine,
     )
 
 

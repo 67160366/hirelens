@@ -10,6 +10,9 @@ dependencies = [
     "pydantic-settings>=2.7",
     "python-multipart>=0.0.20",
     "pdfplumber>=0.11",
+    # Arrives with pdfplumber, but the OCR seam takes a PIL image as its contract
+    # and renders pages through it, so it is declared rather than borrowed.
+    "pillow>=10",
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.14",
     "asyncpg>=0.30",

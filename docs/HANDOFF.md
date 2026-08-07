@@ -14,17 +14,19 @@ milestone status. Short dated session notes and owner advice live in
 profile in which every field cites the exact text it came from, and anything the
 model could not cite is dropped and reported.
 
-**M2 is in progress: items #1, #2, #3 and #8 are done.** Parsing and extraction run
-on a background worker with retry, backoff and a dead-letter queue around them, and
-the web client follows a resume over a progress stream instead of polling for it.
-OCR, DOCX, the two-column fix and MinIO are still open.
+**M2 is in progress: items #1, #2, #3, #4 and #8 are done.** Parsing and extraction
+run on a background worker with retry, backoff and a dead-letter queue around them,
+the web client follows a resume over a progress stream instead of polling for it,
+and a scanned page is recovered with OCR instead of being a permanent failure.
+DOCX, the two-column fix and MinIO are still open.
 
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 173 passed, 4 skipped, 1 xfailed (the xfail is deliberate — §7) |
+| `pytest -q` | 188 passed, 10 skipped, 1 xfailed (the xfail is deliberate — §7) |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
+| `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
 | `ruff check` / `ruff format --check` | clean |
 | `mypy app` (strict) | clean, 35 files |
 | `npm run typecheck` / `lint` / `build` | clean |
@@ -39,6 +41,9 @@ OCR, DOCX, the two-column fix and MinIO are still open.
 | Progress stream against Postgres + ARQ + live Gemini | upload → `processing` → `extracted` → `done` on one connection; 10/10 claims verified, every match tier-1 exact (2026-08-07) |
 | Progress stream through the retry policy | attempt 1 failed → attempt 2 failed → `dead_lettered`, each with its reason, at +0.6 s / +5.8 s / +16.1 s — the 5 s and 10 s backoffs, watched rather than inferred. `POST /retry` then reached `extracted` on attempt 4, 12/12 verified (2026-08-07) |
 | **Browser, end to end** | upload a Thai PDF against live Gemini: the line under the form moves "Uploading…" → "Parsing and verifying evidence…" → 10/10 claims, and clicking a citation highlights it in the document pane. Then with the provider down: "Attempt 1 failed, retrying — …" → "Attempt 2 failed…" → "Stopped after 3 attempts" with the reason and the parsed text still shown; "Try again" reached `extracted` with 12/12 (2026-08-08) |
+| OCR through the whole stack (Postgres + ARQ + live Gemini) | `resume_scanned.pdf`, previously a permanent `failed`, streamed `pending` → `processing` → `extracted` in 5.7 s with `pages_from_ocr=[1]`; 7/7 verified, 0 dropped, every match tier-1 exact, all 7 spans slicing back out of the stored text, no NUL. Three of the skills were cited out of the **Thai** OCR line `ทักษะ: Python, FastAPI, PostgreSQL` (2026-08-08) |
+| OCR on a partial scan | `resume_mixed_scan.pdf` → `extracted` with `pages_from_ocr=[2]`: page 1 kept its text layer, page 2 came from the image, 5/5 verified and 5/5 spans exact (2026-08-08) |
+| Migration `0003` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `pages_from_ocr` lands as real `jsonb` and `alembic check` finds no drift (2026-08-08) |
 
 ### Repository state
 
@@ -114,6 +119,7 @@ api/app/
   pipeline/
     evidence.py      ★ locate quotes in the source; reject what cannot be found
     parse.py           PDF → text + char offsets + page spans; detects scans vs blank
+    ocr.py             OCREngine seam + Tesseract; recovers pages with no text layer
     extract.py         orchestrates: ask → verify → re-ask → keep the cleanest result
     prompts.py         versioned prompts (EXTRACTION_PROMPT_VERSION)
   llm/
@@ -197,6 +203,22 @@ Worth reading once, because the request no longer does the work.
   forbid logging personal data. The cost is parsing SSE frames by hand in
   `web/lib/api.ts`; the bearer header, the `ApiError` taxonomy and the 401-refresh
   path all keep working in exchange.
+- **OCR runs before page spans are measured, not after.** `parse.py` substitutes the
+  recognized text into the page list and only then calls `_assemble`, so a rescued
+  page is indistinguishable from one that always had text: no evidence offset, page
+  mapping or highlight had to change, and `document_text` is still stored verbatim.
+  It is the same move as the NUL strip in §11 — clean the text before anything
+  indexes into it. Doing OCR as a second pass over already-assembled text would have
+  shifted every offset after the rescued page.
+- **The OCR engine is `OCREngine | None`, and `None` means off.** A null-object
+  engine would return `""` for a disabled engine and `""` for a page it read and
+  found nothing on. The second is a real answer about the document and has to stay
+  distinguishable from a configuration.
+- **A missing language pack is refused at startup, not discovered per document.**
+  `build_ocr_engine` runs `--list-langs` and checks every requested code. Without
+  that, a Tesseract lacking `tha` would keep working for English and return noise
+  for Thai — the failure mode this project can least afford, and the same class of
+  silent corruption as a stale price table.
 - **Two attempt counters, because one cannot do both jobs.** `failed_attempts` is
   the retry budget and is cleared by a success or a manual retry. `attempts` is the
   honest total and never resets — it is also what makes each dispatch's queue job id
@@ -217,7 +239,7 @@ The newest and most intricate part, so it gets its own section.
 | `processing` | A worker has claimed it. Stuck here means a worker died mid-job. |
 | `parsed` | Text extracted, extraction did not finish. **No longer reachable as a resting state**: `process_resume` sets it, but every path out of the job overwrites it before the commit. It survives only on rows written before M2 #2, which is why it is still accepted for retry. |
 | `extracted` | A verified profile exists. Terminal, and refuses a retry — redoing it would bill a second call for the profile we already have. |
-| `failed` | **This document cannot be processed.** A scanned PDF, a corrupt file, a missing object, a missing API key. Retrying changes nothing. |
+| `failed` | **This document cannot be processed.** A corrupt file, a blank one, a missing object, a missing API key — or a scan that OCR was not enabled for, or could not read. Retrying changes nothing *unless the configuration changes*, which is why `POST /retry` accepts it. |
 | `dead_lettered` | **Transient failures used up the budget.** Worth replaying once the cause is fixed. |
 
 The `failed` / `dead_lettered` split is the point of M2 #2. One status could not
@@ -274,6 +296,16 @@ want the retry policy run the ARQ worker.
   test. Do not "fix" the xfail by removing it.
 - **`registry.py` raises for `LLM_PROVIDER=anthropic`** on purpose. An adapter never
   run against the real API is worse than an honest error.
+- **An OCR'd citation is faithful to what was read, not to what was printed.** The
+  recognized text *becomes* `document_text`, so the guardrail is untouched — a quote
+  is still checked against exactly what the model was shown, and a fabrication is
+  still dropped. What OCR cannot promise is that it read the page correctly, so a
+  citation can faithfully quote a misrecognition. `pages_from_ocr` names those pages
+  and the UI says so. The fixtures OCR perfectly because they are clean synthetic
+  renders; a photographed resume will not, and no test in this repo can show that.
+- **No image preprocessing before OCR** — no deskew, threshold or upscale, just a
+  300 dpi render. Left out because nothing has yet demonstrated it is needed; add it
+  when a real scan proves it, not on speculation.
 - **Ambiguous citations are flagged, not resolved.** A quote like `Python` appearing
   in both a bullet and a skills list is reported ambiguous rather than guessed.
   A worthwhile refinement is to prefer the skills-section span for skill claims.
@@ -326,6 +358,7 @@ without an editable install at all.
 | Queue | **`arq`** (`.env` → `QUEUE_BACKEND`). Needs `arq app.worker.WorkerSettings` running. `inline` processes in-request with no Redis. |
 | LLM provider | **`gemini`** (`gemini-3.6-flash`) in `.env`; live-verified against every fixture on 2026-08-06 — `docs/llm-providers.md`. Tests and CI run on `fake`. |
 | Storage | Local filesystem at `var/uploads` |
+| OCR | **Tesseract 5.5.3** installed 2026-08-08, with `eng`, `tha` and `osd`. A *portable* install at `C:\Users\golfv\tesseract.exe` (tessdata beside it), so it is **not on PATH** — `OCR_COMMAND` must carry the full path. Off by default; tests and CI run without it. |
 
 ### Start it
 
@@ -360,6 +393,8 @@ the API and the worker, upload again. To see the dead-letter path: set
 |---|---|
 | `test_evidence.py` | Three-tier matching, rejection reasons, Thai. The specification. |
 | `test_parse.py` | Offsets, page spans, scan detection, the two-column xfail |
+| `test_ocr.py` | The OCR fallback through a stub engine: which pages are chosen, the offset contract across a rescued page, and what happens when recognition finds nothing |
+| `test_ocr_tesseract.py` | The real binary, including Thai. **Opt-in**, needs `OCR_TESSERACT_CMD` |
 | `test_extract.py` | The re-ask loop and how it picks a result |
 | `test_llm.py` / `test_gemini.py` | The provider seam; Gemini's contract via mocks |
 | `test_api.py` | Auth, upload gates, reading a profile back |
@@ -377,14 +412,14 @@ the API and the worker, upload again. To see the dead-letter path: set
 **All setup items are done.** Docker is installed, development runs on Postgres,
 the JSONB path is verified, Gemini has run live, and the queue is real.
 
-**Next is M2 #4.** In dependency order (live status in `docs/PLAN.md`):
+**Next is M2 #5.** In dependency order (live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
 | 1 | ~~ARQ worker + Redis~~ **done** | `app/jobs.py` (work), `app/queue.py` (seam), `app/worker.py` (entrypoint) |
 | 2 | ~~Job state, retry with backoff, dead-letter queue~~ **done** | §6 above |
 | 3 | ~~SSE progress endpoint~~ **done** | `GET /resumes/{id}/events` (`api/app/api/routes/resumes.py`), consumed by `waitForProfile` in `web/lib/api.ts`, which keeps polling as the fallback. Pinned by `api/tests/test_events.py` |
-| 4 | OCR fallback for scans (Tesseract + `tha`) | `ParsedDocument.pages_without_text` is already the work list; `resume_scanned.pdf` and `resume_mixed_scan.pdf` are real image-based fixtures. Note this turns a `failed` scan into work: `NoTextLayerError` is caught in `process_resume`, which marks the row `failed` and returns before the retry policy ever sees it |
+| 4 | ~~OCR fallback for scans~~ **done** | `app/pipeline/ocr.py` is the seam; `parse.py` substitutes recognized text before spans are measured. Off by default (`OCR_ENGINE=none`), so CI and a fresh clone are unchanged. Pinned by `tests/test_ocr.py` (stub engine) plus the opt-in `tests/test_ocr_tesseract.py` |
 | 5 | DOCX parser | `parse_document_bytes` already dispatches on extension and raises `UnsupportedFileTypeError`; the upload route's `ALLOWED_SUFFIXES` gate also needs opening |
 | 6 | **Two-column fix** via bbox column detection | The strict xfail defines "done" |
 | 7 | MinIO storage backend | `build_storage` has the `MINIO` branch stubbed with a clear error. The worker and the API both build storage independently, so both pick it up |
@@ -392,7 +427,13 @@ the JSONB path is verified, Gemini has run live, and the queue is real.
 
 Nothing else is outstanding: the browser walkthrough was re-done on 2026-08-08 and
 covered the whole journey, including the retry path (§1). The next commit here
-should be M2 #4.
+should be M2 #5.
+
+One thing OCR did *not* get looked at in a browser: the `pages_from_ocr` banner in
+`ProfileView.tsx`. It typechecks, lints and builds, and the API demonstrably returns
+the field — but a dev server on any port other than 3000 is refused by the
+hard-coded `ALLOWED_ORIGINS` in `app/main.py`, and 3000 was occupied. Making that a
+setting (already on the list in `docs/NOTES.md`) is what unblocks it.
 
 M3 onward (matching engine, backend depth, frontend, ship) is in
 [`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.

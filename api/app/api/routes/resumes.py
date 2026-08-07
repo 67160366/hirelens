@@ -63,6 +63,10 @@ class ResumeOut(BaseModel):
     size_bytes: int
     page_count: int | None
     pages_without_text: list[int]
+    pages_from_ocr: list[int]
+    """Pages read by OCR. A citation into one of these is faithful to what was
+    recognized, which is not always what was printed — so the UI says so."""
+
     failure_reason: str | None
     attempts: int
     can_retry: bool
@@ -78,6 +82,7 @@ class ResumeOut(BaseModel):
             size_bytes=resume.size_bytes,
             page_count=resume.page_count,
             pages_without_text=resume.pages_without_text or [],
+            pages_from_ocr=resume.pages_from_ocr or [],
             failure_reason=resume.failure_reason,
             attempts=resume.attempts,
             can_retry=resume.status in RETRYABLE_STATUSES,

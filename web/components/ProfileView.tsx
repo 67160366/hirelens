@@ -113,10 +113,21 @@ export function ProfileView({
     <div className="space-y-4">
       <StatsBar profile={profile} />
 
+      {resume.pages_from_ocr.length > 0 && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+          {resume.pages_from_ocr.length === 1 ? "Page" : "Pages"}{" "}
+          {resume.pages_from_ocr.join(", ")} had no text layer and{" "}
+          {resume.pages_from_ocr.length === 1 ? "was" : "were"} read by OCR. Quotes from{" "}
+          {resume.pages_from_ocr.length === 1 ? "it" : "them"} match what was recognized, which may
+          differ from what was printed.
+        </p>
+      )}
+
       {resume.pages_without_text.length > 0 && (
         <p className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-300">
-          Page {resume.pages_without_text.join(", ")} has no text layer, so nothing on it could be
-          read or cited. OCR arrives in the next milestone.
+          {resume.pages_without_text.length === 1 ? "Page" : "Pages"}{" "}
+          {resume.pages_without_text.join(", ")} yielded no readable text, so nothing on{" "}
+          {resume.pages_without_text.length === 1 ? "it" : "them"} could be cited.
         </p>
       )}
 

@@ -92,8 +92,23 @@ should review them before anyone treats the details as commitments.
   and so in proxy access logs and browser history. Polling survives as the
   fallback for a proxy that buffers `text/event-stream` or a connection the
   server caps.
-- [ ] 4. OCR fallback for scans (Tesseract + `tha`). `ParsedDocument.pages_without_text`
-  is the work list; `resume_scanned.pdf` / `resume_mixed_scan.pdf` are ready fixtures.
+- [x] 4. **OCR fallback for scans** (Tesseract + `tha`) (2026-08-08). A page with no
+  text layer is rendered and recognized, and the text is substituted into the page
+  list *before* `_assemble` measures spans — the same trick as the NUL strip, so no
+  evidence offset, page mapping or highlight shifts, and a rescued page is
+  indistinguishable from one that always had text. `app/pipeline/ocr.py` is the seam:
+  an `OCREngine` ABC, a `TesseractEngine` driven over stdin/stdout (no new Python
+  dependency, and the page image never touches disk — it is PII), and
+  `build_ocr_engine`, which probes the binary *and its language packs* at startup,
+  because a missing `tha` would leave English working while Thai came back as noise.
+  Off by default (`OCR_ENGINE=none`) for the reason the extractor defaults to `fake`:
+  Tesseract is a system binary and CI will never have one. The suite drives the whole
+  path through a stub; `tests/test_ocr_tesseract.py` is opt-in on `OCR_TESSERACT_CMD`,
+  mirroring `tests/test_postgres.py`. `pages_from_ocr` is recorded on the resume and
+  surfaced in the UI, because a citation into an OCR'd page is faithful to what was
+  read rather than to what was printed. Verified live against Postgres + ARQ + real
+  Gemini: `resume_scanned.pdf` went from a permanent `failed` to `extracted` with 7/7
+  claims verified, including three skills cited out of the **Thai** OCR line.
 - [ ] 5. DOCX parser. `parse_document_bytes` already dispatches on extension.
 - [ ] 6. Two-column fix via bbox column detection. The strict xfail in
   `api/tests/test_parse.py` defines "done".

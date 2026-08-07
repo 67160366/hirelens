@@ -38,6 +38,10 @@ it is dropped, reported in `dropped`, and counted in the hallucination rate.
 - **`document_text` is stored verbatim** on the resume row and every evidence offset
   indexes into exactly that string. Never re-parse or re-normalize stored text —
   it would shift every citation already shown to a user.
+- **OCR text is substituted into the page list *before* `_assemble` measures spans**
+  (`api/app/pipeline/parse.py`). That is what lets a rescued page carry ordinary
+  offsets and leaves evidence, page mapping and highlighting untouched. Recognizing
+  text into an already-assembled document would shift every offset after that page.
 - **The fake provider (`api/app/llm/fake.py`) is load-bearing infrastructure**, not a
   stub — the whole suite and CI depend on it. Read it before touching the provider seam.
 - **Never log or print document text or personal data** — resumes are PII.
@@ -50,9 +54,11 @@ prefix each command with `.venv/Scripts/python.exe -m` (Windows) /
 `.venv/bin/python -m` — the bare names are not on PATH:
 
 ```bash
-pytest -q                                   # full suite; no DB, no API key needed
+pytest -q                                   # full suite; no DB, no API key, no Tesseract
 TEST_DATABASE_URL=postgresql+asyncpg://hirelens:hirelens@localhost:5432/hirelens_test \
   pytest tests/test_postgres.py -q          # opt-in: the JSONB path on real Postgres
+OCR_TESSERACT_CMD=C:\Users\golfv\tesseract.exe \
+  pytest tests/test_ocr_tesseract.py -q     # opt-in: the real Tesseract, including Thai
 ruff check app tests migrations             # lint   — enforced in CI
 ruff format app tests migrations            # format — enforced in CI (--check)
 mypy app                                    # strict — enforced in CI
@@ -97,6 +103,14 @@ in `.env`. MinIO is up but unused until M2 #7. The test suite runs on its own
 in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server. `.env`
 selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating` demos
 the dropped-claims path.
+
+OCR is **off by default** (`OCR_ENGINE=none`) because Tesseract is a system binary
+and CI will never have one — the same reasoning as the fake provider. To turn it on
+here, `OCR_ENGINE=tesseract` plus `OCR_COMMAND=C:\Users\golfv\tesseract.exe`: this
+machine's Tesseract is a portable install and is **not on PATH**, so the bare name
+will not resolve. A missing language pack is refused at startup rather than
+returning noise for Thai, so `OCR_LANGUAGES` must name packs that are installed
+(`eng`, `tha`, `osd` are).
 
 Upload stores the file, queues the work and answers `pending`; clients follow
 `GET /resumes/{id}/events` until the status is neither `pending` nor `processing`,

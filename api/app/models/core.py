@@ -110,7 +110,12 @@ class Resume(UUIDPrimaryKey, Timestamps, Base):
 
     page_count: Mapped[int | None] = mapped_column(Integer)
     pages_without_text: Mapped[list[int] | None] = mapped_column(JSON_VARIANT)
-    """The OCR work list, kept so M2 can retry only the pages that need it."""
+    """Pages that yielded no usable text even after OCR — nothing on them is citable."""
+
+    pages_from_ocr: Mapped[list[int] | None] = mapped_column(JSON_VARIANT)
+    """Pages whose text was recognized from an image rather than read from a text
+    layer. Kept because a citation into one of these is faithful to what was read,
+    not necessarily to what was printed, and the user is told so."""
 
     document_text: Mapped[str | None] = mapped_column(Text)
     """The parsed text. Evidence offsets index into exactly this string, so it has

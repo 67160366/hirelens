@@ -30,6 +30,7 @@ from app.config import Settings
 from app.llm.base import LLMConfigError, LLMError, StructuredExtractor
 from app.models import Resume, ResumeStatus
 from app.models.base import utcnow
+from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
 from app.pipeline.parse import ParseError
 from app.services import resume_service
 from app.storage import ObjectNotFoundError, Storage
@@ -49,6 +50,8 @@ class JobContext:
     storage: Storage
     extractor: StructuredExtractor
     settings: Settings
+    ocr: OCREngine | None = None
+    """None means OCR is off, which is the default everywhere without a Tesseract."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,9 +79,13 @@ def is_retryable(error: BaseException) -> bool:
     an unrecognised failure is more likely to be a blip than a fact about the
     document, and a wrong retry costs seconds while a wrong give-up loses work.
     """
-    # The document cannot be parsed, the file is gone, or the provider is
-    # misconfigured. None of those change on their own.
-    return not isinstance(error, ParseError | ObjectNotFoundError | LLMConfigError)
+    # The document cannot be parsed, the file is gone, or the provider or OCR
+    # engine is misconfigured. None of those change on their own — a missing
+    # Tesseract will still be missing in five seconds, and `POST /retry` is the
+    # path once the configuration is fixed.
+    return not isinstance(
+        error, ParseError | ObjectNotFoundError | LLMConfigError | OCRUnavailableError
+    )
 
 
 def backoff_seconds(settings: Settings, *, failures: int) -> float:
@@ -91,8 +98,10 @@ def backoff_seconds(settings: Settings, *, failures: int) -> float:
 # statement's parameters, `document_text` included — so only its type name is
 # kept. `ObjectNotFoundError` is deliberately not here: its message carries the
 # storage key (candidate id + content hash), and the job already records a
-# friendly reason before raising it.
-_SAFE_TO_QUOTE = (LLMError, ParseError)
+# friendly reason before raising it. `OCRUnavailableError` is: it names a binary
+# and a setting, never document text, and quoting it is what makes the failure
+# actionable instead of a bare type name.
+_SAFE_TO_QUOTE = (LLMError, ParseError, OCRUnavailableError)
 
 
 def _describe(error: Exception) -> str:
@@ -124,6 +133,7 @@ async def run_resume_job(context: JobContext, resume_id: uuid.UUID) -> JobOutcom
                 data=data,
                 extractor=context.extractor,
                 settings=context.settings,
+                ocr=context.ocr,
             )
 
             resume.failed_attempts = 0
@@ -132,7 +142,7 @@ async def run_resume_job(context: JobContext, resume_id: uuid.UUID) -> JobOutcom
             # persistence failure must go through the retry policy like any other
             # unexpected error — not escape and strand the row at `processing`.
             await session.commit()
-        except (LLMError, ParseError, ObjectNotFoundError) as exc:
+        except (LLMError, ParseError, ObjectNotFoundError, OCRError) as exc:
             # Raised by pipeline and storage code, never by the database, so the
             # session is still usable and whatever `process_resume` recorded
             # before failing — the parsed text above all — commits with the

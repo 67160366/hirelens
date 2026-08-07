@@ -12,6 +12,7 @@ retried, which is what the journey's "no silent failure" requirement asks for.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from app.config import Settings
 from app.llm.base import LLMError, StructuredExtractor
 from app.models import Candidate, ExtractedProfileRow, LLMCallLog, Resume, ResumeStatus
 from app.pipeline.extract import ExtractionOutcome, extract_profile
+from app.pipeline.ocr import OCREngine
 from app.pipeline.parse import ParsedDocument, ParseError, parse_document_bytes
 from app.pipeline.prompts import EXTRACTION_PROMPT_VERSION
 from app.storage import Storage, build_storage_key, content_hash
@@ -155,6 +157,7 @@ async def process_resume(
     data: bytes,
     extractor: StructuredExtractor,
     settings: Settings,
+    ocr: OCREngine | None = None,
 ) -> None:
     """Parse then extract, recording the outcome on the row.
 
@@ -167,9 +170,18 @@ async def process_resume(
     failures are raised instead, so the job can decide whether they are worth
     retrying — but only after the parsed text has been written to the row, which
     is still in the caller's transaction, so a retry skips straight to extraction.
+
+    An OCR fault is neither, so it is left to propagate: it says the engine is
+    misconfigured, not that this document is broken, and marking the row
+    permanently failed would be a lie a `POST /retry` could not undo.
     """
     try:
-        document = parse_document_bytes(data, filename=resume.filename)
+        # Off the event loop: parsing is synchronous CPU work, and with OCR it is
+        # roughly a second per page — long enough to stall the worker, and with it
+        # every progress stream the API is serving.
+        document = await asyncio.to_thread(
+            parse_document_bytes, data, filename=resume.filename, ocr=ocr
+        )
     except ParseError as exc:
         resume.status = ResumeStatus.FAILED
         resume.failure_reason = str(exc)
@@ -178,6 +190,11 @@ async def process_resume(
 
     resume.page_count = document.page_count
     resume.pages_without_text = list(document.pages_without_text)
+    resume.pages_from_ocr = list(document.pages_from_ocr)
+    if document.used_ocr:
+        logger.info(
+            "resume %s: %d page(s) recovered by OCR", resume.id, len(document.pages_from_ocr)
+        )
     # Stored verbatim: evidence offsets index into exactly this string, so
     # re-parsing later could invalidate every citation already shown to a user.
     resume.document_text = document.text
@@ -243,7 +260,15 @@ def _record_profile(session: AsyncSession, *, resume: Resume, outcome: Extractio
     )
 
 
-async def reparse_document(resume: Resume, storage: Storage) -> ParsedDocument:
-    """Rebuild the parsed document for a resume from stored bytes."""
+async def reparse_document(
+    resume: Resume, storage: Storage, *, ocr: OCREngine | None = None
+) -> ParsedDocument:
+    """Rebuild the parsed document for a resume from stored bytes.
+
+    The result is **not** interchangeable with the stored `document_text`: pass the
+    same OCR engine the original parse used, or a page recovered then and not now
+    comes back empty and every evidence offset after it points somewhere else.
+    Read `resume.document_text` if that is what you actually want.
+    """
     data = await storage.get(resume.storage_key)
-    return parse_document_bytes(data, filename=resume.filename)
+    return await asyncio.to_thread(parse_document_bytes, data, filename=resume.filename, ocr=ocr)
