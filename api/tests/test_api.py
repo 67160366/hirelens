@@ -279,8 +279,16 @@ class TestBackendOutage:
         return FakeMode.UNAVAILABLE
 
     async def test_upload_survives_the_model_being_down(self, authed_client: AsyncClient):
-        """The parse result is kept so a retry does not start from scratch."""
+        """A backend outage is transient, so the resume waits rather than failing.
+
+        It goes back to `pending` with the reason recorded, and the parse result is
+        kept — `page_count` proves it — so the retry starts from extraction rather
+        than from the PDF.
+        """
         body = await upload_and_read(authed_client)
-        assert body["resume"]["status"] == ResumeStatus.PARSED
-        assert "Extraction failed" in body["resume"]["failure_reason"]
+        assert body["resume"]["status"] == ResumeStatus.PENDING
+        assert "retrying" in body["resume"]["failure_reason"]
+        assert "LLMUnavailableError" in body["resume"]["failure_reason"]
         assert body["resume"]["page_count"] == 1
+        assert body["resume"]["attempts"] == 1
+        assert body["document_text"] is not None

@@ -110,22 +110,42 @@ async def ingest_resume(
 
     # After the commit, never before: the worker looks the row up by id, and a
     # fast worker would otherwise find nothing there.
-    await queue.enqueue_resume(resume.id)
+    await queue.enqueue_resume(resume.id, attempt=resume.attempts)
     return IngestResult(resume=resume, created=True)
 
 
 async def _requeue_if_stalled(resume: Resume, queue: JobQueue) -> None:
     """Re-queue a duplicate upload whose original never got processed.
 
-    A resume can sit at `pending` because the enqueue failed, or because the
-    worker was down when it was picked up. Without this, re-uploading the file —
-    the obvious thing a user does — would dedupe to that row and leave it stuck
-    forever. Proper retry and a dead-letter queue are M2 #2; this only keeps the
-    duplicate path from stranding work.
+    A resume sits at `pending` while it is queued, between retries, or because
+    nothing was listening when it was enqueued. Re-uploading the file is what a
+    user does when nothing seems to happen, and it must not dedupe to that row and
+    leave it stuck. The queue refuses a dispatch it already holds, so this cannot
+    queue the same attempt twice.
+
+    Deliberately not extended to dead letters: replaying those is what
+    `POST /resumes/{id}/retry` is for, and it should be a decision rather than a
+    side effect of uploading the same file again.
     """
     if resume.status is ResumeStatus.PENDING:
         logger.info("resume %s: duplicate of a pending resume, re-queueing", resume.id)
-        await queue.enqueue_resume(resume.id)
+        await queue.enqueue_resume(resume.id, attempt=resume.attempts)
+
+
+async def requeue(session: AsyncSession, *, resume: Resume, queue: JobQueue) -> None:
+    """Put a stopped resume back on the queue — the dead-letter replay path.
+
+    Clears the retry budget but not `attempts`: the budget is what "three strikes"
+    counts, while `attempts` keeps the total honest and gives this dispatch a queue
+    job id distinct from the one that failed.
+    """
+    resume.status = ResumeStatus.PENDING
+    resume.failed_attempts = 0
+    resume.failure_reason = None
+    await session.commit()
+
+    await queue.enqueue_resume(resume.id, attempt=resume.attempts)
+    logger.info("resume %s: requeued by request after %d attempt(s)", resume.id, resume.attempts)
 
 
 async def process_resume(
@@ -139,7 +159,14 @@ async def process_resume(
     """Parse then extract, recording the outcome on the row.
 
     Does not commit — the caller owns the transaction boundary. This is the half
-    that M2's worker will call.
+    the worker calls (`app/jobs.py`).
+
+    Two kinds of failure, handled differently on purpose. A document that cannot
+    be parsed is a fact about the document: the row is marked failed and the
+    function returns, because no amount of retrying changes it. Extraction
+    failures are raised instead, so the job can decide whether they are worth
+    retrying — but only after the parsed text has been written to the row, which
+    is still in the caller's transaction, so a retry skips straight to extraction.
     """
     try:
         document = parse_document_bytes(data, filename=resume.filename)
@@ -162,10 +189,8 @@ async def process_resume(
             document, extractor, max_attempts=settings.extraction_max_attempts
         )
     except LLMError as exc:
-        # Parsed text is kept, so a retry skips straight to extraction.
-        resume.failure_reason = f"Extraction failed: {exc}"
         logger.warning("resume %s: extraction failed (%s)", resume.id, type(exc).__name__)
-        return
+        raise
 
     _record_usage(session, resume=resume, outcome=outcome)
     _record_profile(session, resume=resume, outcome=outcome)

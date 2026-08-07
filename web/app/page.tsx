@@ -131,6 +131,21 @@ export default function Home() {
     return api.waitForProfile(resume.id, accessToken);
   }
 
+  /** Replay a resume the worker gave up on, and wait for the new run. */
+  async function retry() {
+    if (!token || !result) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await api.retryResume(result.resume.id, token);
+      setResult(await api.waitForProfile(result.resume.id, token));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not retry");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function upload(file: File) {
     if (!token) return;
     setError(null);
@@ -207,6 +222,23 @@ export default function Home() {
             <p className="text-sm text-stone-500 dark:text-stone-400">
               Parsing and verifying evidence…
             </p>
+          )}
+          {/* A resume the worker gave up on after retrying is kept rather than
+              discarded, so it can be run again once the cause is fixed. */}
+          {result?.resume.can_retry && !busy && (
+            <div className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm dark:border-amber-900/60 dark:bg-amber-950/30">
+              <span className="text-amber-900 dark:text-amber-300">
+                Stopped after {result.resume.attempts}{" "}
+                {result.resume.attempts === 1 ? "attempt" : "attempts"}.
+              </span>
+              <button
+                type="button"
+                onClick={() => void retry()}
+                className="rounded-md bg-amber-900 px-3 py-1 text-xs font-medium text-white dark:bg-amber-200 dark:text-amber-950"
+              >
+                Try again
+              </button>
+            </div>
           )}
           {error && (
             <p className="rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-400">

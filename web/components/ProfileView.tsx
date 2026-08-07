@@ -85,7 +85,9 @@ export function ProfileView({
   resume: Resume;
   profile: ExtractedProfile | null;
 }) {
-  if (resume.status === "failed") {
+  // `dead_lettered` reads the same way to a user — nothing came out of it — and
+  // differs only in that it is worth trying again, which the retry control says.
+  if (resume.status === "failed" || resume.status === "dead_lettered") {
     return (
       <div className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
         <h3 className="text-sm font-semibold text-red-900 dark:text-red-300">

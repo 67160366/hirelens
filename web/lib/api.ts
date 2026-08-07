@@ -9,7 +9,13 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 export type MatchKind = "exact" | "whitespace_collapsed" | "whitespace_stripped";
 export type RejectReason = "empty" | "too_short" | "not_found";
-export type ResumeStatus = "pending" | "parsed" | "extracted" | "failed";
+export type ResumeStatus =
+  | "pending"
+  | "processing"
+  | "parsed"
+  | "extracted"
+  | "failed"
+  | "dead_lettered";
 
 export interface EvidenceRef {
   quote: string;
@@ -77,6 +83,9 @@ export interface Resume {
   page_count: number | null;
   pages_without_text: number[];
   failure_reason: string | null;
+  attempts: number;
+  /** Whether the API would accept a retry, so this does not reimplement the rule. */
+  can_retry: boolean;
 }
 
 export interface ProfileResponse {
@@ -137,13 +146,14 @@ async function readError(response: Response): Promise<string> {
 }
 
 /**
- * `pending` means queued or running; everything else is a resting state the
- * worker has already written — `extracted` on success, `failed` when parsing
- * gave up, and `parsed` when the text survived but extraction did not (the
- * failure is in `failure_reason` either way).
+ * `pending` means queued or waiting out a retry backoff and `processing` means a
+ * worker has it; everything else is a resting state the worker has already
+ * written — `extracted` on success, `failed` when the document itself cannot be
+ * processed, `dead_lettered` when the retries ran out, and `parsed` when the text
+ * survived but extraction did not. The reason is in `failure_reason` throughout.
  */
 export function isSettled(status: ResumeStatus): boolean {
-  return status !== "pending";
+  return status !== "pending" && status !== "processing";
 }
 
 const POLL_INTERVAL_MS = 700;
@@ -180,6 +190,10 @@ export const api = {
   },
 
   listResumes: (token: string) => request<Resume[]>("/resumes", {}, token),
+
+  /** Put a stopped resume back on the queue — the dead-letter replay path. */
+  retryResume: (id: string, token: string) =>
+    request<Resume>(`/resumes/${id}/retry`, { method: "POST" }, token),
 
   getProfile: (id: string, token: string) => request<ProfileResponse>(`/resumes/${id}`, {}, token),
 

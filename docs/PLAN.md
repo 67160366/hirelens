@@ -52,7 +52,19 @@ should review them before anyone treats the details as commitments.
   duplicate upload cannot queue the same work twice. Verified live against Redis,
   Postgres and real Gemini, including that a job queued while the worker was down
   is picked up when it restarts.
-- [ ] 2. Job state, retry with backoff, dead-letter queue.
+- [x] 2. **Job state, retry with backoff, dead-letter queue** (2026-08-07).
+  `resumes` gained `attempts` (monotonic — it also makes each dispatch's queue job
+  id unique, so a replay is not refused as a duplicate), `failed_attempts` (the
+  retry budget, cleared by a success or a manual retry) and `last_attempt_at`;
+  `ResumeStatus` gained `processing` and `dead_lettered`. `is_retryable` in
+  `app/jobs.py` treats a broken document, a missing file and a missing API key as
+  permanent and everything else as transient, so an unrecognised failure is
+  retried rather than written off. Backoff is 5s, 10s, 20s. The job returns a
+  decision instead of raising arq's `Retry`, which keeps the policy testable
+  without Redis. `POST /resumes/{id}/retry` is the replay path — a dead letter
+  nobody can run again is just a status. Verified live: 5s → 10s → dead-lettered
+  against a downed provider, then replayed to a verified profile on attempt 4,
+  reusing the text parsed before the first failure.
 - [ ] 3. SSE progress endpoint; wire the web UI's "Parsing…" state to it.
 - [ ] 4. OCR fallback for scans (Tesseract + `tha`). `ParsedDocument.pages_without_text`
   is the work list; `resume_scanned.pdf` / `resume_mixed_scan.pdf` are ready fixtures.

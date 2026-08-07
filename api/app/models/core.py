@@ -12,10 +12,21 @@ Two deliberate shape choices:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import JSON_VARIANT, Base, Timestamps, UUIDPrimaryKey
@@ -23,7 +34,10 @@ from app.models.base import JSON_VARIANT, Base, Timestamps, UUIDPrimaryKey
 
 class ResumeStatus(StrEnum):
     PENDING = "pending"
-    """Stored, not yet parsed."""
+    """Queued. Also where a resume waits between retries."""
+
+    PROCESSING = "processing"
+    """A worker has claimed it. A resume stuck here means a worker died mid-job."""
 
     PARSED = "parsed"
     """Text extracted; extraction not run or not finished."""
@@ -32,7 +46,12 @@ class ResumeStatus(StrEnum):
     """A verified profile exists."""
 
     FAILED = "failed"
-    """Parsing or extraction failed; see `failure_reason`."""
+    """This document cannot be processed — see `failure_reason`. Permanent, so
+    retrying it would only fail the same way."""
+
+    DEAD_LETTERED = "dead_lettered"
+    """Retries were exhausted on failures that looked transient. Distinct from
+    `failed` because this one is worth retrying — see `POST /resumes/{id}/retry`."""
 
 
 class Candidate(UUIDPrimaryKey, Timestamps, Base):
@@ -73,6 +92,17 @@ class Resume(UUIDPrimaryKey, Timestamps, Base):
         nullable=False,
     )
     failure_reason: Mapped[str | None] = mapped_column(Text)
+
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Total times a worker has claimed this resume. Never reset — it is what
+    makes each dispatch's queue job id unique, so a manual retry is not mistaken
+    for a job that is already queued."""
+
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Consecutive failures. This is the retry budget, so a success or a manual
+    retry clears it; `attempts` deliberately does not."""
+
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     page_count: Mapped[int | None] = mapped_column(Integer)
     pages_without_text: Mapped[list[int] | None] = mapped_column(JSON_VARIANT)

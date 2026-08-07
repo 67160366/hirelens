@@ -32,10 +32,14 @@ class RecordingQueue(JobQueue):
     """Accepts work and does nothing with it, so a test can run it deliberately."""
 
     def __init__(self) -> None:
-        self.enqueued: list[uuid.UUID] = []
+        self.dispatches: list[tuple[uuid.UUID, int]] = []
 
-    async def enqueue_resume(self, resume_id: uuid.UUID) -> None:
-        self.enqueued.append(resume_id)
+    async def enqueue_resume(self, resume_id: uuid.UUID, *, attempt: int = 0) -> None:
+        self.dispatches.append((resume_id, attempt))
+
+    @property
+    def enqueued(self) -> list[uuid.UUID]:
+        return [resume_id for resume_id, _ in self.dispatches]
 
 
 @pytest.fixture
@@ -106,7 +110,7 @@ class TestUploadEnqueues:
         """Extraction costs money; a finished resume must not be redone."""
         await authed_client.post("/resumes", files=resume_upload())
         await run_resume_job(context, queue.enqueued[0])
-        queue.enqueued.clear()
+        queue.dispatches.clear()
 
         again = await authed_client.post("/resumes", files=resume_upload())
 

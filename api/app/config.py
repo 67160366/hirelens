@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     # How many times to re-ask the model when its evidence fails validation.
     extraction_max_attempts: int = Field(default=2, ge=1, le=5)
 
+    # How many times a job may fail before the resume is dead-lettered. Counts
+    # consecutive failures, so a success or a manual retry clears the budget.
+    job_max_attempts: int = Field(default=3, ge=1, le=10)
+
+    # Backoff between job attempts: base * 2 ** (failures - 1), so 5s, 10s, 20s.
+    # Long enough for a provider blip to pass, short enough that a user waiting on
+    # an upload is not abandoned.
+    job_retry_base_seconds: float = Field(default=5.0, gt=0)
+
     @model_validator(mode="after")
     def _refuse_placeholder_secret_outside_dev(self) -> Self:
         # A deploy that forgets JWT_SECRET must fail at startup, not silently

@@ -215,14 +215,15 @@ it surfaced two adapter problems, both fixed (see §1 and `docs/llm-providers.md
 and on 2026-08-07 development moved onto Postgres in Docker, with the JSONB path
 verified for the first time (§6 and `docs/PLAN.md`).
 
-M2 #1 landed the same day: parsing and extraction now run on an ARQ worker
-instead of inside the upload request. **Next is M2 #2.** In dependency order
-(live status in `docs/PLAN.md`):
+M2 #1 and #2 landed the same day: parsing and extraction now run on an ARQ worker
+instead of inside the upload request, with retry, backoff and a dead-letter queue
+around them. **Next is M2 #3.** In dependency order (live status in
+`docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
 | 1 | ~~ARQ worker + Redis~~ **done** — `process_resume` runs off the request | `app/jobs.py` (the work), `app/queue.py` (inline/arq seam), `app/worker.py` (entrypoint). Upload answers `pending`; clients poll |
-| 2 | Job state, retry with backoff, dead-letter queue | A failed job leaves the resume `pending` and arq's default retry applies; nothing records attempts yet. `_requeue_if_stalled` in `resume_service` is the stopgap that keeps re-upload from stranding work |
+| 2 | ~~Job state, retry with backoff, dead-letter queue~~ **done** | Policy in `app/jobs.py` (`is_retryable`, `backoff_seconds`); replay via `POST /resumes/{id}/retry`. The inline queue cannot defer, so it retries nothing — a transient failure there leaves the resume `pending` |
 | 3 | SSE progress endpoint; wire the web UI's "Parsing…" state to it | The web client polls today — `api.waitForProfile` in `web/lib/api.ts` is the one place to replace |
 | 4 | OCR fallback for scans (Tesseract + `tha`) | `ParsedDocument.pages_without_text` is already the work list; `resume_scanned.pdf` and `resume_mixed_scan.pdf` are real image-based fixtures ready for it |
 | 5 | DOCX parser | `parse_document_bytes` already dispatches on extension and raises `UnsupportedFileTypeError` |

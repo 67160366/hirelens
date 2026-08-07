@@ -113,8 +113,16 @@ in `.env`. MinIO is up but unused until M2 #7. The test suite runs on its own
 in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server.
 
 Upload no longer returns a profile: it stores the file, queues the work and
-answers `pending`. Clients poll `GET /resumes/{id}` until the status is anything
-but `pending` (M2 #3 replaces the polling with SSE). That contract is identical
-under both queue backends on purpose — `inline` just gets there sooner.
+answers `pending`. Clients poll `GET /resumes/{id}` until the status is neither
+`pending` nor `processing` (M2 #3 replaces the polling with SSE). That contract is
+identical under both queue backends on purpose — `inline` just gets there sooner.
+
+Two failure statuses, and the difference is the point: `failed` means this
+document cannot be processed and retrying changes nothing; `dead_lettered` means
+transient failures used up the retry budget, so it is worth replaying via
+`POST /resumes/{id}/retry`. The classification lives in `is_retryable`
+(`app/jobs.py`) and errs toward retrying — an unrecognised failure is more likely
+a blip than a fact about the document. `InlineQueue` has nowhere to defer work to
+and so never retries; that is a property of running without a queue, not a bug.
 `.env` selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating`
 demos the dropped-claims path.
