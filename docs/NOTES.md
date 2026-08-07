@@ -35,11 +35,28 @@ advice for the owner. Newest entry first. The detailed records stay in
   header, and a token in the query string lands in proxy logs and browser
   history. ~30 lines of frame parsing buys the bearer header back.
 
+### Verified live, against Postgres + Redis + the ARQ worker
+
+Not just tests. Two runs, both in §1 of `HANDOFF.md`:
+
+- **Live Gemini**: upload → `processing` → `extracted` → `done` over one
+  connection, 10/10 claims verified, every match tier-1 exact.
+- **The retry policy, watched rather than inferred**: with the provider forced
+  down, the stream reported attempt 1 failing at +0.6 s, attempt 2 at +5.8 s and
+  the dead letter at +16.1 s — the 5 s and 10 s backoffs, visible as they
+  happened, each with its reason. `POST /retry` then reached `extracted` on
+  attempt 4 with 12/12 claims verified, reusing the text parsed before the first
+  failure.
+
+That second run is the case the feature exists for, and it is now the clearest
+demonstration the project has that the job layer works.
+
 ### Next, in order
 
-1. **The browser walkthrough** — register → upload → watch the status narrate →
-   profile → forced failure → "Try again". Still the one thing never checked in a
-   real browser.
+1. **The browser walkthrough** — the rendering is the only part still unchecked:
+   the waiting message, citation highlighting, and "Try again" as a user meets
+   them. Blocked twice now on the Claude Chrome extension not being connected;
+   everything behind the UI is verified at the HTTP level.
 2. **M2 #4 — OCR fallback for scans** (Tesseract + `tha`), then DOCX (#5), the
    two-column fix (#6), MinIO (#7). `PLAN.md` has the order and the reasons.
 
@@ -58,6 +75,21 @@ advice for the owner. Newest entry first. The detailed records stay in
 - The three stream timings are settings (`SSE_POLL_SECONDS`,
   `SSE_HEARTBEAT_SECONDS`, `SSE_MAX_STREAM_SECONDS`) because a proxy in front of
   the API may well need different ones.
+- **A state shorter than the poll interval is not streamed.** The live retry run
+  showed it: each failure was so fast that `processing` came and went inside one
+  0.5 s read. Every resting state and every reason still arrived, which is what
+  the UI shows — but do not read the stream as a complete history.
+- **Env vars beat `.env`**, which is the clean way to demo a failure without
+  editing a file that holds a real key: `LLM_PROVIDER=fake FAKE_MODE=unavailable
+  arq app.worker.WorkerSettings` and nothing to restore afterwards. Stop the
+  other workers first, or the healthy one picks the job up.
+- **The machine had two stale dev servers** when this session started: a broken
+  Next dev server on :3000 answering 500, and an API on :8000 still serving
+  pre-SSE code whose process is gone while the socket keeps answering — a zombie
+  no `Stop-Process` can reach. The walkthrough used fresh ports (API on 8001,
+  web on 3000 with `NEXT_PUBLIC_API_BASE=http://localhost:8001`). **A reboot, or
+  at least a check of what is listening on :8000, is worth doing before the next
+  session** — otherwise a browser walkthrough will quietly test old code.
 
 ---
 

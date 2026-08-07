@@ -36,6 +36,8 @@ OCR, DOCX, the two-column fix and MinIO are still open.
 | Worker stopped, then restarted | the queued job survived and ran on restart, `delayed=11.67s` (2026-08-07) |
 | Provider forced down, then recovered | 5 s → 10 s backoff → `dead_lettered`; `POST /retry` then extracted 12 claims on attempt 4 (2026-08-07) |
 | The §11 incident PDF, replayed after the fixes | `extracted` on attempt 2 via live Gemini; 9 verified, 0 dropped, 9/9 spans resolve exactly; no NUL stored; the worker log carries ids and counts only (2026-08-07) |
+| Progress stream against Postgres + ARQ + live Gemini | upload → `processing` → `extracted` → `done` on one connection; 10/10 claims verified, every match tier-1 exact (2026-08-07) |
+| Progress stream through the retry policy | attempt 1 failed → attempt 2 failed → `dead_lettered`, each with its reason, at +0.6 s / +5.8 s / +16.1 s — the 5 s and 10 s backoffs, watched rather than inferred. `POST /retry` then reached `extracted` on attempt 4, 12/12 verified (2026-08-07) |
 
 ### Repository state
 
@@ -283,6 +285,12 @@ want the retry policy run the ARQ worker.
   proxy that buffers `text/event-stream`, or a connection the server capped. It is
   still deliberately the one place that waits. Deleting the fallback would trade a
   working page for a purer one.
+- **A change that does not outlive `SSE_POLL_SECONDS` is not streamed.** The
+  endpoint re-reads the row twice a second by default, so a `processing` that lasts
+  20 ms — a job failing instantly against a provider that is down — is over before
+  the next read. Every *resting* state and every `failure_reason` still arrives,
+  which is what a client acts on; only the flicker is lost. Pub/sub would close the
+  gap, and §5 says why it is not there yet.
 - **A stream capped at `SSE_MAX_STREAM_SECONDS` is not a failure.** It is how a
   resume stranded at `processing` by a dead worker (below) stops holding a
   connection open. The client polls on from there, and sees the same nothing —
@@ -384,8 +392,12 @@ the JSONB path is verified, Gemini has run live, and the queue is real.
 One thing worth doing whenever convenient, not blocking:
 
 - **Re-do the browser walkthrough.** The last one was on 2026-07-30, before the
-  queue existed; the progress stream and the "Try again" button have been verified
-  at the HTTP level but not in a browser.
+  queue existed. Everything under it has since been verified at the HTTP level
+  against the real stack — including the progress stream narrating a retry all the
+  way to a dead letter and back (the table in §1) — so what is left unchecked is
+  the rendering: the waiting message, citation highlighting, and the "Try again"
+  button as a user meets them. It needs the Claude Chrome extension connected,
+  which it has not been on the last two attempts.
 
 M3 onward (matching engine, backend depth, frontend, ship) is in
 [`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.
