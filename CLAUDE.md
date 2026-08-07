@@ -68,7 +68,8 @@ alembic upgrade head                        # migrations (against DATABASE_URL)
 arq app.worker.WorkerSettings               # the job worker (needs QUEUE_BACKEND=arq + Redis)
 ```
 
-From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm run build`.
+From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm test`
+(vitest), `npm run build`.
 
 ## How to work here
 
@@ -83,7 +84,8 @@ From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm ru
    tests. Commit messages are imperative and name the outcome, e.g. "Add the
    evidence validator: locate every quote or drop the claim".
 5. **Definition of done:** `pytest -q`, `ruff check`, `ruff format --check`, and
-   `mypy app` all green (plus `npm run typecheck && npm run lint` if `web/` changed);
+   `mypy app` all green (plus `npm run typecheck && npm run lint && npm test` if
+   `web/` changed);
    new behaviour pinned by tests; `docs/PLAN.md` status updated, and `docs/HANDOFF.md`
    refreshed when a milestone completes.
 6. **Scope discipline.** Milestones live in `docs/PLAN.md`. In particular, the

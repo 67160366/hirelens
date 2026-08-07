@@ -182,7 +182,13 @@ export type ProgressHandler = (resume: Resume) => void;
  * keep-alive comments and carry no meaning — they exist so that proxies do not
  * drop a connection that has gone quiet.
  */
-async function* readFrames(body: ReadableStream<Uint8Array>) {
+/**
+ * Exported for `lib/api.test.ts`, not for callers. It is the only wire-format
+ * parser on this side — a frame can be split across chunks, and keep-alive
+ * comments arrive between them — so it is worth pinning directly rather than
+ * through a mocked `fetch`.
+ */
+export async function* readFrames(body: ReadableStream<Uint8Array>) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

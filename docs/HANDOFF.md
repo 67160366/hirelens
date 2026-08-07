@@ -44,6 +44,7 @@ DOCX, the two-column fix and MinIO are still open.
 | OCR through the whole stack (Postgres + ARQ + live Gemini) | `resume_scanned.pdf`, previously a permanent `failed`, streamed `pending` → `processing` → `extracted` in 5.7 s with `pages_from_ocr=[1]`; 7/7 verified, 0 dropped, every match tier-1 exact, all 7 spans slicing back out of the stored text, no NUL. Three of the skills were cited out of the **Thai** OCR line `ทักษะ: Python, FastAPI, PostgreSQL` (2026-08-08) |
 | OCR on a partial scan | `resume_mixed_scan.pdf` → `extracted` with `pages_from_ocr=[2]`: page 1 kept its text layer, page 2 came from the image, 5/5 verified and 5/5 spans exact (2026-08-08) |
 | Migration `0003` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `pages_from_ocr` lands as real `jsonb` and `alembic check` finds no drift (2026-08-08) |
+| **Browser: a scan, end to end** | uploading `resume_scanned.pdf` at :3002 against live Gemini shows the amber banner "Page 1 had no text layer and was read by OCR. Quotes from it match what was recognized, which may differ from what was printed.", `7/7 claims verified`, and the document pane rendering the recognized text — six `<mark>` highlights over it, including two inside the Thai line, with the ambiguous `Python` in amber and the rest emerald (2026-08-08) |
 
 ### Repository state
 
@@ -429,11 +430,8 @@ Nothing else is outstanding: the browser walkthrough was re-done on 2026-08-08 a
 covered the whole journey, including the retry path (§1). The next commit here
 should be M2 #5.
 
-One thing OCR did *not* get looked at in a browser: the `pages_from_ocr` banner in
-`ProfileView.tsx`. It typechecks, lints and builds, and the API demonstrably returns
-the field — but a dev server on any port other than 3000 is refused by the
-hard-coded `ALLOWED_ORIGINS` in `app/main.py`, and 3000 was occupied. Making that a
-setting (already on the list in `docs/NOTES.md`) is what unblocks it.
+The OCR banner was checked in a real browser too, once `CORS_ORIGINS` became a
+setting and unblocked running the dev server on a free port (§1).
 
 M3 onward (matching engine, backend depth, frontend, ship) is in
 [`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.

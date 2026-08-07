@@ -75,6 +75,11 @@ Against Postgres + ARQ + real Gemini, on a fresh port:
   `TestCorsOrigins` in `tests/test_config.py`. The empty `app/workers/` package went
   with it. Both had been sitting on this list for two sessions; the trigger for
   finally doing them was one of them blocking verification of real work.
+  **With that unblocked the banner was checked by eye** on :3002 — it reads "Page 1
+  had no text layer and was read by OCR…", `7/7 claims verified`, and the document
+  pane carries six highlights over the recognized text, two of them inside the Thai
+  line. The lesson worth keeping: the cleanup was not cosmetic, it was the thing
+  standing between the work and its verification.
 
 ### Next, in order
 
@@ -205,13 +210,10 @@ demonstration the project has that the job layer works.
 
 ### Improvements to make / things to watch
 
-- **`web/` has no test framework at all.** Verification there is
-  `typecheck && lint && build` plus a human looking at the page. That was fine
-  while the client was thin, but `readFrames` in `lib/api.ts` now parses a wire
-  format and buffers across chunk boundaries — the first real logic on that side,
-  and nothing pins it. A minimal vitest setup with three or four cases (a frame
-  split across chunks, a comment line, a frame with no `event:`) is cheap and
-  would be the natural place for every client test after it.
+- ~~**`web/` has no test framework at all.**~~ `readFrames` in `lib/api.ts` parses a
+  wire format and buffers across chunk boundaries — the first real logic on that
+  side, and nothing pinned it. — **fixed 2026-08-08**: vitest, nine cases in
+  `lib/api.test.ts`, wired into CI between `lint` and `build`.
 - ~~**`ALLOWED_ORIGINS` in `app/main.py` is a hard-coded list.**~~ It cost time this
   session: the Next dev server landed on :3001 because :3000 was taken, and every
   API call from it would have been blocked with a CORS error that says nothing
