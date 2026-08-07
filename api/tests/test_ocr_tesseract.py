@@ -73,6 +73,12 @@ class TestARealScan:
         `_assemble` that strips it — see HANDOFF §11."""
         assert "\x00" not in scanned.text
 
+    def test_line_endings_are_normalized(self, scanned):
+        """Tesseract emits CRLF on Windows and LF elsewhere. Unnormalized, the same
+        scan would yield different offsets per platform, and a part-scanned document
+        would carry both conventions in one `document_text`."""
+        assert "\r" not in scanned.text
+
     def test_quotes_resolve_against_the_recognized_text(self, scanned):
         """The guardrail end to end: the model quotes what OCR produced, and the
         resolver finds it in exactly that string."""
@@ -88,3 +94,9 @@ class TestARealPartialScan:
         # Page 1's text layer is untouched, page 2 comes from the image.
         assert "Preecha Boonmee" in doc.text
         assert "Riverbank Analytics" in doc.text
+
+    def test_both_halves_share_one_line_ending_convention(self, engine):
+        """The document most likely to mix them, since its two pages come from
+        different readers."""
+        doc = parse_pdf(FIXTURES / "resume_mixed_scan.pdf", ocr=engine)
+        assert "\r" not in doc.text

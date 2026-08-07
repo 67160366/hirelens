@@ -147,7 +147,13 @@ class TesseractEngine(OCREngine):
                 f"Tesseract failed on page {page_number} (exit {completed.returncode}): {detail}"
             )
 
-        text = completed.stdout.decode("utf-8", errors="replace")
+        # Tesseract ends lines with CRLF on Windows and LF elsewhere. Left alone,
+        # the same scan would produce different `document_text` — and so different
+        # evidence offsets — depending on the machine that read it, and a document
+        # with one scanned and one text-layer page would carry both conventions at
+        # once. Normalizing here is before `_assemble` measures anything, so it
+        # shifts no offsets.
+        text = completed.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n")
         logger.info(
             "ocr: page %d recognized in %d ms (%d chars)",
             page_number,

@@ -93,12 +93,29 @@ Against Postgres + ARQ + real Gemini, on a fresh port:
 
 ### Worth knowing
 
-- **A real scan will not OCR as cleanly as the fixtures.** They are synthetic
-  renders of known text, so Tesseract gets them perfect and the tests are
-  deterministic — which also means no test in this repo can show what a photographed
-  resume does. Feed it ugly scans on purpose, the same advice as for ugly PDFs.
-- **No image preprocessing** (deskew, threshold, upscale) — deliberately, until a
-  real document shows it is needed.
+- **The fixtures OCR perfectly, so they prove less than they look like they do.**
+  Rather than leave that as a caveat, `resume_scanned.pdf` was degraded sixteen ways
+  and scored by how many known lines still resolve as evidence. Full table in
+  `HANDOFF.md` §7; the short version:
+  - **Rotation is the only steep, common cliff.** 2° perfect → 5° loses a line →
+    8° collapses → 12° fails outright. A phone photo is rotated far more often than
+    it is blurred, so **deskew is the one preprocessing step with evidence behind
+    it**. Everything else stays out.
+  - Contrast, brightness, JPEG down to quality 3, and heavy speckle had **no
+    measurable effect at all**. Tesseract 5 is much tougher than expected.
+  - **The dangerous failure is not failure.** At 6px blur the page yields 169
+    characters of confident nonsense — "Somchai Jaidee" becomes "Sore hector" —
+    which sails past `MIN_CHARS_PER_TEXT_PAGE`, so the resume is reported as
+    successfully read. Fabrication is still impossible (a quote must be located in
+    that text) and the banner still says the page was OCR'd, but a character count
+    cannot tell text from noise. Reading Tesseract's per-word confidence and
+    rejecting a page below a threshold is what would close it — **not done**, and
+    worth a decision rather than a silent default.
+- **The experiment paid for itself immediately**: it surfaced that Tesseract emits
+  **CRLF** on Windows while pdfplumber emits LF, so a part-scanned document carried
+  both in one `document_text` and the same scan would have produced different
+  offsets on Linux. One-line fix in the engine, pinned by two cases in the opt-in
+  module. Nothing in the clean-fixture tests could have shown that.
 - **OCR costs about a second per page** at 300 dpi, capped at `OCR_MAX_PAGES=10`.
   Parsing now runs in `asyncio.to_thread`, so it no longer blocks the worker's event
   loop or the progress streams the API is serving.

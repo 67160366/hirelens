@@ -305,8 +305,30 @@ want the retry policy run the ARQ worker.
   and the UI says so. The fixtures OCR perfectly because they are clean synthetic
   renders; a photographed resume will not, and no test in this repo can show that.
 - **No image preprocessing before OCR** — no deskew, threshold or upscale, just a
-  300 dpi render. Left out because nothing has yet demonstrated it is needed; add it
-  when a real scan proves it, not on speculation.
+  300 dpi render. That was a guess when it was written; it was then measured
+  (2026-08-08) by degrading `resume_scanned.pdf` sixteen ways and scoring how many
+  known lines still resolve as evidence:
+
+  | Degradation | Where it stops working |
+  |---|---|
+  | **Rotation** | 2° is perfect, 5° loses one line, 8° collapses to 1/5, 12°+ raises `NoTextLayerError` |
+  | **Blur** | fine to 3.0px, 2/5 at 4.5px, 0/5 at 6.0px |
+  | **Resolution** | fine down to ¼, 3/5 at ⅙, 0/5 at ⅛ |
+  | Contrast, brightness, JPEG (even q3), speckle | **no measurable effect** |
+
+  So preprocessing stays out, with one exception worth knowing: **skew is the only
+  cliff that is both steep and common** — a phone photo of a resume is rotated far
+  more often than it is blurred. A deskew step is the one preprocessing item with
+  evidence behind it.
+- **A badly degraded scan fails by producing confident nonsense, not by failing.**
+  At 6px blur the page still yields 169 characters — far above
+  `MIN_CHARS_PER_TEXT_PAGE` — so it is accepted as readable and reported in
+  `pages_from_ocr`, but "Somchai Jaidee" has become "Sore hector". The guardrail is
+  not breached (a quote still has to be located in that text, so fabrications are
+  still dropped) and the UI banner still warns that the page was OCR'd, but the
+  system does report success. Closing this properly means reading Tesseract's
+  per-word confidence and rejecting a page below a threshold; the character count
+  cannot tell text from noise.
 - **Ambiguous citations are flagged, not resolved.** A quote like `Python` appearing
   in both a bullet and a skills list is reported ambiguous rather than guessed.
   A worthwhile refinement is to prefer the skills-section span for skill claims.
