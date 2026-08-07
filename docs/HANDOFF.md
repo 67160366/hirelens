@@ -38,6 +38,7 @@ OCR, DOCX, the two-column fix and MinIO are still open.
 | The §11 incident PDF, replayed after the fixes | `extracted` on attempt 2 via live Gemini; 9 verified, 0 dropped, 9/9 spans resolve exactly; no NUL stored; the worker log carries ids and counts only (2026-08-07) |
 | Progress stream against Postgres + ARQ + live Gemini | upload → `processing` → `extracted` → `done` on one connection; 10/10 claims verified, every match tier-1 exact (2026-08-07) |
 | Progress stream through the retry policy | attempt 1 failed → attempt 2 failed → `dead_lettered`, each with its reason, at +0.6 s / +5.8 s / +16.1 s — the 5 s and 10 s backoffs, watched rather than inferred. `POST /retry` then reached `extracted` on attempt 4, 12/12 verified (2026-08-07) |
+| **Browser, end to end** | upload a Thai PDF against live Gemini: the line under the form moves "Uploading…" → "Parsing and verifying evidence…" → 10/10 claims, and clicking a citation highlights it in the document pane. Then with the provider down: "Attempt 1 failed, retrying — …" → "Attempt 2 failed…" → "Stopped after 3 attempts" with the reason and the parsed text still shown; "Try again" reached `extracted` with 12/12 (2026-08-08) |
 
 ### Repository state
 
@@ -389,15 +390,9 @@ the JSONB path is verified, Gemini has run live, and the queue is real.
 | 7 | MinIO storage backend | `build_storage` has the `MINIO` branch stubbed with a clear error. The worker and the API both build storage independently, so both pick it up |
 | 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay on the rendered page is *not* done: it needs bbox geometry, which `ParsedDocument` does not keep, plus an endpoint serving the original file. Do it with #6, which needs the same bbox extraction. |
 
-One thing worth doing whenever convenient, not blocking:
-
-- **Re-do the browser walkthrough.** The last one was on 2026-07-30, before the
-  queue existed. Everything under it has since been verified at the HTTP level
-  against the real stack — including the progress stream narrating a retry all the
-  way to a dead letter and back (the table in §1) — so what is left unchecked is
-  the rendering: the waiting message, citation highlighting, and the "Try again"
-  button as a user meets them. It needs the Claude Chrome extension connected,
-  which it has not been on the last two attempts.
+Nothing else is outstanding: the browser walkthrough was re-done on 2026-08-08 and
+covered the whole journey, including the retry path (§1). The next commit here
+should be M2 #4.
 
 M3 onward (matching engine, backend depth, frontend, ship) is in
 [`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.

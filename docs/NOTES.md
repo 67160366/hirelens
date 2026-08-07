@@ -6,6 +6,39 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
+## 2026-08-08 — the browser walkthrough, finally
+
+The Chrome extension connected, so the one thing outstanding since 2026-07-30 is
+done. Full journey in a real browser, written into `HANDOFF.md` §1:
+
+- **Live Gemini**: the line under the upload form moved "Uploading…" → "Parsing
+  and verifying evidence…" → the profile, 10/10 claims verified. Clicking a
+  citation highlighted it in the document pane and left the others dimmer.
+- **The retry path**: with the worker started as
+  `LLM_PROVIDER=fake FAKE_MODE=unavailable`, the page read "Attempt 1 failed,
+  retrying — LLMUnavailableError: …", then "Attempt 2 failed…", then the amber
+  "Stopped after 3 attempts" bar with "Try again" and the reason spelled out — and
+  the parsed document still shown beside it, which is the failure path committing
+  what it had. A healthy worker plus one click on "Try again" reached `extracted`
+  with 12/12 claims.
+
+That second sequence is what M2 #3 was for: before it, all of that was one
+unchanging "Parsing and verifying evidence…".
+
+### Worth knowing next time
+
+- **The extension pairs per browser.** `list_connected_browsers` showed one
+  device; the walkthrough needed it selected before any page action would run.
+- **Authentication for a walkthrough does not need the form.** Registering the
+  throwaway account over the API and writing `hirelens.access_token` /
+  `hirelens.refresh_token` into `localStorage` skips typing a password into a
+  browser and lands straight on the part actually under test.
+- **The zombie API on :8000 is still there** and still serves pre-SSE code. This
+  session ran on 8001 with `NEXT_PUBLIC_API_BASE=http://localhost:8001`. Reboot
+  when convenient.
+
+---
+
 ## 2026-08-07 (later) — pushed to CI, and M2 #3 lands
 
 ### What was done
@@ -97,10 +130,8 @@ demonstration the project has that the job layer works.
   the UI shows — but do not read the stream as a complete history.
 - **`api/app/workers/` is an empty leftover package** (a 0-byte `__init__.py`);
   the real module is `app/worker.py`. Delete it in a cleanup commit.
-- **The Chrome extension has now blocked the browser walkthrough twice.** It is
-  the only thing standing between this project and a verified end-to-end demo.
-  Worth fixing deliberately — connect it once, on a quiet day, rather than
-  discovering it is down at the start of a session that wanted to use it.
+- ~~The Chrome extension has blocked the browser walkthrough twice~~ — connected
+  on 2026-08-08 and the walkthrough is done; see the entry above.
 - **The machine had two stale dev servers** when this session started: a broken
   Next dev server on :3000 answering 500, and an API on :8000 still serving
   pre-SSE code whose process is gone while the socket keeps answering — a zombie
