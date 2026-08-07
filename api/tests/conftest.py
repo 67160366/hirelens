@@ -9,18 +9,21 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.api.deps import get_current_candidate, get_extractor, get_storage
+from app.api.deps import get_current_candidate, get_extractor, get_queue, get_storage
 from app.config import Settings, get_settings
 from app.db import get_session
+from app.jobs import JobContext
 from app.llm.fake import FakeExtractor, FakeMode
 from app.main import create_app
 from app.models import Base
+from app.queue import InlineQueue, JobQueue
 from app.storage import LocalStorage
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -65,10 +68,32 @@ def fake_mode() -> FakeMode:
 
 
 @pytest.fixture
+def queue(
+    settings: Settings,
+    sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    fake_mode: FakeMode,
+) -> JobQueue:
+    """The inline queue, so most tests see an upload through to a profile.
+
+    Override this with `RecordingQueue` (see `test_worker.py`) to test the
+    asynchronous path, where upload returns `pending` and a worker does the work.
+    """
+    return InlineQueue(
+        JobContext(
+            sessionmaker=sessionmaker_for_tests,
+            storage=LocalStorage(settings.storage_path),
+            extractor=FakeExtractor(fake_mode),
+            settings=settings,
+        )
+    )
+
+
+@pytest.fixture
 async def client(
     settings: Settings,
     sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     fake_mode: FakeMode,
+    queue: JobQueue,
 ) -> AsyncIterator[AsyncClient]:
     app = create_app()
     storage = LocalStorage(settings.storage_path)
@@ -78,6 +103,7 @@ async def client(
     app.state.settings = settings
     app.state.storage = storage
     app.state.extractor = extractor
+    app.state.queue = queue
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         async with sessionmaker_for_tests() as session:
@@ -87,6 +113,7 @@ async def client(
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_storage] = lambda: storage
     app.dependency_overrides[get_extractor] = lambda: extractor
+    app.dependency_overrides[get_queue] = lambda: queue
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
@@ -113,4 +140,18 @@ def resume_upload(name: str = "resume_en.pdf") -> dict[str, tuple[str, bytes, st
     return {"file": (name, data, "application/pdf")}
 
 
-__all__ = ["get_current_candidate", "resume_upload"]
+async def upload_and_read(client: AsyncClient, name: str = "resume_en.pdf") -> dict[str, Any]:
+    """Upload a fixture and read the result back.
+
+    The client contract since processing moved off the request: upload accepts the
+    file and answers `pending`, and the outcome is read from `GET /resumes/{id}`.
+    No polling is needed here because the tests run on the inline queue.
+    """
+    uploaded = await client.post("/resumes", files=resume_upload(name))
+    assert uploaded.status_code in (200, 201), uploaded.text
+    response = await client.get(f"/resumes/{uploaded.json()['id']}")
+    assert response.status_code == 200, response.text
+    return response.json()  # type: ignore[no-any-return]
+
+
+__all__ = ["get_current_candidate", "resume_upload", "upload_and_read"]

@@ -13,6 +13,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.llm.base import StructuredExtractor
 from app.models import Candidate
+from app.queue import JobQueue
 from app.security import TOKEN_TYPE_ACCESS, AuthError, decode_token
 from app.storage import Storage
 
@@ -36,8 +37,14 @@ def get_extractor(request: Request) -> StructuredExtractor:
     return request.app.state.extractor  # type: ignore[no-any-return]
 
 
+def get_queue(request: Request) -> JobQueue:
+    """The queue built once at startup — a Redis pool, or the inline runner."""
+    return request.app.state.queue  # type: ignore[no-any-return]
+
+
 StorageDep = Annotated[Storage, Depends(get_storage)]
 ExtractorDep = Annotated[StructuredExtractor, Depends(get_extractor)]
+QueueDep = Annotated[JobQueue, Depends(get_queue)]
 
 
 async def get_current_candidate(

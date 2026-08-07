@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from app.api.routes.resumes import MAX_UPLOAD_BYTES
 from app.llm.fake import FakeMode
 from app.models import ResumeStatus
-from tests.conftest import resume_upload
+from tests.conftest import resume_upload, upload_and_read
 
 
 class TestHealth:
@@ -120,13 +120,26 @@ class TestUpload:
         response = await client.post("/resumes", files=resume_upload())
         assert response.status_code == 401
 
-    async def test_upload_extracts_a_profile(self, authed_client: AsyncClient):
+    async def test_upload_accepts_the_file_and_answers_pending(self, authed_client: AsyncClient):
+        """Parsing happens off the request, so the response cannot carry a profile.
+
+        The status is `pending` whichever queue backend is configured — the
+        response describes the resume as accepted, not as processed, so a client
+        polls the same way against an inline queue and a real worker.
+        """
         response = await authed_client.post("/resumes", files=resume_upload())
         assert response.status_code == 201, response.text
         body = response.json()
-        assert body["status"] == ResumeStatus.EXTRACTED
-        assert body["page_count"] == 1
+        assert body["status"] == ResumeStatus.PENDING
+        assert body["page_count"] is None
         assert body["failure_reason"] is None
+
+    async def test_the_queued_work_produces_a_profile(self, authed_client: AsyncClient):
+        body = await upload_and_read(authed_client)
+        assert body["resume"]["status"] == ResumeStatus.EXTRACTED
+        assert body["resume"]["page_count"] == 1
+        assert body["resume"]["failure_reason"] is None
+        assert body["profile"] is not None
 
     async def test_reuploading_the_same_bytes_is_idempotent(self, authed_client: AsyncClient):
         """Same file, same resource — no duplicate row and no second extraction."""
@@ -156,11 +169,9 @@ class TestUpload:
         self, authed_client: AsyncClient
     ):
         """The journey's "tell the user why" requirement, at the API boundary."""
-        response = await authed_client.post("/resumes", files=resume_upload("resume_scanned.pdf"))
-        assert response.status_code == 201
-        body = response.json()
-        assert body["status"] == ResumeStatus.FAILED
-        assert "OCR" in body["failure_reason"]
+        body = await upload_and_read(authed_client, "resume_scanned.pdf")
+        assert body["resume"]["status"] == ResumeStatus.FAILED
+        assert "OCR" in body["resume"]["failure_reason"]
 
     async def test_a_disguised_non_pdf_is_rejected_by_magic_bytes(self, authed_client: AsyncClient):
         """The extension is caller-chosen; the first bytes are not."""
@@ -177,18 +188,16 @@ class TestUpload:
     async def test_corrupt_pdf_fails_with_an_explanation(self, authed_client: AsyncClient):
         """Right magic bytes, garbage body: passes the gate, fails the parser."""
         corrupt = b"%PDF-1.7\n" + b"this is not a real pdf body " * 4
-        response = await authed_client.post(
+        uploaded = await authed_client.post(
             "/resumes", files={"file": ("resume.pdf", corrupt, "application/pdf")}
         )
-        assert response.json()["status"] == ResumeStatus.FAILED
+        response = await authed_client.get(f"/resumes/{uploaded.json()['id']}")
+        assert response.json()["resume"]["status"] == ResumeStatus.FAILED
 
     async def test_partial_scan_reports_the_pages_needing_ocr(self, authed_client: AsyncClient):
-        response = await authed_client.post(
-            "/resumes", files=resume_upload("resume_mixed_scan.pdf")
-        )
-        body = response.json()
-        assert body["status"] == ResumeStatus.EXTRACTED
-        assert body["pages_without_text"] == [2]
+        body = await upload_and_read(authed_client, "resume_mixed_scan.pdf")
+        assert body["resume"]["status"] == ResumeStatus.EXTRACTED
+        assert body["resume"]["pages_without_text"] == [2]
 
 
 class TestReadProfile:
@@ -271,9 +280,7 @@ class TestBackendOutage:
 
     async def test_upload_survives_the_model_being_down(self, authed_client: AsyncClient):
         """The parse result is kept so a retry does not start from scratch."""
-        response = await authed_client.post("/resumes", files=resume_upload())
-        assert response.status_code == 201
-        body = response.json()
-        assert body["status"] == ResumeStatus.PARSED
-        assert "Extraction failed" in body["failure_reason"]
-        assert body["page_count"] == 1
+        body = await upload_and_read(authed_client)
+        assert body["resume"]["status"] == ResumeStatus.PARSED
+        assert "Extraction failed" in body["resume"]["failure_reason"]
+        assert body["resume"]["page_count"] == 1

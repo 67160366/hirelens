@@ -136,6 +136,21 @@ async function readError(response: Response): Promise<string> {
   return response.statusText || `Request failed with status ${response.status}`;
 }
 
+/**
+ * `pending` means queued or running; everything else is a resting state the
+ * worker has already written — `extracted` on success, `failed` when parsing
+ * gave up, and `parsed` when the text survived but extraction did not (the
+ * failure is in `failure_reason` either way).
+ */
+export function isSettled(status: ResumeStatus): boolean {
+  return status !== "pending";
+}
+
+const POLL_INTERVAL_MS = 700;
+const POLL_TIMEOUT_MS = 120_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const api = {
   register: (email: string, password: string) =>
     request<TokenPair>("/auth/register", {
@@ -167,4 +182,23 @@ export const api = {
   listResumes: (token: string) => request<Resume[]>("/resumes", {}, token),
 
   getProfile: (id: string, token: string) => request<ProfileResponse>(`/resumes/${id}`, {}, token),
+
+  /**
+   * Poll until the worker has finished with a resume.
+   *
+   * Parsing and extraction moved off the request, so an upload only tells us the
+   * work was accepted. Polling is the placeholder: M2 #3 replaces it with an SSE
+   * progress stream, which is why the waiting lives behind one function.
+   */
+  async waitForProfile(id: string, token: string): Promise<ProfileResponse> {
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    for (;;) {
+      const response = await api.getProfile(id, token);
+      if (isSettled(response.resume.status)) return response;
+      if (Date.now() >= deadline) {
+        throw new ApiError(0, "Still processing after two minutes. Try again in a moment.");
+      }
+      await sleep(POLL_INTERVAL_MS);
+    }
+  },
 };

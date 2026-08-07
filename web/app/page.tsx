@@ -125,8 +125,10 @@ export default function Home() {
   }, []);
 
   async function uploadOnce(file: File, accessToken: string): Promise<ProfileResponse> {
+    // Upload only stores the file and queues the work, so the result has to be
+    // waited for rather than read straight out of the response.
     const resume = await api.uploadResume(file, accessToken);
-    return api.getProfile(resume.id, accessToken);
+    return api.waitForProfile(resume.id, accessToken);
   }
 
   async function upload(file: File) {

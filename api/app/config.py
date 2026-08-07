@@ -34,6 +34,14 @@ class StorageBackend(StrEnum):
     MINIO = "minio"
 
 
+class QueueBackend(StrEnum):
+    INLINE = "inline"
+    """Run the job before the upload responds. No Redis, so a fresh clone works."""
+
+    ARQ = "arq"
+    """Hand the job to an ARQ worker over Redis. The real thing."""
+
+
 DEFAULT_JWT_SECRET = "change-me-before-deploying"
 
 
@@ -68,6 +76,12 @@ class Settings(BaseSettings):
 
     storage_backend: StorageBackend = StorageBackend.LOCAL
     storage_dir: Path = Path("var/uploads")
+
+    # `inline` for the same reason the fake extractor is the default provider: a
+    # fresh clone must run with no servers. Either way the client contract is the
+    # same — upload returns a `pending` resume and the caller polls until the
+    # status is terminal; `inline` simply gets there before the response returns.
+    queue_backend: QueueBackend = QueueBackend.INLINE
 
     jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_access_ttl_minutes: int = 30

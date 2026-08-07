@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.llm.fake import FakeExtractor, FakeMode
 from app.models import Candidate, Resume
+from app.queue import JobQueue
 from app.services import resume_service
 from app.storage import LocalStorage, build_storage_key, content_hash
 from tests.conftest import FIXTURES
@@ -19,11 +19,6 @@ from tests.conftest import FIXTURES
 @pytest.fixture
 def storage(settings: Settings) -> LocalStorage:
     return LocalStorage(settings.storage_path)
-
-
-@pytest.fixture
-def extractor() -> FakeExtractor:
-    return FakeExtractor(FakeMode.FAITHFUL)
 
 
 async def _make_candidate(session: AsyncSession) -> Candidate:
@@ -39,7 +34,7 @@ class TestDuplicateUploadRace:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
         settings: Settings,
         storage: LocalStorage,
-        extractor: FakeExtractor,
+        queue: JobQueue,
         monkeypatch: pytest.MonkeyPatch,
     ):
         """Two identical uploads race: both pass the pre-insert lookup, the loser's
@@ -54,8 +49,7 @@ class TestDuplicateUploadRace:
                 filename="resume_en.pdf",
                 data=data,
                 storage=storage,
-                extractor=extractor,
-                settings=settings,
+                queue=queue,
             )
             assert winner.created
 
@@ -82,8 +76,7 @@ class TestDuplicateUploadRace:
                 filename="resume_en.pdf",
                 data=data,
                 storage=storage,
-                extractor=extractor,
-                settings=settings,
+                queue=queue,
             )
 
         assert not result.created
@@ -96,7 +89,7 @@ class TestFailedIngestCleanup:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
         settings: Settings,
         storage: LocalStorage,
-        extractor: FakeExtractor,
+        queue: JobQueue,
         monkeypatch: pytest.MonkeyPatch,
     ):
         """If the row rolls back, the object written before it must not survive."""
@@ -105,12 +98,13 @@ class TestFailedIngestCleanup:
         async def boom(*args: object, **kwargs: object) -> None:
             raise RuntimeError("simulated crash mid-ingest")
 
-        monkeypatch.setattr(resume_service, "process_resume", boom)
-
         async with sessionmaker_for_tests() as session:
             candidate = await _make_candidate(session)
             # Captured before the crash: the rollback expires the instance.
             candidate_id = candidate.id
+            # The blob is written before the insert, so the commit is what has to
+            # fail to leave one stranded.
+            monkeypatch.setattr(session, "commit", boom)
             with pytest.raises(RuntimeError, match="simulated crash"):
                 await resume_service.ingest_resume(
                     session,
@@ -118,8 +112,7 @@ class TestFailedIngestCleanup:
                     filename="resume_en.pdf",
                     data=data,
                     storage=storage,
-                    extractor=extractor,
-                    settings=settings,
+                    queue=queue,
                 )
 
         digest = content_hash(data)
@@ -141,7 +134,7 @@ class TestLogging:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
         settings: Settings,
         storage: LocalStorage,
-        extractor: FakeExtractor,
+        queue: JobQueue,
         caplog: pytest.LogCaptureFixture,
     ):
         """Resumes are PII: ids and counters may be logged, the content may not."""
@@ -156,8 +149,7 @@ class TestLogging:
                 filename="resume_en.pdf",
                 data=data,
                 storage=storage,
-                extractor=extractor,
-                settings=settings,
+                queue=queue,
             )
 
         assert "extracted" in caplog.text

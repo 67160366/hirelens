@@ -1,8 +1,9 @@
-"""Ingest a resume: store it, parse it, extract a verified profile, persist all three.
+"""Ingest a resume: store it, record it, and hand the slow half to the queue.
 
-Runs inline in the request in M1. M2 moves parse-and-extract onto the worker; this
-function is written so that split is a matter of calling the second half from a job
-rather than restructuring it.
+The request does the fast, cheap part — hash, store, insert — and returns a
+`pending` resume. Parsing and extraction happen in `process_resume`, which the
+queue calls from a worker process (`app/jobs.py`); it takes no HTTP types and does
+not commit, so the caller owns the transaction boundary either way.
 
 Failures are recorded on the row instead of thrown away. A scanned PDF or an
 unreachable model leaves a resume in a state that explains itself and can be
@@ -14,6 +15,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +28,11 @@ from app.pipeline.extract import ExtractionOutcome, extract_profile
 from app.pipeline.parse import ParsedDocument, ParseError, parse_document_bytes
 from app.pipeline.prompts import EXTRACTION_PROMPT_VERSION
 from app.storage import Storage, build_storage_key, content_hash
+
+if TYPE_CHECKING:
+    # Import-time only: `app.queue` reaches back here through `app.jobs`, and the
+    # dependency that matters runs one way — the queue calls the service.
+    from app.queue import JobQueue
 
 # Resumes are PII: log ids, sizes and counts, never document text or filenames.
 logger = logging.getLogger(__name__)
@@ -54,10 +61,9 @@ async def ingest_resume(
     filename: str,
     data: bytes,
     storage: Storage,
-    extractor: StructuredExtractor,
-    settings: Settings,
+    queue: JobQueue,
 ) -> IngestResult:
-    """Store and process one upload. Idempotent on the file's content hash."""
+    """Store one upload and queue it for processing. Idempotent on content hash."""
     digest = content_hash(data)
 
     existing = await find_by_content(session, candidate_id=candidate.id, digest=digest)
@@ -65,6 +71,7 @@ async def ingest_resume(
         # Same bytes, same result. Re-running extraction would spend money to
         # produce what we already have.
         logger.info("resume %s: duplicate upload deduplicated", existing.id)
+        await _requeue_if_stalled(existing, queue)
         return IngestResult(resume=existing, created=False)
 
     key = build_storage_key(candidate_id=str(candidate.id), digest=digest, filename=filename)
@@ -80,15 +87,6 @@ async def ingest_resume(
     )
     session.add(resume)
     try:
-        await session.flush()
-
-        await process_resume(
-            session,
-            resume=resume,
-            data=data,
-            extractor=extractor,
-            settings=settings,
-        )
         await session.commit()
     except IntegrityError:
         # Two identical uploads racing: both passed the lookup above, the loser's
@@ -99,6 +97,7 @@ async def ingest_resume(
         if existing is None:
             raise
         logger.info("resume %s: lost a duplicate-upload race, returning the winner", existing.id)
+        await _requeue_if_stalled(existing, queue)
         return IngestResult(resume=existing, created=False)
     except Exception:
         # The row rolls back with the transaction; remove the blob written above
@@ -109,7 +108,24 @@ async def ingest_resume(
         await storage.delete(key)
         raise
 
+    # After the commit, never before: the worker looks the row up by id, and a
+    # fast worker would otherwise find nothing there.
+    await queue.enqueue_resume(resume.id)
     return IngestResult(resume=resume, created=True)
+
+
+async def _requeue_if_stalled(resume: Resume, queue: JobQueue) -> None:
+    """Re-queue a duplicate upload whose original never got processed.
+
+    A resume can sit at `pending` because the enqueue failed, or because the
+    worker was down when it was picked up. Without this, re-uploading the file —
+    the obvious thing a user does — would dedupe to that row and leave it stuck
+    forever. Proper retry and a dead-letter queue are M2 #2; this only keeps the
+    duplicate path from stranding work.
+    """
+    if resume.status is ResumeStatus.PENDING:
+        logger.info("resume %s: duplicate of a pending resume, re-queueing", resume.id)
+        await queue.enqueue_resume(resume.id)
 
 
 async def process_resume(

@@ -83,9 +83,15 @@ is what this project develops against, and what it deploys on:
 
 ```bash
 docker compose up -d                       # postgres (pgvector), redis, minio
-# swap DATABASE_URL to the Postgres line in .env, then:
-cd api && alembic upgrade head
+# swap DATABASE_URL to the Postgres line in .env and set QUEUE_BACKEND=arq, then:
+cd api
+alembic upgrade head
+arq app.worker.WorkerSettings              # in its own terminal, next to uvicorn
 ```
+
+With `QUEUE_BACKEND=inline` (the default) there is no worker and no Redis: the
+upload request does the work itself. The API behaves the same either way — it
+answers `pending` and the client polls.
 
 ### Try it without the web app
 
@@ -113,13 +119,19 @@ Next.js (App Router, TS, Tailwind)
    │  REST
    ▼
 FastAPI ──► PostgreSQL (+pgvector, for M3)   ← SQLite works for local dev
-   │        Redis          (queue, M2)
+   │        Redis          (job queue)
    │        MinIO / S3     (M2; local filesystem today)
-   ▼
-Pipeline: parse → extract → verify evidence → score (M3)
-                     │
-                     └─► LLM provider (fake | gemini)
+   │
+   └─ enqueue ─► ARQ worker            ← or QUEUE_BACKEND=inline, no Redis
+                    ▼
+        Pipeline: parse → extract → verify evidence → score (M3)
+                             │
+                             └─► LLM provider (fake | gemini)
 ```
+
+Upload stores the file, queues the work and returns a `pending` resume; the client
+polls `GET /resumes/{id}` until it settles. An SSE progress stream replaces the
+polling in M2 #3.
 
 ### Provider-agnostic by design
 

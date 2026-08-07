@@ -116,7 +116,10 @@ api/app/
     extraction.py      what the model returns — quotes only, no offsets
     profile.py         what we store — offsets, pages, stats, dropped claims
   models/core.py       candidates, resumes, extracted_profiles, llm_call_logs
-  services/resume_service.py
+  services/resume_service.py   upload path: store, insert, queue
+  jobs.py              run_resume_job — the unit of background work, arq-free
+  queue.py             JobQueue seam: inline (no server) / arq (Redis)
+  worker.py            `arq app.worker.WorkerSettings`
   api/routes/          auth.py, resumes.py
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
@@ -174,7 +177,8 @@ even without an editable install.
 | Thing | State |
 |---|---|
 | Database | **Postgres** in Docker (`.env` → `DATABASE_URL`), migrated and verified 2026-08-07. SQLite at `api/var/dev.db` is kept as a commented fallback; the test suite still uses its own in-memory SQLite. |
-| Docker | **Installed and running.** `docker compose up -d` brings up `postgres` (pgvector/pg17), `redis` and `minio`; Redis and MinIO are up but not yet used. |
+| Docker | **Installed and running.** `docker compose up -d` brings up `postgres` (pgvector/pg17), `redis` and `minio`. Redis carries the job queue since M2 #1; MinIO is up but unused until M2 #7. |
+| Queue | **`arq`** (`.env` → `QUEUE_BACKEND`). Run `arq app.worker.WorkerSettings` alongside the API, or set `inline` to process in-request with no Redis. |
 | LLM provider | **`gemini`** (`gemini-3.6-flash`) in `.env`; live-verified against every fixture on 2026-08-06 — see `docs/llm-providers.md`. Tests and CI still run on `fake`. |
 | Storage | Local filesystem at `var/uploads` |
 
@@ -183,10 +187,14 @@ even without an editable install.
 ```bash
 cd api
 uvicorn app.main:app --reload      # http://127.0.0.1:8000  (/docs for OpenAPI)
+arq app.worker.WorkerSettings      # a second terminal; only for QUEUE_BACKEND=arq
 
 cd ../web
 npm run dev                        # http://localhost:3000
 ```
+
+Without the worker running, uploads sit at `pending` forever. Re-uploading the
+same file re-queues it, so starting the worker late still gets the work done.
 
 Fastest sanity check, no servers needed:
 
@@ -205,16 +213,17 @@ API, upload again.
 viewer (M2 #8 below) is built, the first live Gemini run happened on 2026-08-06 —
 it surfaced two adapter problems, both fixed (see §1 and `docs/llm-providers.md`) —
 and on 2026-08-07 development moved onto Postgres in Docker, with the JSONB path
-verified for the first time (§6 and `docs/PLAN.md`). Redis and MinIO are already
-up, which is what M2 #1 and #7 below need.
+verified for the first time (§6 and `docs/PLAN.md`).
 
-Next is M2 #1. In dependency order (live status in `docs/PLAN.md`):
+M2 #1 landed the same day: parsing and extraction now run on an ARQ worker
+instead of inside the upload request. **Next is M2 #2.** In dependency order
+(live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
-| 1 | ARQ worker + Redis; move `process_resume` off the request | `resume_service.process_resume` was written to be called from a job — it takes no HTTP types and does not commit |
-| 2 | Job state, retry with backoff, dead-letter queue | |
-| 3 | SSE progress endpoint; wire the web UI's "Parsing…" state to it | |
+| 1 | ~~ARQ worker + Redis~~ **done** — `process_resume` runs off the request | `app/jobs.py` (the work), `app/queue.py` (inline/arq seam), `app/worker.py` (entrypoint). Upload answers `pending`; clients poll |
+| 2 | Job state, retry with backoff, dead-letter queue | A failed job leaves the resume `pending` and arq's default retry applies; nothing records attempts yet. `_requeue_if_stalled` in `resume_service` is the stopgap that keeps re-upload from stranding work |
+| 3 | SSE progress endpoint; wire the web UI's "Parsing…" state to it | The web client polls today — `api.waitForProfile` in `web/lib/api.ts` is the one place to replace |
 | 4 | OCR fallback for scans (Tesseract + `tha`) | `ParsedDocument.pages_without_text` is already the work list; `resume_scanned.pdf` and `resume_mixed_scan.pdf` are real image-based fixtures ready for it |
 | 5 | DOCX parser | `parse_document_bytes` already dispatches on extension and raises `UnsupportedFileTypeError` |
 | 6 | **Two-column fix** via bbox column detection | Task #11. The xfail test defines "done" |

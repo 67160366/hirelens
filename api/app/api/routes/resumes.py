@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CandidateDep, ExtractorDep, SessionDep, SettingsDep, StorageDep
+from app.api.deps import CandidateDep, QueueDep, SessionDep, StorageDep
 from app.models import Resume, ResumeStatus
 from app.services import resume_service
 
@@ -58,14 +58,17 @@ class ProfileOut(BaseModel):
 async def upload_resume(
     candidate: CandidateDep,
     session: SessionDep,
-    settings: SettingsDep,
     storage: StorageDep,
-    extractor: ExtractorDep,
+    queue: QueueDep,
     request: Request,
     response: Response,
     file: Annotated[UploadFile, File(description="A PDF resume.")],
 ) -> ResumeOut:
-    """Store and process a resume.
+    """Store a resume and queue it for parsing and extraction.
+
+    Returns as soon as the file is stored, so the response carries a `pending`
+    resume rather than a finished profile — poll `GET /resumes/{id}` until the
+    status is `extracted` or `failed`.
 
     Idempotent on file content: re-uploading the same bytes returns the existing
     resource with 200 rather than creating a duplicate or re-billing extraction.
@@ -113,8 +116,7 @@ async def upload_resume(
         filename=filename,
         data=data,
         storage=storage,
-        extractor=extractor,
-        settings=settings,
+        queue=queue,
     )
 
     response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK

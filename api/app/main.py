@@ -11,7 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import auth, resumes
 from app.config import get_settings
+from app.db import get_sessionmaker
+from app.jobs import JobContext
 from app.llm.registry import build_extractor
+from app.logging_config import configure_logging
+from app.queue import build_queue
 from app.storage import build_storage
 
 logger = logging.getLogger(__name__)
@@ -20,26 +24,35 @@ logger = logging.getLogger(__name__)
 ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 
-def configure_logging() -> None:
-    """One root handler at INFO. Resumes are PII: log ids and counts, never text."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Build the storage and extraction backends once, not per request."""
+    """Build the storage, extraction and queue backends once, not per request."""
     configure_logging()
     settings = get_settings()
     app.state.settings = settings
     app.state.storage = build_storage(settings)
     app.state.extractor = build_extractor(settings)
-    logger.info("started: provider=%s storage=%s", settings.llm_provider, settings.storage_backend)
+    # The context is only used by the inline queue; the ARQ worker builds its own
+    # in its own process.
+    app.state.queue = await build_queue(
+        settings,
+        JobContext(
+            sessionmaker=get_sessionmaker(),
+            storage=app.state.storage,
+            extractor=app.state.extractor,
+            settings=settings,
+        ),
+    )
+    logger.info(
+        "started: provider=%s storage=%s queue=%s",
+        settings.llm_provider,
+        settings.storage_backend,
+        settings.queue_backend,
+    )
     try:
         yield
     finally:
+        await app.state.queue.aclose()
         await app.state.extractor.aclose()
 
 

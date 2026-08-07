@@ -59,6 +59,7 @@ mypy app                                    # strict — enforced in CI
 python -m app.cli tests/fixtures/resume_th.pdf   # fastest end-to-end sanity check
 uvicorn app.main:app --reload               # API on :8000, /docs for OpenAPI
 alembic upgrade head                        # migrations (against DATABASE_URL)
+arq app.worker.WorkerSettings               # the job worker (needs QUEUE_BACKEND=arq + Redis)
 ```
 
 From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm run build`.
@@ -95,7 +96,10 @@ api/app/
   schemas/                 extraction.py = model output (quotes only) vs
                            profile.py = stored form (offsets, pages, stats)
   models/core.py           candidates, resumes, extracted_profiles, llm_call_logs
-  services/resume_service.py  storage + parse + extract + persist meet here
+  services/resume_service.py  upload stores + queues; process_resume does the work
+  jobs.py                  run_resume_job: the unit of background work, arq-free
+  queue.py                 JobQueue seam: inline (no server) / arq (Redis)
+  worker.py                the `arq app.worker.WorkerSettings` entrypoint
   api/routes/              auth.py, resumes.py
 web/
   app/page.tsx             auth + upload + result (single screen)
@@ -103,9 +107,14 @@ web/
   lib/api.ts               typed API client (NEXT_PUBLIC_API_BASE)
 ```
 
-Environment quirks: dev runs on Postgres from `docker compose up -d` + local
-storage (`var/uploads`); SQLite (`api/var/dev.db`) is a commented fallback in
-`.env`. Redis and MinIO are up but unused until M2 #1 and #7. The test suite runs
-on its own in-memory SQLite and never needs a server.
+Environment quirks: dev runs on Postgres + Redis from `docker compose up -d` +
+local storage (`var/uploads`); SQLite (`api/var/dev.db`) is a commented fallback
+in `.env`. MinIO is up but unused until M2 #7. The test suite runs on its own
+in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server.
+
+Upload no longer returns a profile: it stores the file, queues the work and
+answers `pending`. Clients poll `GET /resumes/{id}` until the status is anything
+but `pending` (M2 #3 replaces the polling with SSE). That contract is identical
+under both queue backends on purpose — `inline` just gets there sooner.
 `.env` selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating`
 demos the dropped-claims path.

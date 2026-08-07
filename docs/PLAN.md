@@ -42,8 +42,16 @@ should review them before anyone treats the details as commitments.
 
 ## M2 — in dependency order (from HANDOFF §7)
 
-- [ ] 1. ARQ worker + Redis; move `process_resume` off the request. It was written
-  to be called from a job — takes no HTTP types, does not commit.
+- [x] 1. **ARQ worker + Redis; `process_resume` moved off the request**
+  (2026-08-07). `app/jobs.py` holds the work (arq-free, so it is testable without
+  Redis), `app/queue.py` is the `JobQueue` seam — `inline` for a server-free clone
+  and the test suite, `arq` for the real thing — and `app/worker.py` is the
+  `arq app.worker.WorkerSettings` entrypoint. Upload now stores, queues and
+  answers `pending` in ~80 ms; the client polls until the status settles. Enqueue
+  happens after the commit, and uses a job id derived from the resume id so a
+  duplicate upload cannot queue the same work twice. Verified live against Redis,
+  Postgres and real Gemini, including that a job queued while the worker was down
+  is picked up when it restarts.
 - [ ] 2. Job state, retry with backoff, dead-letter queue.
 - [ ] 3. SSE progress endpoint; wire the web UI's "Parsing…" state to it.
 - [ ] 4. OCR fallback for scans (Tesseract + `tha`). `ParsedDocument.pages_without_text`
