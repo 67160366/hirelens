@@ -40,6 +40,18 @@ should review them before anyone treats the details as commitments.
   `docs/llm-providers.md`. Headline: 0% final hallucination rate, every match
   tier-1 exact including Thai; the two-column fixture needed the retry loop.
 
+## Blocking bugs — before any further M2 work
+
+- [ ] **Three defects from one real-world PDF** (2026-08-07), written up in full in
+  `docs/HANDOFF.md` §11. In short: `pdfplumber` returns `U+0000` for glyphs it
+  cannot map and Postgres refuses to store it (invisible to a suite that runs on
+  SQLite); the final commit in `run_resume_job` sits outside the retry policy's
+  `try`, so a persistence failure strands the resume at `processing` where nothing
+  — redelivery, `POST /retry`, or re-upload — can reach it; and the database error
+  string carries `document_text`, so resume text reaches the log today and would
+  reach `failure_reason` and the API response the moment the second bug is fixed
+  on its own. Fix the third with the second, never after it.
+
 ## M2 — in dependency order (from HANDOFF §7)
 
 - [x] 1. **ARQ worker + Redis; `process_resume` moved off the request**

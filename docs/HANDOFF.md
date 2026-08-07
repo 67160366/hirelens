@@ -5,6 +5,10 @@ cutover and the first two M2 items. Read this first when picking the project bac
 up — then `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item
 milestone status.
 
+> **Start at §11.** A real-world PDF broke three things on 2026-08-07 and they are
+> not fixed. One of them strands a resume in a state nothing can recover, and one
+> writes resume text into logs and into the API response. Fix those before M2 #3.
+
 ---
 
 ## 1. Where things stand
@@ -393,3 +397,109 @@ M3 onward (matching engine, backend depth, frontend, ship) is in
   measurable-for-free metrics — hallucination rate, parse success, cost per
   document — are in. This was a considered decision to avoid unbounded work; don't
   quietly promote the baseline comparison into M2 or M3.
+
+---
+
+## 11. Open bugs — fix these before M2 #3
+
+Found 2026-08-07 by uploading a real-world Thai resume template (a designer-tool
+PDF, 443 KB, 1 page) through the browser against Postgres + the ARQ worker + live
+Gemini. **None of them is fixed.** They are one incident, but three independent
+defects, and the order they are fixed in matters — see the warning on #3.
+
+### What happened
+
+The pipeline succeeded completely: the PDF parsed, Gemini ran twice over 34 s, and
+verification produced **5 claims with 0 dropped**. Persisting it then failed on the
+last statement and the whole transaction rolled back. All of that work was lost,
+the resume was left unrecoverable, and the resume's text ended up in the log.
+
+```
+resume 68d212a0-…: extracted — 5 verified, 0 dropped, 2 attempt(s), 34188 ms
+34.55s ! resume:68d212a0-…:0:process_resume failed, DBAPIError:
+  asyncpg.exceptions.CharacterNotInRepertoireError:
+  invalid byte sequence for encoding "UTF8": 0x00
+```
+
+### Bug 1 — NUL characters reach the database, and no test can see it
+
+`pdfplumber` extracted 8 `U+0000` characters from that PDF — positions where the
+embedded font has no usable ToUnicode mapping, so a Thai tone mark came back as
+NUL (`วิทยาลัยที\x00คุณจบ`). Reproducible on demand:
+
+```python
+doc = parse_document_bytes(data, filename="x.pdf")
+# chars: 1751, pages: 1
+# control chars: {'0x0': 8}
+# NUL positions: [585, 1042, 1441, 1630, 1684, 1707, 1736, 1745]
+```
+
+**Postgres cannot store `U+0000` in a text column. SQLite can.** Every one of the
+159 tests runs on SQLite, and the opt-in `tests/test_postgres.py` uses clean
+synthetic fixtures, so both are blind to it. This is exactly the class of defect
+the Postgres cutover was meant to expose; it did not, because the test data is too
+well-behaved.
+
+*Fix:* strip `U+0000` in `_assemble` (`api/app/pipeline/parse.py`), at the point
+that already runs `unicodedata.normalize("NFC", raw)` — that is *before* the page
+spans are computed from `len(page_text)`, so removing characters there shifts no
+offsets. This does not violate the verbatim-`document_text` rule: that rule forbids
+re-parsing or re-normalizing text **already stored**, not cleaning at parse time.
+
+### Bug 2 — a failed commit strands the resume where nothing can reach it
+
+In `run_resume_job` (`api/app/jobs.py`) the final `await session.commit()` sits
+**outside** the `try/except` that implements the retry policy. When the commit
+itself fails, the exception escapes to arq and none of the bookkeeping runs:
+
+```
+status=PROCESSING  attempts=1  failed_attempts=0  failure_reason=(empty)
+```
+
+Every route out is then closed. `_claim` skips `processing`, so redelivery is a
+no-op; `POST /resumes/{id}/retry` refuses `processing` with 409; and re-uploading
+the same bytes dedupes to the row without re-queueing, because
+`_requeue_if_stalled` only fires for `pending`. The web client polled 168 times and
+gave up at its two-minute timeout — that is what the user sees.
+
+*Fix:* move that commit inside the `try`, so a persistence failure goes through
+`_record_failure_on_a_fresh_session` like any other unexpected error. Worth adding
+the visibility timeout listed in §7 as well, so a worker that dies mid-job cannot
+strand a row either.
+
+*The stuck row from this incident is still in the dev database*
+(`68d212a0-4f84-4100-bdac-351481177581`) and needs its status reset by hand before
+it can be retried.
+
+### Bug 3 — resume text leaks into logs and into the API response
+
+SQLAlchemy's `DBAPIError` string embeds the failing statement's parameters, which
+include `document_text`. The worker log from this incident holds a real person's
+name, work history and education in plaintext. `CLAUDE.md` forbids exactly this:
+*"Never log or print document text or personal data — resumes are PII."*
+
+**Fix this together with bug 2, or fixing bug 2 alone makes it worse.** Once the
+exception is caught, `_record_failure` builds its reason as
+`f"{type(error).__name__}: {error}"` and writes it to `failure_reason` — so the
+resume text would travel from the log into the **database** and out through the
+API to any client that reads the resume.
+
+*Fix:* for unexpected exceptions, record and log the exception's **type name
+only**, never its message. Known pipeline errors (`ParseError`, `LLMError`) carry
+messages written by this codebase and stay safe to include.
+
+### Fix order and the test that should have caught this
+
+1. `parse.py` — strip `U+0000` (bug 1).
+2. `jobs.py` — commit inside the `try` **and** type-name-only failure reasons
+   (bugs 2 and 3, together).
+3. Tests: a fixture whose extracted text contains `U+0000`; a case in
+   `tests/test_postgres.py` proving it round-trips on real Postgres; and a case
+   proving a failing commit ends at `dead_lettered` rather than stranded at
+   `processing`.
+4. Reset the stuck row, then re-upload the same PDF to confirm end to end.
+
+The wider lesson worth acting on: the synthetic fixtures are all well-formed, so
+whole classes of real-world PDF damage — NUL bytes, broken ToUnicode maps, mixed
+encodings — cannot appear in the suite. A fixture generated to be *malformed* on
+purpose belongs alongside the clean ones.
