@@ -22,7 +22,9 @@ advice for the owner. Newest entry first. The detailed records stay in
   finally see "attempt 1 failed, retrying" instead of one static line.
 - Suite grew 164 → 173 (`tests/test_events.py`). All gates green: `pytest -q`,
   `ruff check`, `ruff format --check`, `mypy app`, and `npm run typecheck / lint /
-  build`.
+  build`, plus `tests/test_postgres.py` (4 passed) against the real database.
+- Two commits, both pushed and green: `60255a0` (the slice) and `617523a` (the
+  live verification written into `HANDOFF.md` §1).
 
 ### The two decisions inside it
 
@@ -60,36 +62,88 @@ demonstration the project has that the job layer works.
 2. **M2 #4 — OCR fallback for scans** (Tesseract + `tha`), then DOCX (#5), the
    two-column fix (#6), MinIO (#7). `PLAN.md` has the order and the reasons.
 
-### Worth knowing
+### Two facts that shaped the code, not preferences
 
+- **FastAPI closes `yield` dependencies before a streaming body runs** (since
+  0.106; this repo is on 0.141). A `StreamingResponse` generator cannot use the
+  request's session — it is already gone. That is why `app.state.sessionmaker`
+  exists and the stream opens a short session per read. It also means an idle
+  stream holds no pooled connection, which is the better shape anyway.
 - **httpx's ASGI transport buffers a whole response** before handing it back, so
   `client.stream(...)` in a test does not deliver frames as they are written.
   `tests/test_events.py` therefore tests the endpoint over HTTP only where the
   stream ends by itself, and drives `_resume_events` directly for the sequence —
-  which is the more deterministic test anyway, since the job runs to completion
-  between two `anext` calls instead of racing the stream.
-- **FastAPI closes `yield` dependencies before a streaming body runs** (since
-  0.106). A `StreamingResponse` generator cannot use the request's session, which
-  is why `app.state.sessionmaker` exists and the stream opens a short session per
-  read.
-- The three stream timings are settings (`SSE_POLL_SECONDS`,
-  `SSE_HEARTBEAT_SECONDS`, `SSE_MAX_STREAM_SECONDS`) because a proxy in front of
-  the API may well need different ones.
-- **A state shorter than the poll interval is not streamed.** The live retry run
+  the more deterministic test anyway, since the job runs to completion between
+  two `anext` calls instead of racing the stream.
+
+### Improvements to make / things to watch
+
+- **`web/` has no test framework at all.** Verification there is
+  `typecheck && lint && build` plus a human looking at the page. That was fine
+  while the client was thin, but `readFrames` in `lib/api.ts` now parses a wire
+  format and buffers across chunk boundaries — the first real logic on that side,
+  and nothing pins it. A minimal vitest setup with three or four cases (a frame
+  split across chunks, a comment line, a frame with no `event:`) is cheap and
+  would be the natural place for every client test after it.
+- **`ALLOWED_ORIGINS` in `app/main.py` is a hard-coded list.** It cost time this
+  session: the Next dev server landed on :3001 because :3000 was taken, and every
+  API call from it would have been blocked with a CORS error that says nothing
+  about the real cause. Making it a setting is a three-line change and removes a
+  whole class of confusing dev failures. It has to be settable before deploying
+  anyway.
+- **A state shorter than `SSE_POLL_SECONDS` is not streamed.** The live retry run
   showed it: each failure was so fast that `processing` came and went inside one
   0.5 s read. Every resting state and every reason still arrived, which is what
   the UI shows — but do not read the stream as a complete history.
-- **Env vars beat `.env`**, which is the clean way to demo a failure without
-  editing a file that holds a real key: `LLM_PROVIDER=fake FAKE_MODE=unavailable
-  arq app.worker.WorkerSettings` and nothing to restore afterwards. Stop the
-  other workers first, or the healthy one picks the job up.
+- **`api/app/workers/` is an empty leftover package** (a 0-byte `__init__.py`);
+  the real module is `app/worker.py`. Delete it in a cleanup commit.
+- **The Chrome extension has now blocked the browser walkthrough twice.** It is
+  the only thing standing between this project and a verified end-to-end demo.
+  Worth fixing deliberately — connect it once, on a quiet day, rather than
+  discovering it is down at the start of a session that wanted to use it.
 - **The machine had two stale dev servers** when this session started: a broken
   Next dev server on :3000 answering 500, and an API on :8000 still serving
   pre-SSE code whose process is gone while the socket keeps answering — a zombie
-  no `Stop-Process` can reach. The walkthrough used fresh ports (API on 8001,
-  web on 3000 with `NEXT_PUBLIC_API_BASE=http://localhost:8001`). **A reboot, or
-  at least a check of what is listening on :8000, is worth doing before the next
-  session** — otherwise a browser walkthrough will quietly test old code.
+  no `Stop-Process` can reach. The session ran on fresh ports (API 8001, web 3000
+  with `NEXT_PUBLIC_API_BASE=http://localhost:8001`) and stopped them at the end,
+  so **only Docker is left running**. **Reboot, or at least check what is
+  listening on :8000, before the next manual walkthrough** — otherwise it will
+  quietly exercise old code.
+- Still open from the previous entry and still true: the missing malformed-PDF
+  fixture, the visibility timeout for a worker that dies mid-job (M5), cost
+  figures reading `$0.000000` on Gemini's free tier, and statuses stored as enum
+  *names* in raw SQL.
+
+### Advice for the owner, for the rest of the project
+
+- **The small-batch push worked — keep it.** Nine commits sat unpushed for a week
+  and CI had never seen any of them; this session pushed twice and had an answer
+  within a minute each time. One slice, one push, one CI result. The cost of a
+  broken batch grows with the batch.
+- **Before trusting any manual check, prove you are testing what you just
+  built.** The zombie on :8000 answered `/health` perfectly while serving code
+  from before the feature existed — a browser walkthrough against it would have
+  "failed" for reasons that had nothing to do with the code. One `curl
+  /openapi.json | grep <the-route-you-added>` first, every time.
+- **Use env vars rather than editing `.env` for demos.**
+  `LLM_PROVIDER=fake FAKE_MODE=unavailable arq app.worker.WorkerSettings` beats
+  the real provider from the environment, leaves the file holding the real key
+  untouched, and has nothing to restore afterwards. Stop the other workers first,
+  or a healthy one takes the job.
+- **Record the retry demo once the extension works.** A stream narrating attempt
+  1 → attempt 2 → dead letter → "Try again" → verified profile is the single best
+  thing this project has for showing that the job layer is real, and it is a
+  twenty-second recording. Do it before M3 makes the UI busier.
+- **Watch the Gemini free-tier quota** — the re-ask loop can spend 2× calls per
+  resume and retries multiply that. If uploads start dead-lettering with provider
+  errors, check quota before debugging code.
+- **Guard the scope lines.** The baseline-ranking evaluation stays in M6 with its
+  one-week timebox; the strict two-column xfail stays until column detection makes
+  it pass; `LLM_PROVIDER=anthropic` stays an error until a live verification run.
+  These hold only if they are not quietly renegotiated mid-milestone.
+- **Keep real resumes out of the repo.** Testing with real documents locally is
+  fine — they live in `var/uploads` and the dev database, and both should be wiped
+  before the machine is shared or the project is demoed. PDPA work lands in M4.
 
 ---
 
