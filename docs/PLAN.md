@@ -42,15 +42,16 @@ should review them before anyone treats the details as commitments.
 
 ## Blocking bugs — before any further M2 work
 
-- [ ] **Three defects from one real-world PDF** (2026-08-07), written up in full in
-  `docs/HANDOFF.md` §11. In short: `pdfplumber` returns `U+0000` for glyphs it
-  cannot map and Postgres refuses to store it (invisible to a suite that runs on
-  SQLite); the final commit in `run_resume_job` sits outside the retry policy's
-  `try`, so a persistence failure strands the resume at `processing` where nothing
-  — redelivery, `POST /retry`, or re-upload — can reach it; and the database error
-  string carries `document_text`, so resume text reaches the log today and would
-  reach `failure_reason` and the API response the moment the second bug is fixed
-  on its own. Fix the third with the second, never after it.
+- [x] **Three defects from one real-world PDF** (found and fixed 2026-08-07),
+  write-up in `docs/HANDOFF.md` §11. NUL is stripped in `_assemble` before page
+  spans are measured; the success commit moved inside the retry policy's `try`,
+  so a persistence failure retries and dead-letters instead of stranding the row
+  at `processing`; and unexpected errors are recorded by type name only, so a
+  database error can no longer carry `document_text` into the log,
+  `failure_reason` or the API. Pinned by `TestControlCharacters` (parse),
+  `TestAFailingCommit` (retry) and a NUL round-trip in `tests/test_postgres.py`.
+  The stranded row was reset and replayed to `extracted` against live Gemini —
+  9/9 citations resolve against the stored text.
 
 ## M2 — in dependency order (from HANDOFF §7)
 

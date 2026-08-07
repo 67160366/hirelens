@@ -168,8 +168,11 @@ def _assemble(raw_pages: list[str], *, has_images: bool = False) -> ParsedDocume
     cursor = 0
 
     for index, raw in enumerate(raw_pages, start=1):
-        # Normalize before measuring — see module docstring.
-        page_text = unicodedata.normalize("NFC", raw)
+        # Normalize before measuring — see module docstring. U+0000 is stripped
+        # here too: a broken ToUnicode map makes extractors emit NUL for glyphs
+        # they cannot name, and Postgres refuses NUL in text columns. Removing
+        # characters before the spans are measured shifts no offsets.
+        page_text = unicodedata.normalize("NFC", raw).replace("\x00", "")
 
         if len(page_text.strip()) < MIN_CHARS_PER_TEXT_PAGE:
             without_text.append(index)

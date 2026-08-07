@@ -36,7 +36,7 @@ from app.jobs import JobContext
 from app.llm.fake import FakeExtractor, FakeMode
 from app.models import Base, Candidate, ExtractedProfileRow, LLMCallLog, Resume, ResumeStatus
 from app.models.base import JSON_VARIANT
-from app.pipeline.parse import parse_document_bytes
+from app.pipeline.parse import _assemble, parse_document_bytes
 from app.queue import InlineQueue
 from app.services import resume_service
 from app.storage import LocalStorage
@@ -183,6 +183,45 @@ class TestProfileRoundTrip:
                 .all()
             )
             assert len(logs) >= 1
+
+    async def test_text_from_broken_glyphs_round_trips(
+        self,
+        pg_sessionmaker: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """What the parser produces must be storable on the deployed dialect.
+
+        The 2026-08-07 incident: pdfplumber emitted U+0000 for glyphs with a
+        broken ToUnicode map, and Postgres — unlike the SQLite the rest of the
+        suite runs on — refuses NUL in a text column, failing the commit after
+        extraction had already succeeded. `_assemble` now strips it; this pins
+        that its output survives the dialect that rejected it.
+        """
+        document = _assemble(["วิทยาลัยที\x00่คุณจบ — ประวัติการทำงานของผู้สมัคร ปี 2569"])
+        assert "\x00" not in document.text
+
+        async with pg_sessionmaker() as session:
+            candidate = Candidate(email="broken-glyphs@example.com")
+            session.add(candidate)
+            await session.commit()
+
+            resume = Resume(
+                candidate_id=candidate.id,
+                filename="broken_glyphs.pdf",
+                content_hash="0" * 64,
+                size_bytes=1,
+                storage_key="test/broken_glyphs.pdf",
+                status=ResumeStatus.PARSED,
+                document_text=document.text,
+            )
+            session.add(resume)
+            await session.commit()
+            resume_id = resume.id
+
+        async with pg_sessionmaker() as session:
+            stored = (
+                await session.execute(select(Resume).where(Resume.id == resume_id))
+            ).scalar_one()
+            assert stored.document_text == document.text
 
     async def test_jsonb_operators_query_inside_the_document(
         self,

@@ -7,6 +7,7 @@ exact, and Thai has to survive extraction intact.
 
 from __future__ import annotations
 
+import unicodedata
 from itertools import pairwise
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from app.pipeline.parse import (
     EmptyDocumentError,
     NoTextLayerError,
     UnsupportedFileTypeError,
+    _assemble,
     parse_document,
     parse_pdf,
 )
@@ -150,6 +152,30 @@ class TestFailureModes:
     def test_missing_file_raises_rather_than_returning_empty(self):
         with pytest.raises((CorruptDocumentError, FileNotFoundError)):
             parse_pdf(FIXTURES / "does_not_exist.pdf")
+
+
+class TestControlCharacters:
+    """A real-world PDF with a broken ToUnicode map made pdfplumber emit U+0000
+    for glyphs it could not name (a Thai tone mark, in the incident). Postgres
+    refuses NUL in a text column, so it must never leave the parser."""
+
+    PAGE_ONE = "วิทยาลัยที\x00่คุณจบ — ประวัติการทำงานและการศึกษาของผู้สมัคร"
+    PAGE_TWO = "Skills: Python, FastAPI\x00, PostgreSQL and Docker\x00"
+
+    def test_nul_never_leaves_the_parser(self):
+        doc = _assemble([self.PAGE_ONE, self.PAGE_TWO])
+        assert "\x00" not in doc.text
+        # The characters around each NUL survive, joined back up.
+        assert "วิทยาลัยที่คุณจบ" in doc.text
+        assert "FastAPI, PostgreSQL" in doc.text
+
+    def test_offsets_are_measured_after_the_strip(self):
+        """Stripping happens before spans are computed, so each page's span must
+        slice its own cleaned text back out exactly — no shifted citations."""
+        doc = _assemble([self.PAGE_ONE, self.PAGE_TWO])
+        for page, original in zip(doc.pages, (self.PAGE_ONE, self.PAGE_TWO), strict=True):
+            expected = unicodedata.normalize("NFC", original).replace("\x00", "")
+            assert doc.text[page.char_start : page.char_end] == expected
 
 
 class TestTwoColumnLayout:

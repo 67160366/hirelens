@@ -86,6 +86,22 @@ def backoff_seconds(settings: Settings, *, failures: int) -> float:
     return float(settings.job_retry_base_seconds * 2 ** max(failures - 1, 0))
 
 
+# Errors whose messages this codebase writes, so they are safe to store and log.
+# Anything else may quote arbitrary data — a DBAPIError embeds the failing
+# statement's parameters, `document_text` included — so only its type name is
+# kept. `ObjectNotFoundError` is deliberately not here: its message carries the
+# storage key (candidate id + content hash), and the job already records a
+# friendly reason before raising it.
+_SAFE_TO_QUOTE = (LLMError, ParseError)
+
+
+def _describe(error: Exception) -> str:
+    """A failure description that can never contain resume text."""
+    if isinstance(error, _SAFE_TO_QUOTE):
+        return f"{type(error).__name__}: {error}"
+    return type(error).__name__
+
+
 async def run_resume_job(context: JobContext, resume_id: uuid.UUID) -> JobOutcome:
     """Parse and extract one resume, committing the outcome and the job state."""
     async with context.sessionmaker() as session:
@@ -109,6 +125,13 @@ async def run_resume_job(context: JobContext, resume_id: uuid.UUID) -> JobOutcom
                 extractor=context.extractor,
                 settings=context.settings,
             )
+
+            resume.failed_attempts = 0
+            # Inside the try on purpose: a commit can fail too (the incident that
+            # proved it was Postgres refusing a NUL in `document_text`), and a
+            # persistence failure must go through the retry policy like any other
+            # unexpected error — not escape and strand the row at `processing`.
+            await session.commit()
         except (LLMError, ParseError, ObjectNotFoundError) as exc:
             # Raised by pipeline and storage code, never by the database, so the
             # session is still usable and whatever `process_resume` recorded
@@ -121,8 +144,6 @@ async def run_resume_job(context: JobContext, resume_id: uuid.UUID) -> JobOutcom
             await session.rollback()
             return await _record_failure_on_a_fresh_session(context, resume_id, exc)
 
-        resume.failed_attempts = 0
-        await session.commit()
         return DONE
 
 
@@ -157,7 +178,7 @@ async def _record_failure(
 ) -> JobOutcome:
     """Decide retry, dead-letter or permanent failure, and commit the decision."""
     resume.failed_attempts += 1
-    reason = f"{type(error).__name__}: {error}"
+    reason = _describe(error)
 
     if not is_retryable(error):
         # `process_resume` already wrote a reason for the failures it knows how to
@@ -200,7 +221,9 @@ async def _record_failure_on_a_fresh_session(
     context: JobContext, resume_id: uuid.UUID, error: Exception
 ) -> JobOutcome:
     """Record a failure after a rollback, where the resume has to be re-read."""
-    logger.exception("resume %s: unexpected job failure", resume_id)
+    # Type name only, no traceback: the exception message can quote statement
+    # parameters — resume text included — and resumes are PII.
+    logger.error("resume %s: unexpected job failure (%s)", resume_id, type(error).__name__)
     async with context.sessionmaker() as session:
         resume = await session.get(Resume, resume_id)
         if resume is None:

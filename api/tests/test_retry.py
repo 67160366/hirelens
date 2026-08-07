@@ -12,11 +12,13 @@ different statuses rather than one `failed` with a comment.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
@@ -350,6 +352,122 @@ class TestRetryEndpoint:
 
         response = await client.post(f"/resumes/{uploaded.json()['id']}/retry")
         assert response.status_code == 404
+
+
+class _RefusesToPersistExtractions:
+    """A sessionmaker whose sessions refuse the commit that persists a profile.
+
+    Stands in for what Postgres did in the 2026-08-07 incident — accepting every
+    statement until the success commit, then raising `DBAPIError` (there, over a
+    NUL in `document_text`). The claim commit and the failure bookkeeping still
+    go through, which is exactly the shape that used to strand the resume at
+    `processing`. The error message deliberately embeds `secret` the way a real
+    `DBAPIError` embeds the statement's parameters.
+    """
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession], secret: str) -> None:
+        self._sessionmaker = sessionmaker
+        self._secret = secret
+
+    def __call__(self) -> AsyncSession:
+        session = self._sessionmaker()
+        real_commit = session.commit
+
+        async def commit() -> None:
+            if any(
+                isinstance(obj, Resume) and obj.status is ResumeStatus.EXTRACTED
+                for obj in session.dirty
+            ):
+                raise DBAPIError(
+                    "INSERT INTO extracted_profiles (profile) VALUES ($1)",
+                    {"document_text": self._secret},
+                    Exception(f'invalid byte sequence for encoding "UTF8": {self._secret}'),
+                )
+            await real_commit()
+
+        session.commit = commit  # type: ignore[method-assign]
+        return session
+
+
+class TestAFailingCommit:
+    """The success commit is part of the job, not an epilogue (HANDOFF §11).
+
+    A real PDF proved the commit itself can fail. That failure must go through
+    the retry policy like any other unexpected error — escaping instead leaves
+    the resume at `processing`, where redelivery, `POST /retry` and re-upload
+    all refuse to touch it.
+    """
+
+    SECRET = "RESUME TEXT THAT MUST NEVER LEAK"
+
+    @pytest.fixture
+    def context(
+        self,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+        settings: Settings,
+    ) -> JobContext:
+        return JobContext(
+            sessionmaker=_RefusesToPersistExtractions(sessionmaker_for_tests, self.SECRET),
+            storage=LocalStorage(settings.storage_path),
+            extractor=FakeExtractor(FakeMode.FAITHFUL),
+            settings=settings,
+        )
+
+    async def test_a_failing_commit_is_retried_not_stranded(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+
+        outcome = await run_resume_job(context, resume_id)
+
+        assert outcome.should_retry
+        resume = await _load(sessionmaker_for_tests, resume_id)
+        assert resume.status is ResumeStatus.PENDING
+        assert resume.failed_attempts == 1
+
+    async def test_the_budget_still_ends_at_the_dead_letter_queue(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+        settings: Settings,
+    ):
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+
+        for _ in range(settings.job_max_attempts - 1):
+            assert (await run_resume_job(context, resume_id)).should_retry
+        assert not (await run_resume_job(context, resume_id)).should_retry
+
+        resume = await _load(sessionmaker_for_tests, resume_id)
+        assert resume.status is ResumeStatus.DEAD_LETTERED
+
+    async def test_neither_the_reason_nor_the_log_quotes_the_statement(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """A DBAPIError message embeds the statement's parameters — resume text
+        included. Only the exception's type name may be recorded or logged."""
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+
+        with caplog.at_level(logging.DEBUG):
+            await run_resume_job(context, resume_id)
+
+        resume = await _load(sessionmaker_for_tests, resume_id)
+        assert "DBAPIError" in (resume.failure_reason or "")
+        assert self.SECRET not in (resume.failure_reason or "")
+        assert self.SECRET not in caplog.text
 
 
 class TestConcurrentDelivery:
