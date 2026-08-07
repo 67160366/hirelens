@@ -40,7 +40,11 @@ class ResumeStatus(StrEnum):
     """A worker has claimed it. A resume stuck here means a worker died mid-job."""
 
     PARSED = "parsed"
-    """Text extracted; extraction not run or not finished."""
+    """Text extracted; extraction not run or not finished.
+
+    Set while a job is running, but no longer committed as a resting state — every
+    path out of the job overwrites it. Rows written before the retry policy landed
+    can still hold it, which is why it is accepted for retry."""
 
     EXTRACTED = "extracted"
     """A verified profile exists."""

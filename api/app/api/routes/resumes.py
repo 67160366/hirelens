@@ -26,6 +26,10 @@ PDF_MAGIC = b"%PDF-"
 # Where a retry can help. `pending` and `processing` are already in hand;
 # `extracted` is done, and redoing it would bill a second extraction to produce
 # the profile we already have.
+#
+# `parsed` is here for rows written before the retry policy existed, where a
+# failed extraction left the status behind. Nothing commits it any more — the job
+# always resolves to pending, dead_lettered, failed or extracted.
 RETRYABLE_STATUSES = frozenset(
     {ResumeStatus.DEAD_LETTERED, ResumeStatus.FAILED, ResumeStatus.PARSED}
 )
