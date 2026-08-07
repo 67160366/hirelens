@@ -173,8 +173,8 @@ even without an editable install.
 
 | Thing | State |
 |---|---|
-| Database | **SQLite** at `api/var/dev.db` (`.env` → `DATABASE_URL`). Postgres not used yet. |
-| Docker | **Not installed.** `docker-compose.yml` is written and ready. |
+| Database | **Postgres** in Docker (`.env` → `DATABASE_URL`), migrated and verified 2026-08-07. SQLite at `api/var/dev.db` is kept as a commented fallback; the test suite still uses its own in-memory SQLite. |
+| Docker | **Installed and running.** `docker compose up -d` brings up `postgres` (pgvector/pg17), `redis` and `minio`; Redis and MinIO are up but not yet used. |
 | LLM provider | **`gemini`** (`gemini-3.6-flash`) in `.env`; live-verified against every fixture on 2026-08-06 — see `docs/llm-providers.md`. Tests and CI still run on `fake`. |
 | Storage | Local filesystem at `var/uploads` |
 
@@ -201,18 +201,14 @@ API, upload again.
 
 ## 7. Next steps
 
-Three setup items are done: the code is pushed with CI green, the evidence
-viewer (M2 #8 below) is built, and the first live Gemini run happened on
-2026-08-06 — it surfaced two adapter problems, both fixed (see §1 and
-`docs/llm-providers.md`). One remains:
+**The setup items are all done.** The code is pushed with CI green, the evidence
+viewer (M2 #8 below) is built, the first live Gemini run happened on 2026-08-06 —
+it surfaced two adapter problems, both fixed (see §1 and `docs/llm-providers.md`) —
+and on 2026-08-07 development moved onto Postgres in Docker, with the JSONB path
+verified for the first time (§6 and `docs/PLAN.md`). Redis and MinIO are already
+up, which is what M2 #1 and #7 below need.
 
-1. **Install Docker Desktop**, then `docker compose up -d` and switch
-   `DATABASE_URL` in `.env` to the Postgres URL from `.env.example`. Re-run
-   `alembic upgrade head`. This is worth doing before M2 because the worker needs
-   Redis and OCR output belongs in MinIO. Verify the JSONB path works on real
-   Postgres — the tests only prove the SQLite variant.
-
-Then M2, in dependency order (live status in `docs/PLAN.md`):
+Next is M2 #1. In dependency order (live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|

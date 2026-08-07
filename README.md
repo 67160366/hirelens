@@ -78,11 +78,13 @@ npm run dev                   # http://localhost:3000
 The web app expects the API at `http://localhost:8000`; if it lives elsewhere,
 `cp web/.env.local.example web/.env.local` and set `NEXT_PUBLIC_API_BASE`.
 
-For Postgres, Redis and MinIO instead of SQLite and the local filesystem:
+For Postgres, Redis and MinIO instead of SQLite and the local filesystem — which
+is what this project develops against, and what it deploys on:
 
 ```bash
-docker compose up -d
-# then set DATABASE_URL to the Postgres URL from .env.example
+docker compose up -d                       # postgres (pgvector), redis, minio
+# swap DATABASE_URL to the Postgres line in .env, then:
+cd api && alembic upgrade head
 ```
 
 ### Try it without the web app

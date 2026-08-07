@@ -51,12 +51,14 @@ prefix each command with `.venv/Scripts/python.exe -m` (Windows) /
 
 ```bash
 pytest -q                                   # full suite; no DB, no API key needed
+TEST_DATABASE_URL=postgresql+asyncpg://hirelens:hirelens@localhost:5432/hirelens_test \
+  pytest tests/test_postgres.py -q          # opt-in: the JSONB path on real Postgres
 ruff check app tests migrations             # lint   — enforced in CI
 ruff format app tests migrations            # format — enforced in CI (--check)
 mypy app                                    # strict — enforced in CI
 python -m app.cli tests/fixtures/resume_th.pdf   # fastest end-to-end sanity check
 uvicorn app.main:app --reload               # API on :8000, /docs for OpenAPI
-alembic upgrade head                        # migrations (SQLite by default)
+alembic upgrade head                        # migrations (against DATABASE_URL)
 ```
 
 From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm run build`.
@@ -101,7 +103,9 @@ web/
   lib/api.ts               typed API client (NEXT_PUBLIC_API_BASE)
 ```
 
-Environment quirks: dev runs on SQLite (`api/var/dev.db`) + local storage
-(`var/uploads`); Docker/Postgres/Redis/MinIO are written but not yet in use.
+Environment quirks: dev runs on Postgres from `docker compose up -d` + local
+storage (`var/uploads`); SQLite (`api/var/dev.db`) is a commented fallback in
+`.env`. Redis and MinIO are up but unused until M2 #1 and #7. The test suite runs
+on its own in-memory SQLite and never needs a server.
 `.env` selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating`
 demos the dropped-claims path.

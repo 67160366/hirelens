@@ -22,9 +22,16 @@ should review them before anyone treats the details as commitments.
 
 ## Setup items (before / alongside early M2)
 
-- [ ] **Install Docker Desktop** (user action — cannot be done by an agent), then
-  `docker compose up -d`, point `DATABASE_URL` at Postgres, `alembic upgrade head`,
-  and verify the JSONB path on real Postgres — tests only prove the SQLite variant.
+- [x] **Docker Desktop installed; development moved onto Postgres** (2026-08-07).
+  The compose stack runs (`postgres` + `redis` + `minio` all healthy), `.env`
+  points at `postgresql+asyncpg://…`, and the initial migration round-trips
+  (`upgrade head` → `downgrade base` → `upgrade head`) on real Postgres with
+  `alembic check` reporting no drift. `profile` and `pages_without_text` land as
+  real `jsonb`. The JSONB path is now pinned by `api/tests/test_postgres.py`,
+  skipped unless `TEST_DATABASE_URL` is set so `pytest -q` and CI stay DB-free.
+  End-to-end re-verified against Postgres: a Thai resume uploads, every one of
+  its 10 citations still resolves against the stored `document_text`, and
+  re-uploading the same bytes returns 200 from the Postgres unique constraint.
 - [x] Gemini API key obtained (slot filled in `.env`).
 - [x] **First live Gemini run** (2026-08-06) over every fixture via
   `python -m app.cli` — results and the two adapter fixes it forced
