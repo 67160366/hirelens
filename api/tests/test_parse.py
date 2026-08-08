@@ -47,6 +47,11 @@ def two_column():
     return parse_pdf(FIXTURES / "resume_two_column.pdf")
 
 
+@pytest.fixture(scope="module")
+def two_column_header():
+    return parse_pdf(FIXTURES / "resume_two_column_header.pdf")
+
+
 class TestEnglishResume:
     def test_extracts_expected_content(self, resume_en):
         assert "Somchai Jaidee" in resume_en.text
@@ -180,20 +185,20 @@ class TestControlCharacters:
 
 
 class TestTwoColumnLayout:
-    """Characterization tests for a known limitation.
+    """A two-column page is read one column at a time (M2 #6).
 
-    pdfplumber reads a two-column page in visual order, which interleaves the two
-    columns: a job title from the right column lands next to contact details from
-    the left. Evidence quotes stay truthful — the text really is in the document —
-    but adjacency is misleading, so an extractor can attach the wrong company to
-    the wrong role.
+    pdfplumber reads a page in visual order, which interleaves two columns: a job
+    title from the right column lands next to contact details from the left.
+    Evidence quotes stay truthful either way — the text really is in the document —
+    but adjacency is most of what an extractor uses to decide which company a role
+    belongs to, so the wrong company gets attached to the wrong role.
 
-    These tests pin the current behaviour so that fixing it in M2 (bbox-based
-    column detection) is a visible, deliberate change rather than a silent one.
+    The characterization test that pinned the old interleaved behaviour was deleted
+    when `app/pipeline/layout.py` landed and the strict xfail below started passing.
     """
 
     def test_all_content_is_present(self, two_column):
-        """Nothing is lost — the problem is ordering, not omission."""
+        """Nothing is lost — reordering must not drop or duplicate anything."""
         for expected in (
             "Nadia Wong",
             "nadia.w@example.com",
@@ -201,18 +206,36 @@ class TestTwoColumnLayout:
             "Go, Kubernetes",
             "Highland Systems — DevOps",
         ):
-            assert expected in two_column.text
+            assert two_column.text.count(expected) == 1
 
-    def test_columns_are_currently_interleaved(self, two_column):
-        """KNOWN LIMITATION. When M2 adds column detection, this test should fail
-        and be replaced with the correct-order assertion below it."""
-        text = two_column.text
-        # The right column's EXPERIENCE heading appears before the left column's
-        # CONTACT heading, even though CONTACT is visually higher on the left.
-        assert text.index("EXPERIENCE") < text.index("CONTACT")
-
-    @pytest.mark.xfail(reason="Needs bbox-based column detection — scheduled for M2", strict=True)
     def test_columns_should_read_one_after_the_other(self, two_column):
-        """The behaviour we want: finish the left column before starting the right."""
+        """Finish the left column before starting the right.
+
+        This assertion is the one that defined "done" for M2 #6. It carried a
+        `xfail(strict=True)` from M1 until `app/pipeline/layout.py` landed, at which
+        point it started passing and failed the suite on purpose — the signal to
+        delete the characterization test above it and take this marker off. The test
+        itself stays, and keeps its name, so the rule in `CLAUDE.md` still points at
+        something real.
+        """
         text = two_column.text
         assert text.index("Chiang Mai, Thailand") < text.index("Northstar Cloud")
+
+    def test_header_and_footer_bracket_the_columns(self, two_column_header):
+        """A full-width header is read before both columns and a footer after both.
+
+        The header is why detection cuts horizontally first: a line that spans the
+        gutter hides it from any profile taken over the whole page.
+        """
+        text = two_column_header.text
+        assert text.index("Ratana Phongam") < text.index("CONTACT")
+        assert text.index("Ratana Phongam") < text.index("EXPERIENCE")
+        assert text.index("Kubernetes, Grafana") < text.index("Mekong Payments")
+        assert text.index("Isan Retail") < text.index("References available on request")
+
+    def test_offsets_still_slice_back_out(self, two_column, two_column_header):
+        """Reordering happens before spans are measured, so the offset contract holds."""
+        for document in (two_column, two_column_header):
+            for page in document.pages:
+                assert document.text[page.char_start : page.char_end].strip()
+            assert document.pages[-1].char_end == len(document.text)

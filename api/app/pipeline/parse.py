@@ -33,6 +33,7 @@ from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from app.pipeline.layout import detect_reading_order, extract_in_reading_order
 from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
 
 # Resumes are PII: log page numbers and error types, never text.
@@ -204,7 +205,7 @@ def parse_pdf(source: Path | io.BytesIO, *, ocr: OCREngine | None = None) -> Par
             # it. Tracked per page so a blank page is never rendered and paid for.
             page_has_images: list[bool] = []
             for page in pdf.pages:
-                raw_pages.append(page.extract_text() or "")
+                raw_pages.append(_text_of(page))
                 page_has_images.append(bool(page.images))
 
             from_ocr: tuple[int, ...] = ()
@@ -224,6 +225,21 @@ def parse_pdf(source: Path | io.BytesIO, *, ocr: OCREngine | None = None) -> Par
         pages_from_ocr=from_ocr,
         ocr_attempted=ocr is not None,
     )
+
+
+def _text_of(page: Any) -> str:
+    """Read one page, one column at a time when it has more than one.
+
+    `detect_reading_order` answers `None` for every page it is not confident about,
+    and that branch is the one that ran before column detection existed — so a
+    single-column document parses to exactly the string it always did, and no
+    citation already shown to a user can shift.
+    """
+    boxes = detect_reading_order(page)
+    if boxes is None:
+        text: str = page.extract_text() or ""
+        return text
+    return extract_in_reading_order(page, boxes)
 
 
 def parse_docx(source: Path | io.BytesIO) -> ParsedDocument:

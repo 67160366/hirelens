@@ -20,10 +20,14 @@ it is dropped, reported in `dropped`, and counted in the hallucination rate.
 
 ## Hard rules
 
-- **The strict xfail in `api/tests/test_parse.py::TestTwoColumnLayout` must stay.**
-  It defines "done" for the two-column fix. When column detection lands, the xfail
-  starts passing and fails the suite — that is the signal to delete the paired
-  characterization test, never the xfail itself.
+- **`test_columns_should_read_one_after_the_other` in `api/tests/test_parse.py`
+  must stay.** It carried a strict xfail that defined "done" for the two-column fix;
+  column detection landed in M2 #6, the xfail started passing and failed the suite
+  on purpose, and the paired characterization test was deleted — the marker with it.
+  The assertion itself is now a normal passing test and stays under that name.
+  A page that is not clearly multi-column must still parse byte-identically to
+  before (`api/app/pipeline/layout.py` returns `None`); that is what keeps every
+  citation already shown to a user pointing where it did.
 - **`LLM_PROVIDER=anthropic` raises on purpose** (`api/app/llm/registry.py`). An
   adapter never run against the real API is worse than an honest error. Implement it
   only together with a real key and a live verification run.

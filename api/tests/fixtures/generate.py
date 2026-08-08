@@ -151,6 +151,89 @@ def write_two_column(path: Path) -> None:
     c.save()
 
 
+def write_two_column_with_header(path: Path) -> None:
+    """Two columns under a full-width header, with a full-width footer.
+
+    The shape almost every real two-column resume has, and the one
+    `resume_two_column.pdf` is missing: a header line spans the gutter, so a column
+    profile taken over the whole page finds nothing. Detection has to cut the page
+    into horizontal bands first.
+    """
+    c = canvas.Canvas(str(path), pagesize=A4)
+    draw_lines(
+        c,
+        [
+            ("H1", "Ratana Phongam"),
+            ("BODY", "Platform Engineer  |  ratana.p@example.com  |  Khon Kaen, Thailand"),
+        ],
+        body_font="Helvetica",
+        bold_font="Helvetica-Bold",
+        x=50,
+    )
+    left = [
+        ("H2", "CONTACT"),
+        ("BODY", "ratana.p@example.com"),
+        ("BODY", "Khon Kaen, Thailand"),
+        ("GAP", ""),
+        ("H2", "SKILLS"),
+        ("BODY", "Python, Terraform"),
+        ("BODY", "Kubernetes, Grafana"),
+    ]
+    right = [
+        ("H2", "EXPERIENCE"),
+        ("BODY", "Mekong Payments — Platform (2021 - Present)"),
+        ("BODY", "  Ran the deployment platform"),
+        ("BODY", "  for 14 engineering teams."),
+        ("GAP", ""),
+        ("BODY", "Isan Retail — SRE (2018 - 2021)"),
+    ]
+    body_top = PAGE_H - 150
+    draw_lines(c, left, body_font="Helvetica", bold_font="Helvetica-Bold", x=50, top=body_top)
+    draw_lines(c, right, body_font="Helvetica", bold_font="Helvetica-Bold", x=300, top=body_top)
+    c.setFont("Helvetica", 9)
+    c.drawString(50, 60, "References available on request — generated fixture, not a real person")
+    c.save()
+
+
+def write_right_aligned_dates(path: Path) -> None:
+    """One column, with the dates pushed out to the right margin.
+
+    The false positive column detection has to refuse. Every role line leaves a wide
+    empty strip between the job title and its date, which is the shape of a gutter;
+    what makes it *not* one is that the bullets underneath run the full width of the
+    page. A page like this must keep parsing exactly as it did before.
+    """
+    c = canvas.Canvas(str(path), pagesize=A4)
+    rows = [
+        ("Wanida Chaiyo", "", 18),
+        ("Backend Engineer  |  wanida.c@example.com  |  Phuket, Thailand", "", 10),
+        ("", "", 0),
+        ("EXPERIENCE", "", 12),
+        ("Andaman Software — Backend Engineer", "2022 - Present", 10),
+        ("  Built the booking API in FastAPI and PostgreSQL, serving 11 partner", "", 10),
+        ("  agencies and roughly 8,000 reservations a day across three regions.", "", 10),
+        ("  Cut p95 checkout latency from 900ms to 210ms by batching the writes.", "", 10),
+        ("Similan Tech — Developer", "2019 - 2022", 10),
+        ("  Maintained a PHP storefront and migrated its billing to a queue-based", "", 10),
+        ("  worker, which removed the nightly maintenance window entirely.", "", 10),
+        ("", "", 0),
+        ("EDUCATION", "", 12),
+        ("Prince of Songkla University — B.Sc Computer Science", "2015 - 2019", 10),
+    ]
+    y = PAGE_H - 70
+    for text, date, size in rows:
+        if not size:
+            y -= 10
+            continue
+        c.setFont("Helvetica-Bold" if size > 10 else "Helvetica", size)
+        c.drawString(50, y, text)
+        if date:
+            c.setFont("Helvetica", 10)
+            c.drawRightString(PAGE_W - 50, y, date)
+        y -= size + 6
+    c.save()
+
+
 def write_multipage(path: Path, pages: int = 3) -> None:
     c = canvas.Canvas(str(path), pagesize=A4)
     for page in range(1, pages + 1):
@@ -273,6 +356,8 @@ def main() -> int:
     write_single_page(FIXTURE_DIR / "resume_en.pdf", RESUME_EN, thai=False)
     write_single_page(FIXTURE_DIR / "resume_th.pdf", RESUME_TH, thai=True)
     write_two_column(FIXTURE_DIR / "resume_two_column.pdf")
+    write_two_column_with_header(FIXTURE_DIR / "resume_two_column_header.pdf")
+    write_right_aligned_dates(FIXTURE_DIR / "resume_right_aligned_dates.pdf")
     write_multipage(FIXTURE_DIR / "resume_multipage.pdf")
     write_scanned(FIXTURE_DIR / "resume_scanned.pdf")
     write_mixed_scan(FIXTURE_DIR / "resume_mixed_scan.pdf")
