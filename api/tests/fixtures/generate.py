@@ -307,6 +307,98 @@ def write_mixed_scan(path: Path) -> None:
     c.save()
 
 
+# Lines for the damaged fixture. Deliberately ASCII and free of parentheses and
+# backslashes, which would need escaping inside a PDF string literal.
+BROKEN_FONT_LINES = [
+    "Somchai Jaidee",
+    "Backend Engineer at Acme Logistics",
+    "Skills: Python, FastAPI, PostgreSQL",
+]
+
+# Glyphs whose ToUnicode entry will point at U+0000 instead of the real character.
+BROKEN_FONT_GLYPHS = frozenset("ai")
+
+
+def _broken_tounicode_cmap(text: str, broken: frozenset[str]) -> str:
+    """A ToUnicode CMap that maps some glyphs to U+0000.
+
+    This is the damage, stated exactly: the map exists and is well-formed, so
+    nothing refuses to parse — it simply says that certain glyphs mean nothing.
+    """
+    codes = sorted({ord(character) for character in text if character.strip()})
+    entries = "\n".join(
+        f"<{code:02X}> <{0 if chr(code) in broken else code:04X}>" for code in codes
+    )
+    return f"""/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /BrokenToUnicode def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+{len(codes)} beginbfchar
+{entries}
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end"""
+
+
+def write_broken_tounicode(path: Path) -> None:
+    """A PDF whose font maps some glyphs to U+0000 — the shape of the §11 incident.
+
+    A real Thai resume template (a designer-tool export) had eight glyphs whose
+    embedded font carried no usable ToUnicode mapping, and pdfplumber returned
+    U+0000 for each. Postgres refuses NUL in a text column, so the pipeline
+    succeeded completely and then failed at the commit. SQLite stores NUL happily,
+    which is why the whole suite was blind to it.
+
+    That is now stripped in `_assemble` before page spans are measured, and pinned
+    at the seam by `TestControlCharacters`. This fixture covers *the road to it*:
+    a real PDF, parsed by the real parser, actually producing NUL.
+
+    Written by hand rather than with reportlab, because the damage has to be in the
+    font's ToUnicode map and reportlab only ever writes correct ones. Removing the
+    map entirely — the obvious approach — turns out to produce `(cid:1)(cid:2)...`
+    placeholders instead of NUL, which is a different defect. Hand-writing it is
+    also why this fixture needs no Thai font to regenerate.
+    """
+    text = "".join(BROKEN_FONT_LINES)
+    stream = "BT /F1 14 Tf 60 760 Td " + " ".join(
+        f"({line}) Tj 0 -22 Td" for line in BROKEN_FONT_LINES
+    )
+    content = f"{stream} ET".encode("latin-1")
+    tounicode = _broken_tounicode_cmap(text, BROKEN_FONT_GLYPHS).encode("latin-1")
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>",
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+        b"<< /Length %d >>\nstream\n" % len(tounicode) + tounicode + b"\nendstream",
+    ]
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+
+    xref_at = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref_at,
+    )
+    path.write_bytes(bytes(out))
+
+
 def write_empty(path: Path) -> None:
     """A structurally valid PDF with a blank page."""
     c = canvas.Canvas(str(path), pagesize=A4)
@@ -361,6 +453,7 @@ def main() -> int:
     write_multipage(FIXTURE_DIR / "resume_multipage.pdf")
     write_scanned(FIXTURE_DIR / "resume_scanned.pdf")
     write_mixed_scan(FIXTURE_DIR / "resume_mixed_scan.pdf")
+    write_broken_tounicode(FIXTURE_DIR / "resume_broken_tounicode.pdf")
     write_empty(FIXTURE_DIR / "empty.pdf")
     write_not_a_pdf(FIXTURE_DIR / "not_a_pdf.pdf")
     write_docx(FIXTURE_DIR / "resume_th.docx")

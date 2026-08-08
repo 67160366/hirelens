@@ -11,6 +11,7 @@ import unicodedata
 from itertools import pairwise
 from pathlib import Path
 
+import pdfplumber
 import pytest
 
 from app.pipeline.evidence import EvidenceResolver, ResolvedSpan
@@ -182,6 +183,47 @@ class TestControlCharacters:
         for page, original in zip(doc.pages, (self.PAGE_ONE, self.PAGE_TWO), strict=True):
             expected = unicodedata.normalize("NFC", original).replace("\x00", "")
             assert doc.text[page.char_start : page.char_end] == expected
+
+
+class TestADamagedPDF:
+    """The road to the seam above, walked by a real file.
+
+    The two tests before this one hand `_assemble` strings that already contain
+    NUL, which pins the strip but assumes the premise. `resume_broken_tounicode.pdf`
+    is a PDF whose font map says several glyphs mean U+0000 — the shape of the
+    incident in `docs/HANDOFF.md` §11 — so the premise is checked too: pdfplumber
+    really does emit NUL for it, and the parser really does remove it.
+
+    Every other fixture in this repo is well-formed, which makes them prove less
+    than they look like they do. This is the only one that is broken on purpose.
+    """
+
+    PATH = FIXTURES / "resume_broken_tounicode.pdf"
+
+    def test_pdfplumber_really_does_emit_nul_for_it(self):
+        """Guards the fixture itself. If a future pdfplumber stops producing NUL
+        here, the tests below would keep passing while testing nothing."""
+        with pdfplumber.open(self.PATH) as pdf:
+            raw = pdf.pages[0].extract_text() or ""
+        assert "\x00" in raw
+
+    def test_the_parser_removes_it(self):
+        document = parse_pdf(self.PATH)
+        assert "\x00" not in document.text
+
+    def test_the_undamaged_text_survives(self):
+        """Only the broken glyphs are lost — the file is damaged, not unreadable."""
+        document = parse_pdf(self.PATH)
+        assert "PostgreSQL" in document.text
+        assert "Acme Log" in document.text
+
+    def test_offsets_still_slice_back_out(self):
+        """The reason the strip happens before spans are measured: a citation into
+        this document has to point where it says it points."""
+        document = parse_pdf(self.PATH)
+        for page in document.pages:
+            assert document.text[page.char_start : page.char_end] in document.text
+        assert document.pages[-1].char_end == len(document.text)
 
 
 class TestTwoColumnLayout:

@@ -1,0 +1,80 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>
+endobj
+5 0 obj
+<< /Length 153 >>
+stream
+BT /F1 14 Tf 60 760 Td (Somchai Jaidee) Tj 0 -22 Td (Backend Engineer at Acme Logistics) Tj 0 -22 Td (Skills: Python, FastAPI, PostgreSQL) Tj 0 -22 Td ET
+endstream
+endobj
+6 0 obj
+<< /Length 580 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /BrokenToUnicode def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+28 beginbfchar
+<2C> <002C>
+<3A> <003A>
+<41> <0041>
+<42> <0042>
+<45> <0045>
+<46> <0046>
+<49> <0049>
+<4A> <004A>
+<4C> <004C>
+<50> <0050>
+<51> <0051>
+<53> <0053>
+<61> <0000>
+<63> <0063>
+<64> <0064>
+<65> <0065>
+<67> <0067>
+<68> <0068>
+<69> <0000>
+<6B> <006B>
+<6C> <006C>
+<6D> <006D>
+<6E> <006E>
+<6F> <006F>
+<72> <0072>
+<73> <0073>
+<74> <0074>
+<79> <0079>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000328 00000 n 
+0000000532 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1163
+%%EOF
