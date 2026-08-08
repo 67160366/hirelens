@@ -18,7 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: astral-sh/setup-uv@v6
+      # Pinned to an exact release, not a floating major, because setup-uv stopped
+      # publishing `@v8`/`@v9` on purpose: a moving major tag is what made the
+      # tj-actions supply-chain attack possible. Its releases are immutable, so this
+      # is the upstream-recommended form — and it is also the first major that runs
+      # on Node 24, which `@v6` did not despite being the newest floating tag.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: api/uv.lock
