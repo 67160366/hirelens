@@ -258,12 +258,32 @@ not mention it".
   fixtures against the previous commit's CLI. Pinned by `tests/test_judge.py` (32
   cases; suite 307 → 339), and the three decisions above were each confirmed
   load-bearing by mutating the code and watching the suite fail.
-- [ ] 3. **Screening as a row, on the background worker** — `screenings` with the
-  same four job-state columns `Resume` carries, its result JSON, its stats lifted
-  into real columns, and a `requirements_hash` so a result whose requirements have
-  since changed reports itself stale. Extracts a pure `decide_retry` out of
-  `app/jobs.py` so both job types share one policy; `run_resume_job` must not
-  change by a byte, and `tests/test_retry.py` is the guard.
+- [x] 3. **Screening as a row, on the background worker** (2026-08-08). `screenings`
+  carries the same four job-state columns `Resume` does, its result JSON, its stats
+  lifted into real columns, and a `requirements_hash`. `decide_retry` came out of
+  `app/jobs.py` as a pure function answering in **intents** — `PERMANENT` / `RETRY` /
+  `EXHAUSTED` — rather than statuses, because `Resume` and `Screening` keep separate
+  status enums (a screening is never `parsed` or `extracted`) and sharing one would
+  leak each table's states into the other. `run_resume_job` behaves identically and
+  `tests/test_retry.py` passed untouched, which was the point of the constraint.
+  Three decisions inside it:
+  **the fingerprint covers what the judge was shown** — kind, label, detail and their
+  *order*, since the model refers to requirements by position — and deliberately
+  excludes `must_have` and `weight`, which never reach the prompt, so nudging a weight
+  cannot re-bill every screening; `prompt_version` sits beside the hash rather than
+  inside it, so "the requirements changed" and "we changed the prompt" stay
+  distinguishable.
+  **A completed screening is not skipped by the job** the way an extracted resume is,
+  because its requirements can change — waste is prevented one layer up, in
+  `request_screening`, which queues only when the fingerprint moved. `POST` answers
+  **202** when it queued and **200** when the stored result already answers.
+  **A judging call is billed to the screening, not the resume** (`llm_call_logs.screening_id`),
+  or "what did extracting this document cost" would be wrong.
+  A resume with no `document_text` raises `NotScreenable`, which `is_retryable` treats
+  as permanent. Routes: `POST/GET /jobs/{id}/screenings`, `GET /screenings/{id}`,
+  `POST /screenings/{id}/retry` — 404 not 403 throughout. Migration `0006` round-trips
+  on Postgres with no drift. Pinned by `tests/test_screening.py` (40 cases; suite
+  339 → 379), and verified live through the containers against real Gemini.
 - [ ] 4. **Ranking across candidates** — a pure function, no model. Must-haves are a
   hard gate; within a tier, weighted share of requirements met; deterministic
   tie-breaks so a list never reshuffles. The rationale returned is the citation

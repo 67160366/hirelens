@@ -6,7 +6,103 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-08 (latest) — slice 1 is finally pushed, and judging lands
+## 2026-08-08 (latest) — screening lands, and M3 is usable over HTTP
+
+Slice 3. A screening is now a row produced on the background worker, which is the
+point at which the milestone stops being two disconnected halves: before this, jobs
+lived in the database and judging was a pure function, and there was no way to ask
+for a screening except through the CLI.
+
+Suite **339 → 379**.
+
+### The decision the rest of the slice hangs on
+
+**`decide_retry` answers in intents, not statuses.** The obvious extraction — return
+a status — fails immediately, because `Resume` and `Screening` do not share a
+vocabulary: a screening is never `parsed` or `extracted`. Making them share one enum
+would have leaked each table's states into the other for the sake of code reuse.
+
+So the policy returns `PERMANENT` / `RETRY` / `EXHAUSTED` plus a reason and a
+`JobOutcome`, and each job maps that onto its own statuses. `run_resume_job` behaves
+identically and `tests/test_retry.py` passed untouched, which is exactly the guard
+`PLAN.md` asked for.
+
+### The fingerprint, which is the interesting design problem
+
+A stored screening has to know when it stops answering the current question. Too
+broad and it re-runs — and re-bills — screenings nobody changed; too narrow and it
+serves a stale verdict as though it were current.
+
+The rule: **hash exactly what the judge was shown.** Kind, label, detail, and their
+*order* — the model refers to requirements by position, so a reorder is genuinely a
+different question. And deliberately **not** `must_have` or `weight`, which never
+reach the prompt at all. They are ranking's inputs, and a verdict cannot depend on
+them; folding them in would mean every nudge of a weight spends a model call
+reproducing an identical answer.
+
+`prompt_version` is stored beside the hash rather than inside it, so "the
+requirements changed" and "we changed the prompt" stay distinguishable — they call
+for different conversations.
+
+That rule shows up in the API as a status code: `POST /jobs/{id}/screenings` answers
+**202** when it queued work and **200** when the stored result already answers.
+
+### The consequence worth noticing
+
+**A completed screening is re-runnable; an extracted resume is not.** `run_resume_job`
+refuses an `extracted` resume because redoing it bills a second call for a profile we
+already have and the document cannot change. A screening's requirements *can* change,
+so the job does not refuse — the waste is prevented one layer up, in
+`request_screening`. Two jobs that look like twins, differing on purpose, with the
+reason written down in both places.
+
+### Verified live, not only by tests
+
+Through the containers against real Gemini, after rebuilding and confirming
+`/openapi.json` lists the new routes:
+
+- `POST` → **202**, the **ARQ worker** took it (job id `screening:…:0`), completed in
+  4.1 s: **3/5 met, 0 dropped**, every citation slicing back out of the returned
+  `document_text`.
+- The Thai requirement `งาน Backend ที่เกี่ยวกับระบบชำระเงิน` matched the resume's own
+  `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ PostgreSQL` — semantic matching in Thai,
+  with an exact quote.
+- `Kubernetes` and `ภาษาญี่ปุ่น` came back `not_evidenced` with **no evidence
+  attached**, rather than asserted absent.
+- Asking again → 200, nothing queued. Changing a **weight** → still 200, still not
+  stale. Changing a **label** → stale, then 202 and a second dispatch under job id
+  `screening:…:1`, `attempts=2`.
+- In `psql`: 21 `extract-v1` rows all carrying `resume_id`, 2 `judge-v1` rows all
+  carrying `screening_id`, none crossed.
+
+### Worth knowing next time
+
+- **`RecordingQueue` means the resume is never processed.** Half of the first test
+  run failed as `NotScreenable` — not a bug in the code, a bug in the fixture: with
+  the inline queue replaced, an upload only *queues* work, so `document_text` was
+  never written. The helper now runs `run_resume_job` explicitly. Worth remembering
+  because the failure message points at the feature, not at the setup.
+- **A test helper with a named parameter cannot be overridden through `**kwargs`.**
+  `spec("Python", label="Python 3")` is a `TypeError`, not an override. `model_copy(update=...)`
+  is the version that works on a pydantic model.
+- The two throwaway accounts from the live run were deleted, and the stack is left
+  with `api` and `worker` **rebuilt from current code**.
+
+### Advice for the owner
+
+- **When two things rhyme, share the decision and not the vocabulary.** The retry
+  policy was worth sharing; the status enum was not, and the version of this change
+  that shared both would have looked tidier and been wrong. The test that would have
+  caught it does not exist — `ScreeningStatus.PARSED` would simply have been a state
+  nothing could ever reach.
+- **A status code can carry a design decision.** 202-vs-200 on the same endpoint is
+  how a client learns, without asking, whether its question was already answered.
+  That is cheaper than a `stale` flag nobody reads and more honest than always
+  re-running.
+
+---
+
+## 2026-08-08 — slice 1 is finally pushed, and judging lands
 
 Three commits. The first was written last session and had been sitting in the
 working tree ever since.

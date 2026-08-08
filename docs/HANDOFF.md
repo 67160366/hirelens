@@ -29,10 +29,12 @@ OCR confidence question has an answer with numbers behind it.
 
 **M3 — the matching engine — is under way.** Its scope was reviewed with the owner
 on 2026-08-08 and is no longer a draft: the agreed shape, the four decisions behind
-it and the six slices are in `docs/PLAN.md`. **Slices 1 and 2 are done** — a job
-posting and its requirements are first-class rows with CRUD behind them, and a
-resume can be judged against those requirements with every match cited. The rest, in
-order: screening on the worker, ranking, a thin UI, retrieval.
+it and the six slices are in `docs/PLAN.md`. **Slices 1–3 are done** — a job posting
+and its requirements are first-class rows with CRUD behind them, a resume can be
+judged against those requirements with every match cited, and a screening is a row
+of its own produced on the background worker under the shared retry policy. The
+system is end-to-end usable over HTTP for the first time this milestone. The rest,
+in order: ranking, a thin UI, retrieval.
 
 The one idea to carry into the remaining slices, now shipped rather than planned:
 **the model is never asked for a verdict.** It is asked only for quotes showing a
@@ -46,7 +48,7 @@ available.
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 339 passed, 26 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans` and 32 for judging. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `pytest -q` | 379 passed, 38 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans`, 32 for judging and 40 for screening. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -82,6 +84,10 @@ available.
 | The CLI's old path is untouched | `python -m app.cli` over three fixtures, before and after `--requirement` was added: **identical**, 66 lines, timing masked (2026-08-08) |
 | The `EvidenceRecorder` extraction is inert | Extraction *and* judging output over four fixtures, before and after: byte-identical, captured by stashing `extract.py`/`judge.py` back to HEAD. The three judging mutations still fail 1/3/4 cases (2026-08-08) |
 | **`page_spans` written by the real worker, in the containers** | After rebuilding `api` and `worker`: `resume_multipage.pdf` → 3 spans for 3 pages; `resume_th.pdf` → 10/10 verified, 0 dropped against live Gemini, and the last span's `char_end` (382) equals `length(document_text)` exactly, so the spans cover the text with no drift. Read out of `psql`, not the API (2026-08-08) |
+| Migration `0006` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `alembic check` finds no drift (2026-08-08) |
+| **Screening, end to end in the containers** | `/openapi.json` lists all three screening routes first — the proof the container serves the code just written. Then, against Postgres + Redis + the ARQ worker + real Gemini: upload → `extracted`, create a job with five requirements, `POST` answered **202**, the **worker** took it (`arq` log, job id `screening:…:0`), `completed` in 4.1 s. **3/5 met, 0 dropped**, every citation slicing back out of the returned `document_text`. The Thai requirement `งาน Backend ที่เกี่ยวกับระบบชำระเงิน` matched the resume's own `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ PostgreSQL`; `Kubernetes` and `ภาษาญี่ปุ่น` came back `not_evidenced` with no evidence attached (2026-08-08) |
+| The staleness rule, watched rather than inferred | Asking again → **200**, `is_stale=false`, nothing queued. Changing a **weight** → still 200 and still not stale. Changing a **label** → `is_stale=true`, then **202** and a second worker dispatch under job id `screening:…:1`, after which `attempts=2` and the result is current again (2026-08-08) |
+| Judging calls are billed to the screening | In `psql`: 21 `extract-v1` rows all carrying `resume_id` and none carrying `screening_id`; 2 `judge-v1` rows all carrying `screening_id` and none carrying `resume_id`. The two prompt families stay separable in the cost table (2026-08-08) |
 
 ### Repository state
 
@@ -193,16 +199,22 @@ api/app/
     judgment.py        M3: both layers for judging. RequirementSpec is a plain DTO,
                        so judge.py stays ORM-free the way extract.py is
   models/core.py       candidates, resumes, extracted_profiles, llm_call_logs
-  models/matching.py   M3: jobs and the requirements they are screened by
+  models/matching.py   M3: jobs, the requirements they are screened by, and a
+                       screening — one resume judged against one job
+  services/screening_service.py  M3: request one (idempotent on the fingerprint),
+                       and do the work from a worker
   storage.py           LocalStorage / MinioStorage behind one interface
   services/resume_service.py   upload path: store, insert, queue; and process_resume
-  jobs.py            ★ run_resume_job — the unit of background work and the retry policy
+  jobs.py            ★ run_resume_job, run_screening_job, and `decide_retry` — the
+                       retry policy, pure and shared by both
   queue.py             JobQueue seam: inline (no server) / arq (Redis)
   worker.py            `arq app.worker.WorkerSettings` — adapter only
   logging_config.py    shared by API and worker so the worker need not import the app
   api/routes/          auth.py, resumes.py — upload, profile, retry, progress stream
                        jobs.py — postings and requirements; requirement routes are
                        nested so ownership is settled in one place
+                       screenings.py — creation nested under /jobs, reads flat under
+                       /screenings; 202 when work was queued, 200 when it was not
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
   app/page.tsx         auth + upload + live progress + result + retry
@@ -338,6 +350,31 @@ Worth reading once, because the request no longer does the work.
   inside it would be quoted as though it were the resume and every quote would fail
   verification. It also matches what the model is told — a requirement's own wording
   is never evidence that a candidate meets it, and `test_judge.py` pins that.
+- **The retry policy answers in intents, not statuses** (M3 slice 3). `decide_retry`
+  is pure — an error plus a failure count in, `PERMANENT`/`RETRY`/`EXHAUSTED` out —
+  and each job maps that onto its own vocabulary. `Resume` and `Screening` keep
+  separate status enums because a screening is never `parsed` or `extracted`; sharing
+  one enum would have leaked each table's states into the other, and sharing the
+  *decision* is what actually stops the two policies drifting apart.
+- **A completed screening is re-runnable; an extracted resume is not** (M3 slice 3).
+  Redoing an extraction bills a second call for a profile we already have, and the
+  document cannot change. A screening's requirements *can* change, so `run_screening_job`
+  does not refuse a completed row — the waste is prevented one layer up, where
+  `request_screening` queues only when `requirements_fingerprint` moved. That is why
+  `POST /jobs/{id}/screenings` answers **202** or **200** rather than always the same
+  thing.
+- **The fingerprint covers what the judge saw, and nothing else** (M3 slice 3). Kind,
+  label, detail and their *order* — the model refers to requirements by position, so a
+  reorder is a different question. `must_have` and `weight` are excluded because they
+  never reach the prompt: including them would invalidate correct screenings and spend
+  a model call reproducing an identical answer every time someone adjusted a weight.
+  `prompt_version` is stored beside the hash rather than folded into it so the two
+  reasons a result can go stale stay distinguishable.
+- **A judging call is billed to the screening, not the resume** (M3 slice 3).
+  `LLMCallLog` has both `resume_id` and `screening_id`, and exactly one is set. Hanging
+  a judging call off the resume would corrupt "what did extracting this document cost";
+  leaving it unrecorded would make every cost figure quietly incomplete, which is the
+  same class of failure as a stale price table.
 - **A requirement is an input, not a claim, so it needs no evidence** (M3).
   Requirements are typed in through CRUD rather than decomposed out of a pasted job
   description by a model. Nothing here is a statement about a candidate, so the
@@ -609,6 +646,7 @@ the API and the worker, upload again. To see the dead-letter path: set
 | `test_extract.py` | The re-ask loop and how it picks a result |
 | `test_judge.py` | Requirement-level judging: verdicts derived from what resolved, unknown/duplicate requirement numbers, the empty case, and the retry rule that differs from extraction's |
 | `test_judge_live.py` | Judging against a real model — semantic matching, and that the guardrail holds on output nobody scripted. **Opt-in**, needs `TEST_LIVE_LLM=1`, and gated on that flag rather than on a key because `.env` already has one |
+| `test_screening.py` | The fingerprint (what makes a result stale, and what must not), `decide_retry` on its own now that two job types share it, and the screening job: verdicts on a row, cost billed to the screening, failure and replay |
 | `test_llm.py` / `test_gemini.py` | The provider seam; Gemini's contract via mocks |
 | `test_api.py` | Auth, upload gates, reading a profile back |
 | `test_resume_service.py` | The duplicate-upload race, blob cleanup, PII-safe logging |
@@ -639,32 +677,30 @@ free.
 |---|---|---|
 | 1 | Jobs and requirements as rows, with CRUD | **done** — `models/matching.py`, `api/routes/jobs.py`, migration `0004`, `tests/test_jobs.py` |
 | 2 | Requirement-level judging | **done** — `pipeline/judge.py` + `schemas/judgment.py`, `page_spans` + migration `0005`, `fake.py` teaching, `--requirement` on the CLI, `tests/test_judge.py` |
-| 3 | Screening as a row, on the background worker | next — shares the retry policy via a pure `decide_retry` extracted from `app/jobs.py` |
-| 4 | Ranking across candidates | a pure function, no model; must-haves gate, citations are the rationale |
+| 3 | Screening as a row, on the background worker | **done** — `models/matching.py:Screening`, `services/screening_service.py`, `run_screening_job`, `api/routes/screenings.py`, migration `0006`, `tests/test_screening.py` |
+| 4 | Ranking across candidates | next — a pure function, no model; must-haves gate, citations are the rationale |
 | 5 | A thin web UI | job authoring, verdicts, citation highlighting through the existing `DocumentPane` |
 | 6 | Retrieval — the pre-filter | `Retriever` seam; lexical default, pgvector opt-in |
 
-**Four things to know before starting slice 3:**
+**Four things to know before starting slice 4 (ranking):**
 
-1. **`judge_requirements` is pure and takes no ORM.** It wants a `ParsedDocument`, a
-   `list[RequirementSpec]` and an extractor. Slice 3 builds the document with
-   `ParsedDocument.from_stored(resume.document_text, resume.page_spans)` — never
-   `reparse_document`, which reads the file again and can shift offsets — and the
-   specs from `JobRequirement` rows. That seam is why `tests/test_judge.py` needs no
-   database.
-2. **The screening row needs its own `prompt_version`.** `LLMCallLog.prompt_version`
-   is written with `EXTRACTION_PROMPT_VERSION` today; a judging call must record
-   `JUDGMENT_PROMPT_VERSION` or the two prompt families become indistinguishable in
-   the cost table. `LLMCallLog.resume_id` also assumes a resume — a screening's calls
-   need somewhere to hang.
-3. **`requirements_hash` has to cover what the judge actually saw.** The prompt
-   carries `kind`, `label` and `detail` **and their order**, so a reorder changes the
-   result and must change the hash. `must_have` and `weight` do not reach the judge
-   at all — they are ranking's inputs — so a change to either should stale a
-   *ranking*, not a screening.
-4. **One model call per screening, carrying the whole `document_text`** — not one
-   call per requirement. Requirement count × resume count is this milestone's cost
-   multiplier, and slice 6 exists to keep the resume side of that product small.
+1. **The inputs are already on the row and already correct.** A `Screening` carries
+   `requirements_met` / `requirements_total` as real columns, and its `result` JSON
+   holds every `RequirementJudgment` with `must_have`, `weight` and `verdict`.
+   Ranking needs nothing from the model and nothing re-judged — it is a pure function
+   over rows that exist.
+2. **`must_have` and `weight` have been carried, untouched, since slice 2 precisely
+   for this.** Judging never consults them; `requirements_fingerprint` deliberately
+   excludes them so changing a weight does not re-bill a screening. That means
+   changing a weight **must** change a ranking while leaving screenings current —
+   the ranking is what has to recompute, and it is free.
+3. **A stale screening is not a ranking input.** `Screening.is_stale` already answers
+   whether a result still addresses the current requirements. Ranking a stale row
+   beside fresh ones would silently mix two questions; decide explicitly whether to
+   exclude, re-run, or mark it in the output.
+4. **Deterministic tie-breaks, and the rationale is the citation list, not the
+   score.** A list that reshuffles between identical runs is unusable, and a number
+   nobody can check is what this project exists not to produce.
 
 M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 
