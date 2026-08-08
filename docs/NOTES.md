@@ -8,8 +8,9 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ## 2026-08-08 (latest) — M2 is closed
 
-Six commits, all local — **not pushed yet**. The two remaining M2 items shipped
-(#6 two-column, #7 MinIO) and three items came off the watch list with them.
+Seven commits, **pushed and green on CI** (runs `31240368969` and `31240479417`).
+The two remaining M2 items shipped (#6 two-column, #7 MinIO) and three items came
+off the watch list with them.
 
 | | Commit |
 |---|---|
@@ -18,10 +19,14 @@ Six commits, all local — **not pushed yet**. The two remaining M2 items shippe
 | `cbad6ad` | Store uploads in MinIO behind the same interface |
 | `6b8194b` | Reject a scan Tesseract could not read with confidence |
 | `023468a` | Add a PDF that is broken on purpose |
-| *(this one)* | Close M2: refresh the handoff and the plan |
+| `dc6f470` | Close M2: refresh the handoff and the plan |
+| `6ec8240` | Pin setup-uv to a release that actually runs on Node 24 |
 
 Suite **214 → 270 passing**, 25 skipped (4 Postgres + 12 Tesseract + 9 MinIO, all
-opt-in), and **no xfail left** — the two-column one did its job.
+opt-in), and **no xfail left** — the two-column one did its job. CI reports the
+same 270/25 on a runner with no Tesseract, no database, no MinIO and no API key,
+which is the whole point of the opt-in split: three system dependencies now, and
+`git clone && pytest -q` still works on a bare machine.
 
 ### Three findings that changed the design
 
@@ -66,16 +71,32 @@ were reordered with the same words present. That is what keeps every citation al
 shown to a user pointing where it did, and any future change to `layout.py` should be
 checked the same way.
 
+### A bug found by pushing, which is the argument for pushing
+
+The commit called "Bump the CI actions off Node 20" **only got two of the three**,
+and nothing local could have told me. CI's own annotation did: `setup-uv@v6` was
+still being force-run on Node 24.
+
+The reason is worth knowing before the next actions bump. `@v6` *was* the newest
+floating major tag — but setup-uv **stopped publishing floating majors at v8 on
+purpose**, because a moving `@vN` is exactly what made the tj-actions supply-chain
+attack possible. Their releases are immutable instead, and the recommended form is a
+pinned release. So "reach for the next `@vN`" silently gave the newest tag that was
+two majors stale, and the deprecation it was supposed to fix survived. Fixed by
+pinning `@v9.0.0`; the annotation is gone.
+
+**The general lesson:** *a version bump that still emits the warning it was meant to
+remove has not worked.* Read the annotations on the run, not just the green tick.
+
 ### Still open
 
-1. **Push, and watch CI.** Six commits is at the edge of comfortable, and CI is the
-   only thing that tests a clean machine with no `.env`, no Docker, no MinIO and no
-   key.
-2. **The browser has not seen either new feature.** A two-column resume rendering in
+1. **The browser has not seen either new feature.** A two-column resume rendering in
    `DocumentPane` is the cheapest outstanding check.
-3. **M3.** Its scope in `PLAN.md` is still a draft — review it before building to it.
-4. The visibility timeout for a worker that dies mid-job (M5) is the last §11
+2. **M3.** Its scope in `PLAN.md` is still a draft — review it before building to it.
+3. The visibility timeout for a worker that dies mid-job (M5) is the last §11
    follow-up left.
+4. `prune-cache` now defaults to false in setup-uv v9, so the Actions cache will
+   grow. Harmless on a repo this size; worth remembering if cache limits ever bite.
 
 ### Worth knowing next time
 
@@ -93,6 +114,37 @@ checked the same way.
 - **`git hash-object` still lies about CRLF damage** (previous entry), and
   `uv.lock` must be regenerated whenever `pyproject.toml` changes or CI's
   `uv sync --locked` fails the build.
+
+### Advice for the owner, going into M3
+
+Previous entries' advice all still stands — this is what *this* session added.
+
+- **Test the fixture before trusting the feature.** Three times now, the fixture has
+  been the thing that was wrong: the CRLF-corrupted PDFs, the two-column fixture with
+  no header, and the first right-aligned-dates fixture, which was so sparse it was
+  genuinely ambiguous rather than a fair test. A fixture that passes tells you
+  nothing until you have asked whether it *could* have failed. The habit worth
+  keeping is the one that caught all three: build the adversarial case first, watch
+  it fail, and only then write the code that fixes it.
+- **Measure the thing you are about to build on.** Every design decision in this
+  session that survived contact came from a five-minute measurement first — the
+  gutter geometry, the TSV/Thai finding, the ToUnicode experiment. Each would have
+  produced a plausible, wrong implementation if skipped, and two of them would not
+  have been caught by any test I would have thought to write.
+- **Keep the `None` habit for M3.** The reason the two-column change was safe to
+  ship is that it is inert on everything it does not understand, and that was proven
+  by parsing every fixture twice and diffing. M3's judging layer wants the same
+  shape: a requirement that cannot be judged from cited evidence produces *no*
+  judgment rather than a low-confidence one. `dropped` already exists for exactly
+  this, and the guardrail generalizes for free.
+- **M3 is the first milestone where the model's output is not just extracted but
+  compared.** Guard the line: a match/miss must cite evidence the same way a claim
+  does, or the project quietly becomes a scoring system whose numbers nobody can
+  check. That is the one design constraint worth refusing to trade away for
+  throughput.
+- **Don't let the browser check slip again.** It slipped for two sessions before,
+  and both features shipped this time without a human ever looking at them rendered.
+  It is fifteen minutes.
 
 ---
 

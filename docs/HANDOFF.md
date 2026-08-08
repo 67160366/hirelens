@@ -60,19 +60,27 @@ OCR confidence question has an answer with numbers behind it.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>. Everything through
-the container work was pushed and green on CI (run `31212427540`, 2026-08-08) on a
-runner with no Tesseract, no database, no MinIO and no API key — which is the opt-in
-test design doing its job — plus 9 vitest cases in `web/`. **The six commits that
-close M2 are local only at the time of writing.**
-Check `git rev-list --count origin/main..main` before assuming otherwise —
+`main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything
+through the close of M2 is pushed and green on CI** (run `31240479417`, 2026-08-08):
+270 passed, 25 skipped on a runner with no Tesseract, no database, no MinIO and no
+API key — the same numbers as a local run, which is the opt-in test design doing its
+job — plus 9 vitest cases in `web/`.
+Check `git rev-list --count origin/main..main` before assuming that is still true —
 a batch of verified-but-unpushed commits is the easiest way for local and CI to
 drift apart, and CI is the only thing that tests a clean machine with no `.env`,
 no Docker and no API key.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`,
 `mypy app`, `pytest -q`, then `npm ci`/`typecheck`/`lint`/`build`. It has no
-database, no Redis and no API key, which the next section explains.
+database, no Redis, no MinIO and no API key, which the next section explains.
+
+**Read a green run's annotations, not just its tick.** `setup-uv` was bumped from
+`@v5` to `@v6` to get off Node 20, CI went green, and the deprecation warning was
+still there: `@v6` is the newest *floating* major tag, but the action stopped
+publishing floating majors at v8 deliberately — a moving `@vN` is what made the
+tj-actions supply-chain attack possible — so it is two majors stale and still targets
+node20. It is pinned at `@v9.0.0` now. The general form of this: a version bump that
+still emits the warning it was meant to remove has not worked.
 
 ---
 
