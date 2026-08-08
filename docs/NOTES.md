@@ -95,6 +95,33 @@ into HANDOFF §1 rather than left implied.
 **Read the quota id, not just the 429.** Two different limits share one status code
 and only one of them is worth waiting out.
 
+### Still open, in order
+
+1. **Push slice 4 and watch CI.** One commit, and CI has never seen any of it. The
+   suite is 411 locally; the number to check on the runner is that it is *the same*
+   with no Tesseract, no database, no MinIO and no key. No migration this time, so
+   the SQLite step that caught `0006` has nothing new to chew on — but the routes,
+   the schemas and `mypy` all do.
+2. **Slice 5 — the thin web UI**, and it absorbs the browser walkthrough that has now
+   slipped three sessions. Two-column and MinIO are both verified at the HTTP level
+   and in the containers, and **no human has watched either render**. `PLAN.md` says
+   the walkthrough is part of this slice rather than a follow-up to it, on purpose.
+   HANDOFF §9 lists the four things to know first — the useful one being that
+   `GET /jobs/{id}/ranking` already returns citations per candidate, so a list view
+   needs no second request per row.
+3. **Re-run the live ranking check against real Gemini** once the daily quota resets.
+   Everything about ranking is provider-independent — it makes no model call — but
+   nobody has yet seen a ranking assembled entirely from Gemini judgments, and that
+   is exactly the kind of gap this project has been bitten by before. Twenty minutes
+   with `scratchpad/live_ranking.py` as the starting point.
+4. **Slice 6 — retrieval**, the last of M3.
+5. **The visibility timeout** for a worker that dies mid-job (M5). Still the last §11
+   follow-up and still **the only open item that can strand a user's data with no way
+   back through the API** — a row stuck at `processing` is skipped by redelivery,
+   409s on retry, and dedupes on re-upload.
+6. Next 15 → 16 for the remaining postcss and sharp advisories. A framework major;
+   belongs with the web work rather than squeezed into it.
+
 ### Worth knowing next time
 
 - **`GET /resumes/{id}` returns `ProfileOut`, not `ResumeOut`** — the status lives at
