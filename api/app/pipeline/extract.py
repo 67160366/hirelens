@@ -19,25 +19,18 @@ import logging
 from dataclasses import dataclass
 
 from app.llm.base import LLMUsage, StructuredExtractor
-from app.pipeline.evidence import (
-    EvidenceResolver,
-    MatchKind,
-    RejectedQuote,
-    RejectReason,
-)
 from app.pipeline.parse import ParsedDocument
 from app.pipeline.prompts import (
     EXTRACTION_SYSTEM,
     build_extraction_retry_prompt,
     build_extraction_user_prompt,
 )
+from app.pipeline.verification import EvidenceRecorder
 from app.schemas.extraction import RawExtraction, Seniority
 from app.schemas.profile import (
     Claim,
-    DroppedClaim,
     Education,
     EvidenceRef,
-    EvidenceStats,
     Experience,
     ExtractedProfile,
 )
@@ -68,27 +61,10 @@ class _Verifier:
     """Resolves one raw extraction against one document."""
 
     def __init__(self, document: ParsedDocument) -> None:
-        self._document = document
-        self._resolver = EvidenceResolver(document.text)
-        self.dropped: list[DroppedClaim] = []
-        self.match_kinds: list[MatchKind] = []
-        self.reject_reasons: list[RejectReason] = []
+        self._evidence = EvidenceRecorder(document)
 
     def _reference(self, *, field: str, value: str, quote: str) -> EvidenceRef | None:
-        """Resolve a quote, recording the outcome either way."""
-        resolution = self._resolver.resolve(quote)
-
-        if isinstance(resolution, RejectedQuote):
-            self.reject_reasons.append(resolution.reason)
-            self.dropped.append(
-                DroppedClaim(field=field, value=value, quote=quote, reason=resolution.reason)
-            )
-            return None
-
-        self.match_kinds.append(resolution.match_kind)
-        return EvidenceRef.from_span(
-            resolution, page=self._document.page_for_offset(resolution.char_start)
-        )
+        return self._evidence.reference(field=field, value=value, quote=quote)
 
     def _claim(self, *, field: str, value: str, quote: str) -> Claim | None:
         reference = self._reference(field=field, value=value, quote=quote)
@@ -175,12 +151,8 @@ class _Verifier:
             skills=skills,
             experiences=experiences,
             education=education,
-            dropped=self.dropped,
-            stats=EvidenceStats.build(
-                match_kinds=self.match_kinds,
-                reject_reasons=self.reject_reasons,
-                attempts=attempts,
-            ),
+            dropped=self._evidence.dropped,
+            stats=self._evidence.stats(attempts=attempts),
         )
 
 

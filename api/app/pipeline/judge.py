@@ -16,10 +16,8 @@ unverifiable claim this design exists to refuse (`app/schemas/judgment.py`).
 Two deliberate departures from `extract.py`, both explained where they happen: the
 retry loop keeps the attempt with the most *met* requirements rather than simply the
 fewest rejections, and an empty requirement list never reaches the model at all.
-The `_reference` helper below is duplicated from `_Verifier` rather than shared:
-a common home would have to import both `evidence` and `schemas.profile`, and
-`schemas.profile` already imports `evidence`, so it needs a new module — worth doing
-when something wants it a third time, not for two callers in one milestone.
+Everything else is shared rather than mirrored — `pipeline/verification.py` holds
+the resolve-and-tally loop both modules run.
 """
 
 from __future__ import annotations
@@ -28,18 +26,14 @@ import logging
 from dataclasses import dataclass
 
 from app.llm.base import LLMUsage, StructuredExtractor
-from app.pipeline.evidence import (
-    EvidenceResolver,
-    MatchKind,
-    RejectedQuote,
-    RejectReason,
-)
+from app.pipeline.evidence import RejectReason
 from app.pipeline.parse import ParsedDocument
 from app.pipeline.prompts import (
     JUDGMENT_SYSTEM,
     build_judgment_retry_prompt,
     build_judgment_user_prompt,
 )
+from app.pipeline.verification import EvidenceRecorder
 from app.schemas.judgment import (
     Judgment,
     RawJudgment,
@@ -47,7 +41,7 @@ from app.schemas.judgment import (
     RequirementSpec,
     Verdict,
 )
-from app.schemas.profile import DroppedClaim, EvidenceRef, EvidenceStats
+from app.schemas.profile import EvidenceRef
 
 logger = logging.getLogger(__name__)
 
@@ -75,28 +69,8 @@ class _JudgmentVerifier:
     """Resolves one raw judgment against one document."""
 
     def __init__(self, document: ParsedDocument, requirements: list[RequirementSpec]) -> None:
-        self._document = document
         self._requirements = requirements
-        self._resolver = EvidenceResolver(document.text)
-        self.dropped: list[DroppedClaim] = []
-        self.match_kinds: list[MatchKind] = []
-        self.reject_reasons: list[RejectReason] = []
-
-    def _reference(self, *, field: str, value: str, quote: str) -> EvidenceRef | None:
-        """Resolve a quote, recording the outcome either way."""
-        resolution = self._resolver.resolve(quote)
-
-        if isinstance(resolution, RejectedQuote):
-            self.reject_reasons.append(resolution.reason)
-            self.dropped.append(
-                DroppedClaim(field=field, value=value, quote=quote, reason=resolution.reason)
-            )
-            return None
-
-        self.match_kinds.append(resolution.match_kind)
-        return EvidenceRef.from_span(
-            resolution, page=self._document.page_for_offset(resolution.char_start)
-        )
+        self._evidence = EvidenceRecorder(document)
 
     def _group_by_requirement(self, raw: RawJudgment) -> dict[int, list[str]]:
         """Collect quotes per requirement number, refusing numbers nobody asked for.
@@ -119,14 +93,11 @@ class _JudgmentVerifier:
         for match in raw.matches:
             if not 1 <= match.requirement <= len(self._requirements):
                 for quote in match.quotes:
-                    self.reject_reasons.append(RejectReason.UNKNOWN_REQUIREMENT)
-                    self.dropped.append(
-                        DroppedClaim(
-                            field=f"matches[requirement={match.requirement}]",
-                            value=f"requirement {match.requirement}",
-                            quote=quote,
-                            reason=RejectReason.UNKNOWN_REQUIREMENT,
-                        )
+                    self._evidence.reject(
+                        field=f"matches[requirement={match.requirement}]",
+                        value=f"requirement {match.requirement}",
+                        quote=quote,
+                        reason=RejectReason.UNKNOWN_REQUIREMENT,
                     )
                 continue
 
@@ -141,7 +112,7 @@ class _JudgmentVerifier:
         for number, requirement in enumerate(self._requirements, start=1):
             evidence: list[EvidenceRef] = []
             for quote in grouped.get(number, []):
-                reference = self._reference(
+                reference = self._evidence.reference(
                     field=f"requirements[{number - 1}]", value=requirement.label, quote=quote
                 )
                 if reference is not None:
@@ -162,12 +133,8 @@ class _JudgmentVerifier:
 
         return Judgment(
             requirements=judged,
-            dropped=self.dropped,
-            stats=EvidenceStats.build(
-                match_kinds=self.match_kinds,
-                reject_reasons=self.reject_reasons,
-                attempts=attempts,
-            ),
+            dropped=self._evidence.dropped,
+            stats=self._evidence.stats(attempts=attempts),
         )
 
 
