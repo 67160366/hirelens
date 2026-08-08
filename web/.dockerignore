@@ -1,0 +1,9 @@
+# node_modules is reinstalled from package-lock.json inside the image; copying the
+# host's would drag in platform-specific binaries (sharp, in this project's tree).
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+.env
+.env.*
