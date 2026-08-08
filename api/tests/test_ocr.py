@@ -12,14 +12,22 @@ that always had text — the same slice-it-back-out assertion `test_parse.py` ma
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
 
+import app.pipeline.ocr as ocr_module
 from app.jobs import is_retryable
 from app.pipeline.evidence import EvidenceResolver, ResolvedSpan
-from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
+from app.pipeline.ocr import (
+    OCREngine,
+    OCRError,
+    OCRUnavailableError,
+    TesseractEngine,
+    _mean_confidence,
+)
 from app.pipeline.parse import (
     EmptyDocumentError,
     NoTextLayerError,
@@ -30,6 +38,13 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 # Long enough to clear MIN_CHARS_PER_TEXT_PAGE, so the page counts as recovered.
 RECOGNIZED = "Somchai Jaidee — Senior Backend Engineer\nSkills: Python, FastAPI"
+
+
+class _Png:
+    """Stands in for a PIL image: `TesseractEngine` only ever asks it to save."""
+
+    def save(self, buffer: object, format: str) -> None:
+        buffer.write(b"\x89PNG\r\n\x1a\n")  # type: ignore[attr-defined]
 
 
 class StubOCR(OCREngine):
@@ -160,6 +175,93 @@ class TestTheBudget:
         with pytest.raises(NoTextLayerError):
             parse_pdf(FIXTURES / "resume_scanned.pdf", ocr=engine)
         assert engine.calls == []
+
+
+class TestTheConfidenceGate:
+    """`TesseractEngine`'s own gate, driven without a Tesseract.
+
+    The subprocess is stubbed rather than the engine, because the logic under test
+    *is* the engine: which invocation runs, in what order, and what the page comes
+    back as when the reading is not trustworthy. `test_ocr_tesseract.py` runs the
+    same gate against the real binary.
+    """
+
+    # Tesseract's TSV header. `conf` is column 10 and `text` is column 11.
+    COLUMNS: ClassVar[list[str]] = [
+        "level",
+        "page_num",
+        "block_num",
+        "par_num",
+        "line_num",
+        "word_num",
+        "left",
+        "top",
+        "width",
+        "height",
+        "conf",
+        "text",
+    ]
+    HEADER = "\t".join(COLUMNS)
+
+    def _tsv(self, *scores: float) -> str:
+        rows = [self.HEADER, "5\t1\t1\t1\t1\t0\t0\t0\t0\t0\t-1\t"]  # a non-word row
+        rows += [f"5\t1\t1\t1\t1\t{i}\t0\t0\t0\t0\t{s}\tword" for i, s in enumerate(scores, 1)]
+        return "\n".join(rows)
+
+    def _engine(self, monkeypatch, tsv: str, text: str, *, min_confidence: float):
+        """A TesseractEngine whose subprocess answers `tsv` then `text`."""
+        calls: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            calls.append(list(command))
+            payload = tsv if command[-1] == "tsv" else text
+            return subprocess.CompletedProcess(command, 0, payload.encode(), b"")
+
+        monkeypatch.setattr(ocr_module.subprocess, "run", fake_run)
+        engine = TesseractEngine(
+            command="tesseract", languages="tha+eng", min_confidence=min_confidence
+        )
+        return engine, calls
+
+    def test_a_confident_page_is_returned(self, monkeypatch):
+        engine, calls = self._engine(
+            monkeypatch, self._tsv(95, 92, 96), "Somchai Jaidee", min_confidence=75
+        )
+        assert engine.recognize(_Png(), page_number=1) == "Somchai Jaidee"
+        assert [call[-1] for call in calls] == ["tsv", "tha+eng"], "confidence is asked first"
+
+    def test_a_page_read_badly_comes_back_empty(self, monkeypatch):
+        """Mean 47 is the 6px-blur case from the degradation table: 160 characters
+        of confident nonsense, where "Somchai Jaidee" reads "Sore hector". Returning
+        the text would put words nobody wrote into `document_text`."""
+        engine, calls = self._engine(
+            monkeypatch, self._tsv(50, 44, 48), "Sore hector", min_confidence=75
+        )
+        assert engine.recognize(_Png(), page_number=1) == ""
+        assert len(calls) == 1, "a rejected page must not pay for the second call"
+
+    def test_a_rejected_page_leaves_the_scan_failed(self):
+        """End to end: the gate reuses the path a page that recognized nothing takes,
+        so the user gets "OCR ran but recognized no usable text" rather than a
+        profile built from noise."""
+        with pytest.raises(NoTextLayerError) as caught:
+            parse_pdf(FIXTURES / "resume_scanned.pdf", ocr=StubOCR(""))
+        assert caught.value.ocr_attempted is True
+        assert "too low quality" in str(caught.value)
+
+    def test_the_gate_off_costs_nothing(self, monkeypatch):
+        """`OCR_MIN_CONFIDENCE=0` must not spend the extra invocation."""
+        engine, calls = self._engine(monkeypatch, self._tsv(10), "text", min_confidence=0)
+        assert engine.recognize(_Png(), page_number=1) == "text"
+        assert len(calls) == 1
+
+    def test_a_page_with_no_words_scores_zero(self):
+        assert _mean_confidence(self.HEADER) == 0.0
+
+    def test_non_word_rows_do_not_drag_the_average_down(self):
+        """Tesseract marks page, block and line rows -1. Counting them as zero would
+        reject every page."""
+        assert _mean_confidence(self._tsv(90, 90)) == pytest.approx(90.0)
 
 
 class TestFailureClassification:

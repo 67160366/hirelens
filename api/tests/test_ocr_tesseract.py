@@ -17,12 +17,17 @@ from __future__ import annotations
 
 import os
 
+import pdfplumber
 import pytest
+from PIL import ImageFilter
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 from app.config import OCREngineName, Settings
 from app.pipeline.evidence import EvidenceResolver, ResolvedSpan
-from app.pipeline.ocr import build_ocr_engine
-from app.pipeline.parse import parse_pdf
+from app.pipeline.ocr import _mean_confidence, build_ocr_engine
+from app.pipeline.parse import NoTextLayerError, parse_pdf
 from tests.conftest import FIXTURES
 
 OCR_TESSERACT_CMD = os.environ.get("OCR_TESSERACT_CMD", "")
@@ -85,6 +90,69 @@ class TestARealScan:
         resolver = EvidenceResolver(scanned.text)
         for quote in ("Somchai Jaidee", "Built payment reconciliation services in Python."):
             assert isinstance(resolver.resolve(quote), ResolvedSpan), quote
+
+
+class TestTheConfidenceGateAgainstTheRealBinary:
+    """The gate stops being useful the moment the numbers stop being real.
+
+    `test_ocr.py` pins the logic against a stubbed subprocess. What it cannot show
+    is what Tesseract actually reports — whether a clean page really scores above
+    the threshold and a ruined one really scores below it. That is the measurement
+    the default `OCR_MIN_CONFIDENCE` rests on, so it is pinned here where a real
+    binary exists. Full table: `tests/tools/ocr_degradation.py`.
+    """
+
+    def _engine(self, min_confidence: float):
+        return build_ocr_engine(
+            Settings(
+                _env_file=None,
+                ocr_engine=OCREngineName.TESSERACT,
+                ocr_command=OCR_TESSERACT_CMD,
+                ocr_min_confidence=min_confidence,
+            )
+        )
+
+    def _page_image(self, name: str):
+        with pdfplumber.open(FIXTURES / name) as pdf:
+            return pdf.pages[0].to_image(resolution=300).original
+
+    def test_a_clean_scan_scores_well_above_the_default(self):
+        engine = self._engine(0)
+        image = self._page_image("resume_scanned.pdf")
+        tsv = engine._run(engine._encode(image), 1, "tsv")
+        assert _mean_confidence(tsv) > 90, "the measured clean baseline is ~94.8"
+
+    def test_a_ruined_scan_scores_far_below_it(self):
+        """6px of blur: the page still yields plenty of characters, but "Somchai
+        Jaidee" comes back as "Sore hector". This is the case the gate exists for."""
+        engine = self._engine(0)
+        blurred = self._page_image("resume_scanned.pdf").filter(ImageFilter.GaussianBlur(6.0))
+        tsv = engine._run(engine._encode(blurred), 1, "tsv")
+        assert _mean_confidence(tsv) < 60, "the measured 6px-blur reading is ~47.4"
+
+    def test_the_default_threshold_keeps_a_clean_scan(self):
+        document = parse_pdf(FIXTURES / "resume_scanned.pdf", ocr=self._engine(75))
+        assert document.pages_from_ocr == (1,)
+        assert "ทักษะ" in document.text
+
+    def test_the_default_threshold_refuses_a_ruined_one(self, tmp_path):
+        """End to end, with a real Tesseract: a blurred scan comes back as a failure
+        the user can act on rather than a confident profile of the wrong words."""
+        blurred = self._page_image("resume_scanned.pdf").filter(ImageFilter.GaussianBlur(6.0))
+        path = tmp_path / "blurred.pdf"
+        canvas_ = canvas.Canvas(str(path), pagesize=A4)
+        canvas_.drawImage(ImageReader(blurred), 0, 0, width=A4[0], height=A4[1])
+        canvas_.save()
+
+        with pytest.raises(NoTextLayerError) as caught:
+            parse_pdf(path, ocr=self._engine(75))
+        assert caught.value.ocr_attempted is True
+
+        # ...and with the gate off, the same file is accepted — which is the whole
+        # problem, stated as a test rather than as a caveat.
+        accepted = parse_pdf(path, ocr=self._engine(0))
+        assert accepted.pages_from_ocr == (1,)
+        assert "Somchai Jaidee" not in accepted.text
 
 
 class TestARealPartialScan:

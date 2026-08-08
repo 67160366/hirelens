@@ -17,6 +17,12 @@ add to a project built on citing verbatim text:
     OCR cannot promise is that the text matches the *printed* page: a citation into
     an OCR'd page is faithful to what was read, which is not always what was
     printed. That limitation is surfaced to the user rather than hidden.
+*   **A page read badly enough is refused rather than reported.** A character count
+    cannot tell text from noise: a heavily blurred page still yields plenty of
+    characters, they are simply the wrong ones. `OCR_MIN_CONFIDENCE` reads
+    Tesseract's own per-word confidence and drops a page below the bar, which is
+    the difference between a scan that fails and a scan that lies. The threshold
+    was measured rather than guessed — `tests/tools/ocr_degradation.py`.
 
 The engine is a seam with an off-by-default setting, for the same reason the fake
 extractor is the default provider: Tesseract is a system binary, CI will never have
@@ -109,22 +115,68 @@ class TesseractEngine(OCREngine):
         dpi: int = 300,
         max_pages: int = 10,
         timeout_seconds: float = 60.0,
+        min_confidence: float = 0.0,
     ) -> None:
         self._command = command
         self._languages = languages
         self._timeout_seconds = timeout_seconds
+        self._min_confidence = min_confidence
         self.dpi = dpi
         self.max_pages = max_pages
 
     def recognize(self, image: Image, *, page_number: int) -> str:
+        started = time.monotonic()
+        png = self._encode(image)
+
+        if self._min_confidence > 0:
+            confidence = _mean_confidence(self._run(png, page_number, "tsv"))
+            if confidence < self._min_confidence:
+                # Deliberately the same answer as "I read this page and found
+                # nothing": the page stays in `pages_without_text`, and a document
+                # where every page lands here raises `NoTextLayerError`, whose
+                # message already says the scan may be too low quality.
+                logger.info(
+                    "ocr: page %d rejected, mean confidence %.1f below %.1f",
+                    page_number,
+                    confidence,
+                    self._min_confidence,
+                )
+                return ""
+
+        # Tesseract ends lines with CRLF on Windows and LF elsewhere. Left alone,
+        # the same scan would produce different `document_text` — and so different
+        # evidence offsets — depending on the machine that read it, and a document
+        # with one scanned and one text-layer page would carry both conventions at
+        # once. Normalizing here is before `_assemble` measures anything, so it
+        # shifts no offsets.
+        text = self._run(png, page_number).replace("\r\n", "\n")
+        logger.info(
+            "ocr: page %d recognized in %d ms (%d chars)",
+            page_number,
+            int((time.monotonic() - started) * 1000),
+            len(text),
+        )
+        return text
+
+    @staticmethod
+    def _encode(image: Image) -> bytes:
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
+        return buffer.getvalue()
 
-        started = time.monotonic()
+    def _run(self, png: bytes, page_number: int, *extra: str) -> str:
+        """One Tesseract invocation over stdin/stdout.
+
+        `extra` names an output format: nothing for plain text, `tsv` for the
+        per-word table the confidence gate reads. They cannot be combined — writing
+        two formats at once needs a file base, and the page image and the text on it
+        are both a picture of somebody's resume, which is why nothing here touches
+        disk.
+        """
         try:
             completed = subprocess.run(
-                [self._command, "stdin", "stdout", "-l", self._languages],
-                input=buffer.getvalue(),
+                [self._command, "stdin", "stdout", "-l", self._languages, *extra],
+                input=png,
                 capture_output=True,
                 timeout=self._timeout_seconds,
                 check=False,
@@ -146,21 +198,33 @@ class TesseractEngine(OCREngine):
             raise OCRError(
                 f"Tesseract failed on page {page_number} (exit {completed.returncode}): {detail}"
             )
+        return completed.stdout.decode("utf-8", errors="replace")
 
-        # Tesseract ends lines with CRLF on Windows and LF elsewhere. Left alone,
-        # the same scan would produce different `document_text` — and so different
-        # evidence offsets — depending on the machine that read it, and a document
-        # with one scanned and one text-layer page would carry both conventions at
-        # once. Normalizing here is before `_assemble` measures anything, so it
-        # shifts no offsets.
-        text = completed.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n")
-        logger.info(
-            "ocr: page %d recognized in %d ms (%d chars)",
-            page_number,
-            int((time.monotonic() - started) * 1000),
-            len(text),
-        )
-        return text
+
+def _mean_confidence(tsv: str) -> float:
+    """Average Tesseract's own per-word confidence over the words it read.
+
+    The TSV is read for this number only — never for the text. Tesseract tokenizes
+    Thai per glyph there, so `ทักษะ` comes back as six separate "words"; rebuilding
+    a line from them inserts spaces between a character and its tone mark, and that
+    string would become `document_text` with every evidence offset pointing into it.
+    Hence the second invocation: the cost of not corrupting Thai.
+
+    A page with no words at all scores 0, which is the honest reading — nothing was
+    recognized, so nothing about it is trustworthy.
+    """
+    scores: list[float] = []
+    for line in tsv.splitlines()[1:]:  # the first line is the header
+        columns = line.split("\t")
+        if len(columns) < 12 or not columns[11].strip():
+            continue
+        try:
+            score = float(columns[10])
+        except ValueError:
+            continue
+        if score >= 0:  # Tesseract marks non-word rows -1
+            scores.append(score)
+    return sum(scores) / len(scores) if scores else 0.0
 
 
 def _installed_languages(command: str) -> set[str]:
@@ -232,4 +296,5 @@ def build_ocr_engine(settings: Settings) -> OCREngine | None:
                 dpi=settings.ocr_dpi,
                 max_pages=settings.ocr_max_pages,
                 timeout_seconds=settings.ocr_timeout_seconds,
+                min_confidence=settings.ocr_min_confidence,
             )

@@ -141,6 +141,19 @@ class Settings(BaseSettings):
     ocr_max_pages: int = Field(default=10, ge=1, le=50)
     ocr_timeout_seconds: float = Field(default=60.0, gt=0)
 
+    # Least mean per-word confidence (0-100) a recognized page may have before it is
+    # refused. `0` turns the check off — and with it the second Tesseract call it
+    # costs, since text and confidence cannot come out of one invocation.
+    #
+    # 75 is measured, not guessed (`tests/tools/ocr_degradation.py`): degrading the
+    # scanned fixture sixteen ways, every version that still yielded its content
+    # scored 90.2 or better and every version that yielded none scored 47.4 or
+    # worse. 75 sits in that gap, and low in it on purpose — the fixtures are clean
+    # synthetic renders, so a real photograph will score lower while still being
+    # readable, and a wrongly refused scan is a message the user can act on while a
+    # wrongly accepted one is a confident, fully cited profile of the wrong text.
+    ocr_min_confidence: float = Field(default=75.0, ge=0, le=100)
+
     # How many times to re-ask the model when its evidence fails validation.
     extraction_max_attempts: int = Field(default=2, ge=1, le=5)
 
