@@ -115,6 +115,65 @@ class TestAuth:
         assert response.status_code == 401
 
 
+class TestChangePassword:
+    """`authed_client` is registered as candidate@example.com / correct horse battery."""
+
+    async def test_the_new_password_works_and_the_old_one_stops(self, authed_client: AsyncClient):
+        response = await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
+        )
+        assert response.status_code == 200
+        assert response.json()["access_token"]
+
+        credentials = {"email": "candidate@example.com", "password": "correct horse battery"}
+        assert (await authed_client.post("/auth/login", json=credentials)).status_code == 401
+
+        credentials["password"] = "a-brand-new-one"
+        assert (await authed_client.post("/auth/login", json=credentials)).status_code == 200
+
+    async def test_a_wrong_current_password_is_refused(self, authed_client: AsyncClient):
+        response = await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "not-it", "new_password": "a-brand-new-one"},
+        )
+        # 403, not 401: the token is valid, the claim about the old password is not.
+        assert response.status_code == 403
+
+        credentials = {"email": "candidate@example.com", "password": "correct horse battery"}
+        assert (await authed_client.post("/auth/login", json=credentials)).status_code == 200
+
+    async def test_it_requires_authentication(self, client: AsyncClient):
+        response = await client.post(
+            "/auth/change-password",
+            json={"current_password": "anything", "new_password": "a-brand-new-one"},
+        )
+        assert response.status_code == 401
+
+    async def test_a_short_new_password_is_rejected(self, authed_client: AsyncClient):
+        response = await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "abc"},
+        )
+        assert response.status_code == 422
+
+    async def test_tokens_issued_before_the_change_still_work(self, authed_client: AsyncClient):
+        """KNOWN LIMITATION, pinned so it is a deliberate state rather than a surprise.
+
+        Revoking the old pair needs a refresh-token denylist, which is also what a
+        real `/auth/logout` would need. When that lands, this test should fail and
+        be replaced with its opposite.
+        """
+        old_token = authed_client.headers["Authorization"]
+        await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
+        )
+
+        authed_client.headers["Authorization"] = old_token
+        assert (await authed_client.get("/auth/me")).status_code == 200
+
+
 class TestUpload:
     async def test_upload_requires_auth(self, client: AsyncClient):
         response = await client.post("/resumes", files=resume_upload())

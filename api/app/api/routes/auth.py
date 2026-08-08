@@ -47,6 +47,11 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=200)
+
+
 class CandidateOut(BaseModel):
     id: str
     email: str
@@ -119,6 +124,44 @@ async def refresh(payload: RefreshRequest, session: SessionDep, settings: Settin
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
         )
+
+    return TokenPair(
+        access_token=create_access_token(settings, candidate.id),
+        refresh_token=create_refresh_token(settings, candidate.id),
+    )
+
+
+@router.post("/change-password", response_model=TokenPair)
+async def change_password(
+    payload: ChangePasswordRequest,
+    candidate: CandidateDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> TokenPair:
+    """Change the signed-in account's password, proving the old one first.
+
+    Returns a fresh token pair so a client can swap without a second round trip.
+
+    **Tokens issued before this call keep working until they expire.** Revoking
+    them needs a refresh-token denylist, which this project does not have yet —
+    the same gap that is why there is no `/auth/logout`. Saying so here is better
+    than implying a guarantee the system cannot make.
+    """
+    if candidate.password_hash is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account has no password set",
+        )
+    if not verify_password(payload.current_password, candidate.password_hash):
+        # 403, not 401: the bearer token is fine, the claim about the old password
+        # is not. A 401 would send a client into its token-refresh path for a
+        # failure no new token can fix.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Current password is incorrect"
+        )
+
+    candidate.password_hash = hash_password(payload.new_password)
+    await session.commit()
 
     return TokenPair(
         access_token=create_access_token(settings, candidate.id),
