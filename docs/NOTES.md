@@ -6,7 +6,130 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-08 (latest) — M2 is closed
+## 2026-08-08 (latest) — M3 is scoped, and its first slice lands
+
+M2's handoff asked for one thing before any M3 code: **review the scope, because
+`PLAN.md`'s M3 was a draft reconstructed from the README rather than a set of
+commitments.** That review happened this session, four questions were settled with
+the owner, and the first slice shipped against the agreed shape.
+
+### The four calls, and why each one went the way it did
+
+| Question | Decision |
+|---|---|
+| Where hybrid retrieval sits | **Last slice.** The suite runs on in-memory SQLite and must keep doing so; pgvector is Postgres-only and embeddings need a provider *and* a price table. Lexical is the no-server default behind a `Retriever` seam, pgvector opt-in |
+| Verdict vocabulary | **`met` / `not_evidenced`** |
+| Where requirements come from | **Typed in through CRUD.** A requirement is an input, not a claim about a person — putting a model in front of it adds a failure mode without adding a guarantee |
+| UI in M3 | **A thin one.** Two features shipped in M2 without a human ever seeing them rendered; the full recruiter UI still waits for M5 |
+
+Plus three taken by default: a job is owned by a `Candidate` row (M4's RBAC widens
+*who* without changing the table), a screening is a first-class row that **shares**
+the retry policy rather than copying it, and `resumes.page_spans` gets stored so a
+judgment quote maps to a page without re-parsing.
+
+### The idea the whole milestone hangs on
+
+**The model is never asked for a verdict.** It is asked only for quotes showing a
+requirement is met, and to omit the requirement otherwise. The application derives
+the rest: one quote that resolves is `met`, nothing that resolves is
+`not_evidenced`, and every quote that failed lands in `dropped` and in the
+hallucination rate.
+
+That is the same move as never asking for offsets, applied to judging — the one
+thing a model could assert unverifiably ("this candidate does not have X") it is
+never given the chance to say. It is also simply the honest label: the system
+cannot tell "the candidate lacks it" from "the resume does not mention it", and
+`not_met` would claim it can.
+
+### What landed
+
+Slice 1 — **jobs and requirements as rows, with CRUD**. `app/models/matching.py`,
+`app/api/routes/jobs.py`, migration `0004`, `tests/test_jobs.py`. Suite
+**270 → 295 passing**, 25 skipped. Requirement routes are nested under their job so
+ownership is settled in one place, every lookup answers **404 rather than 403**, and
+the list is capped at 30 because all of it travels in one judging prompt.
+
+### Three defects and one false alarm, none of which a passing test would show
+
+**1. An empty requirement list raised `MissingGreenlet`.** Creating a job *with*
+requirements worked; creating one without them blew up. The reason is that
+appending to `job.requirements` is what marks the collection loaded — leave it
+alone and rendering the response lazy-loads it *after* the commit, which on an
+async session is an error rather than an empty list. Fixed by passing the list to
+the constructor. Worth remembering as a shape: **the happy path was hiding the
+bug, because the happy path did the initializing.**
+
+**2. A check constraint spelled out in full gets wrapped twice.** `ck` is the only
+convention in `models/base.py` that interpolates `%(constraint_name)s`, so
+`name="ck_job_requirements_weight_positive"` in the migration became
+`ck_job_requirements_ck_job_requirements_weight_positive` in the database, and
+`alembic check` reported drift against the model *forever*. The fk/pk/uq names in
+the same migration are safe spelled out — their conventions never reference the
+given name. Found by `alembic check`; `pytest -q` was green throughout.
+
+**3. `RequirementKind` persists as enum *names*.** A `WHERE kind = 'language'`
+query returned zero rows against data I had just watched go in. SQLAlchemy stores
+`LANGUAGE` while the API serializes `language` — the same split `HANDOFF.md` §7
+already records for `ResumeStatus`. The migration now declares the upper-case forms
+instead of repeating `0001`'s misleading value list.
+
+**4. Not a defect: PowerShell mangled the Thai.** The live check printed
+`à¸ à¸²à¸©à¸²à¹à¸à¸¢` where `ภาษาไทย` belonged. PowerShell 5.1 decodes a JSON response
+body as Latin-1 unless the server names a charset. Postgres said 7 characters, 21
+bytes — stored perfectly. **Same class as `git hash-object` lying about CRLF
+damage: the instrument was answering a different question than the one being
+asked**, and the only way to tell is to go to the authoritative store.
+
+### Verified by running it
+
+- Migration `0004`: `upgrade head` → `downgrade -1` → `upgrade head` on real
+  Postgres, `alembic check` clean.
+- The check constraint refuses `weight = 0` **on Postgres**, not only in the tests.
+- The API container was **rebuilt before being believed**, and `/openapi.json`
+  lists the four `/jobs` routes — the standing rule about zombie servers, and the
+  reason the run means anything.
+- Live: create a job with four requirements → read it back → a second account gets
+  404 → `weight: 0` gets 422.
+
+### Still open, in order
+
+1. **Slice 2 — requirement-level judging.** The load-bearing piece inside it is
+   `app/llm/fake.py`: it raises for any schema that is not `RawExtraction`, so
+   until it can answer `RawJudgment` the whole suite and CI would need an API key.
+2. Slices 3–6: screening on the worker, ranking, the thin UI, retrieval.
+3. Slice 1 is **committed nowhere yet** — it is in the working tree. Push in small
+   batches, as every previous entry says.
+4. The visibility timeout for a worker that dies mid-job (M5) is still the last §11
+   follow-up.
+
+### Worth knowing next time
+
+- **`pytest -q` cannot see a migration.** Two of this session's three defects were
+  invisible to the gate and visible to `alembic check` and one `psql` query. A new
+  table is not verified until it has round-tripped on Postgres and been queried
+  there.
+- The stack was left running with `api` and `worker` **rebuilt from current code**,
+  and the throwaway accounts and jobs from the live check were deleted afterwards.
+- `HTTP_422_UNPROCESSABLE_ENTITY` is deprecated in this Starlette;
+  `HTTP_422_UNPROCESSABLE_CONTENT` is the name now.
+
+### Advice for the owner, going into the rest of M3
+
+- **Ask what instrument you used, every time — it keeps paying.** That advice was
+  written two sessions ago about `git hash-object` and it caught the Thai scare
+  today inside a minute. The habit is cheap: when a check says something surprising,
+  suspect the tool before the code, and go to the store that cannot lie.
+- **Verify the empty case on purpose.** The `MissingGreenlet` bug existed only for a
+  job with no requirements — the case nobody demos. Every list, every optional
+  field, every collection: try it empty before believing it works.
+- **The verdict decision is the one worth refusing to trade.** If someone later asks
+  for `not_met` because it "reads better in the UI", that is the moment this project
+  turns into a scoring system whose numbers nobody can check. `not_evidenced` is
+  less satisfying and it is what the system actually knows.
+
+---
+
+## 2026-08-08 — M2 is closed
 
 Seven commits, **pushed and green on CI** (runs `31240368969` and `31240479417`).
 The two remaining M2 items shipped (#6 two-column, #7 MinIO) and three items came

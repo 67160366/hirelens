@@ -12,12 +12,16 @@ from app.models.core import (
     Resume,
     ResumeStatus,
 )
+from app.models.matching import Job, JobRequirement, RequirementKind
 
 __all__ = [
     "Base",
     "Candidate",
     "ExtractedProfileRow",
+    "Job",
+    "JobRequirement",
     "LLMCallLog",
+    "RequirementKind",
     "Resume",
     "ResumeStatus",
 ]

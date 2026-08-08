@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, resumes
+from app.api.routes import auth, jobs, resumes
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.jobs import JobContext
@@ -82,6 +82,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(resumes.router)
+    app.include_router(jobs.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:

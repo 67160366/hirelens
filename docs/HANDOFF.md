@@ -1,7 +1,8 @@
 # Handoff
 
 Written 2026-07-30 at the end of M1, rewritten 2026-08-07 after the Postgres
-cutover, and again 2026-08-08 when M2 completed. Read this first when picking the
+cutover, again 2026-08-08 when M2 completed, and updated the same day when M3's
+scope was agreed and its first slice landed. Read this first when picking the
 project back up — then `CLAUDE.md` for the rules and commands, and `docs/PLAN.md`
 for per-item milestone status. Short dated session notes and owner advice live in
 `docs/NOTES.md`.
@@ -20,17 +21,30 @@ progress stream instead of polling for it; a scanned page is recovered with OCR
 instead of being a permanent failure, and refused rather than misread when the
 recognition is not trustworthy; `.docx` uploads are read as well as PDFs; a
 two-column page is read one column at a time; and uploads can live in object storage
-instead of on a disk. **M3 — the matching engine — is next.**
+instead of on a disk.
 
 Three long-standing items came off the watch list with it: the CI actions are off
 Node 20, there is finally a PDF in the fixtures that is broken on purpose, and the
 OCR confidence question has an answer with numbers behind it.
 
+**M3 — the matching engine — is under way.** Its scope was reviewed with the owner
+on 2026-08-08 and is no longer a draft: the agreed shape, the four decisions behind
+it and the six slices are in `docs/PLAN.md`. **Slice 1 is done** — a job posting and
+its requirements are first-class rows with CRUD behind them. The rest, in order:
+requirement-level judging, screening on the worker, ranking, a thin UI, retrieval.
+
+The one idea to carry into the remaining slices: **the model is never asked for a
+verdict.** It is asked only for quotes showing a requirement is met, and the
+application derives `met` (a quote resolved) or `not_evidenced` (none did) from
+what `EvidenceResolver` could locate — so judging inherits the guardrail, the
+`dropped` list and the hallucination rate without any of them being re-implemented
+or weakened. §5 says why `not_met` is deliberately not available.
+
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 270 passed, 25 skipped, **no xfail** — the two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `pytest -q` | 295 passed, 25 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -57,6 +71,8 @@ OCR confidence question has an answer with numbers behind it.
 | Single-column output is unchanged | every text-layer fixture parsed with column detection on and with it forced off: **byte-identical** in each case, and only the two two-column documents reordered, with the same words present (2026-08-08) |
 | **MinIO, end to end in the containers** | `STORAGE_BACKEND=minio docker compose up -d --build` against real Gemini: upload answered `pending` in 22 ms, `resume_th.pdf` reached `extracted` in 10.2 s, 10/10 verified, 0 dropped, all matches exact, all 10 spans slicing back out of `document_text`. `mc ls` shows the object in `hirelens-resumes`; **nothing** was written to the uploads volume; the worker logs `storage=minio`; re-uploading the same bytes returned 200 on the same row with `attempts` still 1 (2026-08-08) |
 | The OCR confidence gate, against the real binary | a clean `resume_scanned.pdf` scores 94.8 and passes; the same page at 6px blur scores 47.4 and is refused, where with the gate off it is accepted with "Somchai Jaidee" nowhere in the text (2026-08-08) |
+| Migration `0004` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `alembic check` finds no drift, and the `weight > 0` check constraint refuses a bad row **on Postgres**, not only in the tests (2026-08-08) |
+| **Jobs and requirements, live in the containers** | `api` and `worker` rebuilt first, and `/openapi.json` lists all four `/jobs` routes — the proof the container serves the code just written. Then: create a job with four requirements → read it back in order → a second account gets **404** → `weight: 0` gets **422**. Thai round-trips exactly (`ภาษาไทย`, 7 chars / 21 bytes read straight out of Postgres — the console's mangled rendering was PowerShell 5.1, not the data) (2026-08-08) |
 
 ### Repository state
 
@@ -65,6 +81,10 @@ through the close of M2 is pushed and green on CI** (run `31240479417`, 2026-08-
 270 passed, 25 skipped on a runner with no Tesseract, no database, no MinIO and no
 API key — the same numbers as a local run, which is the opt-in test design doing its
 job — plus 9 vitest cases in `web/`.
+
+**M3 slice 1 is not among them.** It is verified locally and against Postgres and
+the containers, but it is neither committed nor pushed, so CI has never seen the
+`jobs` tables, migration `0004` or the 25 cases that take the suite to 295.
 Check `git rev-list --count origin/main..main` before assuming that is still true —
 a batch of verified-but-unpushed commits is the easiest way for local and CI to
 drift apart, and CI is the only thing that tests a clean machine with no `.env`,
@@ -157,6 +177,7 @@ api/app/
     extraction.py      what the model returns — quotes only, no offsets
     profile.py         what we store — offsets, pages, stats, dropped claims
   models/core.py       candidates, resumes, extracted_profiles, llm_call_logs
+  models/matching.py   M3: jobs and the requirements they are screened by
   storage.py           LocalStorage / MinioStorage behind one interface
   services/resume_service.py   upload path: store, insert, queue; and process_resume
   jobs.py            ★ run_resume_job — the unit of background work and the retry policy
@@ -164,6 +185,8 @@ api/app/
   worker.py            `arq app.worker.WorkerSettings` — adapter only
   logging_config.py    shared by API and worker so the worker need not import the app
   api/routes/          auth.py, resumes.py — upload, profile, retry, progress stream
+                       jobs.py — postings and requirements; requirement routes are
+                       nested so ownership is settled in one place
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
   app/page.tsx         auth + upload + live progress + result + retry
@@ -269,6 +292,25 @@ Worth reading once, because the request no longer does the work.
   the right thing to the user. The threshold is measured (§7), and the TSV pass that
   produces it is a *second* invocation because TSV tokenizes Thai per glyph and
   cannot supply the text.
+- **A judgment has no `not_met`, on purpose** (M3). The model is asked only for
+  quotes showing a requirement *is* met, and the verdict is derived from what
+  `EvidenceResolver` could locate: `met` if a quote resolved, `not_evidenced` if
+  none did. Absence cannot be quoted — you cannot cite text that is not in the
+  document — so a "not met" verdict would be exactly the unverifiable assertion this
+  project exists to refuse. It is also the honest label: the system cannot tell "the
+  candidate lacks it" from "the resume does not mention it", and one of those is a
+  statement about a person.
+- **A requirement is an input, not a claim, so it needs no evidence** (M3).
+  Requirements are typed in through CRUD rather than decomposed out of a pasted job
+  description by a model. Nothing here is a statement about a candidate, so the
+  guardrail has nothing to check — and a model in front of this step would add a
+  failure mode without adding a guarantee. The description is stored beside them for
+  context and audit, and is deliberately *not* what anyone is judged against:
+  judging free text makes it impossible to say which part of a posting a verdict
+  answered.
+- **A job is owned by a `Candidate` row.** That is the only actor the system has,
+  and RBAC is M4's. The M3 rule is therefore "you may screen a resume you own
+  against a job you own", which M4 widens without changing the table.
 - **Two attempt counters, because one cannot do both jobs.** `failed_attempts` is
   the retry budget and is cleared by a success or a manual retry. `attempts` is the
   honest total and never resets — it is also what makes each dispatch's queue job id
@@ -431,10 +473,15 @@ want the retry policy run the ARQ worker.
   resume stranded at `processing` by a dead worker (below) stops holding a
   connection open. The client polls on from there, and sees the same nothing —
   which is the honest answer until the reaper lands with M5.
-- **Statuses are stored as enum *names*** (`EXTRACTED`, `DEAD_LETTERED`), because
-  SQLAlchemy's `Enum` persists names by default, while the API serializes the
-  values (`extracted`). Pre-existing, harmless, and worth knowing before writing a
-  raw SQL query against `resumes.status`.
+- **Enums are stored as their *names*** (`EXTRACTED`, `DEAD_LETTERED`, `LANGUAGE`),
+  because SQLAlchemy's `Enum` persists names by default, while the API serializes
+  the values (`extracted`, `language`). Harmless, and worth knowing before writing a
+  raw SQL query against `resumes.status` or `job_requirements.kind` — a
+  `WHERE kind = 'language'` returns zero rows against data you just watched go in.
+  Migration `0001` lists the lower-case values for `resumestatus`, which is
+  misleading but inert: `native_enum=False` emits no CHECK constraint for them to
+  disagree with. `0004` declares the upper-case forms instead, which is the shape to
+  copy from here on.
 
 ---
 
@@ -534,17 +581,43 @@ the API and the worker, upload again. To see the dead-letter path: set
 runs on Postgres, the JSONB path is verified, Gemini has run live, the queue is
 real, and every M2 item below is shipped and verified against a running system.
 
-**Next is M3 — the matching engine**, whose draft scope is in `docs/PLAN.md`: job
-requirements as first-class rows, hybrid retrieval over verified claims (the compose
-file already runs `pgvector/pgvector:pg17`, so this needs no new infrastructure),
-requirement-level judging where a judgment that cannot cite evidence is dropped
-exactly as a claim is, and ranking whose rationale is the list of citations rather
-than a score. Two things to decide early, and both are worth a plan before code: what
-a requirement *is* as a schema, and whether judging reuses `EvidenceResolver`
-unchanged — it should, because a judgment is just another claim that has to be
-locatable.
+**M3 is under way and its scope is settled** — reviewed with the owner on
+2026-08-08, so `docs/PLAN.md` now holds commitments rather than a reconstruction.
+The two questions the previous handoff said to decide early are both answered: a
+requirement is a row carrying `kind`, `label`, `detail`, `must_have` and `weight`
+(`app/models/matching.py`), and judging reuses `EvidenceResolver` **unchanged**,
+along with `EvidenceRef`, `DroppedClaim` and `EvidenceStats` from
+`schemas/profile.py` — which is what makes the hallucination rate cover judging for
+free.
 
-M2, for the record (live status in `docs/PLAN.md`):
+| # | Work | Status |
+|---|---|---|
+| 1 | Jobs and requirements as rows, with CRUD | **done** — `models/matching.py`, `api/routes/jobs.py`, migration `0004`, `tests/test_jobs.py` |
+| 2 | Requirement-level judging | next — `pipeline/judge.py` + `schemas/judgment.py`, written as twins of `extract.py` / `extraction.py` |
+| 3 | Screening as a row, on the background worker | shares the retry policy via a pure `decide_retry` extracted from `app/jobs.py` |
+| 4 | Ranking across candidates | a pure function, no model; must-haves gate, citations are the rationale |
+| 5 | A thin web UI | job authoring, verdicts, citation highlighting through the existing `DocumentPane` |
+| 6 | Retrieval — the pre-filter | `Retriever` seam; lexical default, pgvector opt-in |
+
+**Three things to know before starting slice 2:**
+
+1. **`app/llm/fake.py` has to learn `RawJudgment` first.** It raises for any schema
+   that is not `RawExtraction`, so until it answers judgments the whole suite and CI
+   would need an API key — and "`git clone && pytest -q` works with no servers" is
+   the load-bearing property §2 describes. This is not optional work inside the
+   slice.
+2. **Page spans are not stored yet.** `resumes` keeps `document_text` verbatim but
+   not the page boundaries, so a *new* quote located in stored text cannot be mapped
+   to a page. Slice 2 adds `page_spans` (migration `0005`), written at parse time
+   from `document.pages`. Rows extracted before it keep `NULL` and their judgment
+   citations report page 1 — a safe backfill is impossible without re-parsing under
+   the identical OCR configuration, which is exactly what `reparse_document`'s
+   docstring warns about.
+3. **One model call per screening, carrying the whole `document_text`** — not one
+   call per requirement. Requirement count × resume count is this milestone's cost
+   multiplier, and slice 6 exists to keep the resume side of that product small.
+
+M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
@@ -557,28 +630,28 @@ M2, for the record (live status in `docs/PLAN.md`):
 | 7 | ~~MinIO storage backend~~ **done** | `MinioStorage` in `app/storage.py`; the API and the worker build storage independently so both pick it up. The contract in `tests/storage_contract.py` runs against both backends |
 | 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay is still not done, but #6 now extracts the bbox geometry it needs, so what remains is an endpoint serving the original file and a pdf.js canvas — a frontend slice, parked with M5's recruiter UI |
 
-Nothing from M2 is outstanding. The browser walkthrough was re-done on 2026-08-08
-and covered the whole journey including the retry path (§1); the OCR banner was
-checked in a real browser once `CORS_ORIGINS` became a setting and unblocked running
-the dev server on a free port.
+The browser walkthrough was re-done on 2026-08-08 and covered the whole journey
+including the retry path (§1); the OCR banner was checked in a real browser once
+`CORS_ORIGINS` became a setting and unblocked running the dev server on a free port.
 
 Two things landed alongside M2 and are recorded in `docs/NOTES.md`: the stack was
 containerized (M5's "containerize API + web", pulled forward for a course
 deliverable) and `POST /auth/change-password` shipped.
 
-**Three things a new session should know before starting M3:**
+**Still true, and still worth not renegotiating:**
 
-1. **The browser has not seen the two-column or MinIO work.** Both are verified at
-   the HTTP level and in the containers, but no one has watched a two-column resume
-   render in `DocumentPane`. That is the cheapest outstanding check.
-2. **`docs/PLAN.md`'s M3–M6 are still a draft** reconstructed from the README, not
-   commitments. Review the M3 scope before building to it.
-3. **The scope lines still hold**: the baseline-ranking evaluation stays in M6 with
-   its one-week timebox, and `LLM_PROVIDER=anthropic` stays an error until a live
-   verification run.
+- **The browser has not seen the two-column or MinIO work.** Both are verified at
+  the HTTP level and in the containers, but no one has watched a two-column resume
+  render in `DocumentPane`. Still the cheapest outstanding check, and M3 slice 5 is
+  the natural moment to fold it in.
+- **M4–M6 in `docs/PLAN.md` are still a draft** reconstructed from the README. M3 is
+  not any more — review each of the others the same way before building to it.
+- **The scope lines hold**: the baseline-ranking evaluation stays in M6 with its
+  one-week timebox, and `LLM_PROVIDER=anthropic` stays an error until a live
+  verification run.
 
-M3 onward (matching engine, backend depth, frontend, ship) is in
-[`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.
+M4 onward (backend depth, frontend, ship) is in [`docs/PLAN.md`](PLAN.md), which
+also tracks the status of every item above.
 
 ---
 
@@ -595,6 +668,25 @@ M3 onward (matching engine, backend depth, frontend, ship) is in
   only. `test_resume_service.py` pins this, and the storage key counts too — it
   embeds the candidate id and the file's content hash.
 - **`ruff format` is enforced in CI.** Run it before pushing.
+- **`pytest -q` cannot see a migration.** The suite builds its tables with
+  `create_all` on SQLite, so a migration can be wrong in ways every test is blind
+  to. A new table is not verified until it has round-tripped on real Postgres
+  (`upgrade head` → `downgrade -1` → `upgrade head`), `alembic check` reports no
+  drift, and you have queried it there. Both of migration `0004`'s defects were
+  invisible to a green suite.
+- **In a migration, name a check constraint with the bare name.** `ck` is the only
+  convention in `models/base.py` that interpolates `%(constraint_name)s`, so
+  `name="ck_<table>_<rule>"` gets wrapped a second time and `alembic check` reports
+  drift against the model forever. `fk`, `pk` and `uq` names are safe spelled out —
+  their conventions never reference the given name.
+- **When a check says something surprising, suspect the instrument first.** Three
+  tools have now each told a confident lie here: `git hash-object` reported
+  CRLF-corrupted PDFs as intact because it normalizes while hashing, a
+  `WHERE kind = 'language'` query returned nothing because SQLAlchemy stores enum
+  *names*, and PowerShell 5.1 rendered stored Thai as mojibake because it decodes a
+  JSON body as Latin-1 when the server names no charset. In each case the data was
+  fine and the question was wrong. Go to the store that cannot lie — `psql`, and
+  byte counts rather than eyeballs.
 - **Before believing a live run, prove you are testing what you built.** Three things
   have each caused a wrong conclusion here: a zombie server on the old port serving
   old code, a *second* ARQ worker left running from an earlier session quietly taking

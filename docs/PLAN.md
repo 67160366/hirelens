@@ -13,7 +13,7 @@ should review them before anyone treats the details as commitments.
 |---|---|---|
 | M1 | Parse (PDF, offsets, Thai), extract, verify evidence, retry, auth, upload API, web UI | ✅ done (2026-07-30) |
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
-| M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | draft |
+| M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | 🔨 in progress (scope agreed 2026-08-08) |
 | M4 | Application state machine, idempotency, race conditions, RBAC, PDPA | draft |
 | M5 | Full recruiter UI, observability, deploy | draft |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
@@ -185,17 +185,76 @@ should review them before anyone treats the details as commitments.
 - [ ] **The visibility timeout** for a worker that dies mid-job, the last §11
   follow-up. Still scheduled with M5's observability work.
 
-## M3 — matching engine (draft)
+## M3 — matching engine
 
-- Job/requirement models and CRUD: a job posting decomposed into individual
-  requirements (skills, years, education, language).
-- Hybrid retrieval over verified claims (BM25 + embeddings via pgvector — the
-  compose file already runs `pgvector/pgvector:pg17`).
-- Requirement-level judging: each requirement judged against cited evidence only,
-  so every match/miss is explainable in the UI. The same quote-verification rule
-  applies — a judgment that cannot cite evidence is dropped.
-- Ranking across candidates from requirement-level results; ranking rationale is
-  the list of citations, not a bare score.
+Scope reviewed and agreed with the owner on 2026-08-08, replacing the draft
+reconstructed from the README. Four calls were made before any code:
+
+| Question | Decision |
+|---|---|
+| Where hybrid retrieval sits | **Last slice**, behind a seam, lexical as the no-server default and pgvector opt-in — the suite runs on in-memory SQLite and must keep doing so |
+| Verdict vocabulary | **`met` / `not_evidenced`.** Absence cannot be quoted, so the system never asserts that a candidate lacks something |
+| Where requirements come from | **Typed in through CRUD.** A requirement is an input, not a claim about a person |
+| UI in M3 | **A thin one**, enough to watch a screening render in a browser. The full recruiter UI stays in M5 |
+
+And three taken by default: a job is owned by a `Candidate` row (RBAC widens *who*
+in M4 without changing the table); a screening is a first-class row with its own
+background job, **sharing** the retry policy rather than copying it; and
+`resumes.page_spans` is stored so a judgment quote maps to a page without
+re-parsing.
+
+**The idea that makes the guardrail generalize:** the model is never asked for a
+verdict. It is asked only for quotes showing a requirement is met, and to omit the
+requirement otherwise. The verdict is *derived* — at least one quote resolved is
+`met`, nothing resolved is `not_evidenced`, and every quote that failed lands in
+`dropped` and in the hallucination rate. The one thing a model could assert
+unverifiably, it is never given the chance to say. `not_evidenced` is also the
+honest label: the system cannot tell "the candidate lacks it" from "the resume does
+not mention it".
+
+- [x] 1. **Jobs and requirements as rows, with CRUD** (2026-08-08).
+  `app/models/matching.py`: a `Job` owned by a candidate, and `JobRequirement`
+  carrying `kind`, `label`, optional `detail`, `must_have` and `weight` — the two
+  fields ranking later reads, with `must_have` a hard gate rather than a heavy
+  weight. Requirement routes are nested under their job (`app/api/routes/jobs.py`)
+  so ownership is settled in one place and a requirement is never reachable by
+  guessing its id; every lookup answers **404, not 403**, matching `_owned_resume`.
+  Capped at `MAX_REQUIREMENTS_PER_JOB=30` because the whole list travels in one
+  judging prompt. Migration `0004` round-trips on real Postgres with no drift.
+  Pinned by `tests/test_jobs.py` (25 cases; suite 270 → 295).
+  Two things the verification caught that no test would have: the `ck` naming
+  convention in `models/base.py` is the only one that interpolates
+  `%(constraint_name)s`, so a check constraint spelled out in full in a migration
+  gets wrapped twice and `alembic check` reports drift forever; and
+  `RequirementKind` persists as enum **names** (`SKILL`), like `ResumeStatus`
+  before it, so the migration declares the upper-case forms rather than repeating
+  `0001`'s misleading value list.
+- [ ] 2. **Requirement-level judging** — `app/pipeline/judge.py` and
+  `app/schemas/judgment.py`, written as twins of `extract.py` / `extraction.py`.
+  Reuses `EvidenceResolver` unchanged, and reuses `EvidenceRef`, `DroppedClaim` and
+  `EvidenceStats` from `schemas/profile.py` wholesale, so the hallucination metric
+  covers judging for free. One model call per screening, carrying the whole
+  `document_text`. Needs `resumes.page_spans` (migration `0005`) and — not
+  optional — `app/llm/fake.py` taught to answer `RawJudgment`, or the suite and CI
+  would need an API key.
+- [ ] 3. **Screening as a row, on the background worker** — `screenings` with the
+  same four job-state columns `Resume` carries, its result JSON, its stats lifted
+  into real columns, and a `requirements_hash` so a result whose requirements have
+  since changed reports itself stale. Extracts a pure `decide_retry` out of
+  `app/jobs.py` so both job types share one policy; `run_resume_job` must not
+  change by a byte, and `tests/test_retry.py` is the guard.
+- [ ] 4. **Ranking across candidates** — a pure function, no model. Must-haves are a
+  hard gate; within a tier, weighted share of requirements met; deterministic
+  tie-breaks so a list never reshuffles. The rationale returned is the citation
+  list, not the score.
+- [ ] 5. **A thin web UI** — job authoring, a screening's verdicts, and citation
+  highlighting through the existing `DocumentPane`. The browser walkthrough is part
+  of this slice, not a follow-up.
+- [ ] 6. **Retrieval, the pre-filter** — a `Retriever` seam shaped like `Storage`
+  and `OCREngine`. `LexicalRetriever` is the default and runs everywhere;
+  `PgVectorRetriever` is opt-in and lands only with a price table and a live
+  verification run in `docs/llm-providers.md`. It decides *which resumes are worth
+  paying to judge*, not what evidence a screening sees.
 
 ## M4 — backend depth (draft)
 
