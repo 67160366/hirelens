@@ -22,6 +22,8 @@ the resolve-and-tally loop both modules run.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 
@@ -136,6 +138,30 @@ class _JudgmentVerifier:
             dropped=self._evidence.dropped,
             stats=self._evidence.stats(attempts=attempts),
         )
+
+
+def requirements_fingerprint(requirements: list[RequirementSpec]) -> str:
+    """Identify what the judge was shown, so a stored result can report itself stale.
+
+    Covers exactly the fields that reach the prompt — `kind`, `label`, `detail` —
+    **and their order**, because the model is asked to refer back to requirements by
+    position and a reorder is therefore a different question.
+
+    Excludes `must_have` and `weight` on purpose. Neither is in the prompt, so
+    neither can change a verdict; they are ranking's inputs. Folding them in would
+    invalidate a screening that is still perfectly correct every time someone
+    adjusts a weight, and re-running it would spend a model call to reproduce the
+    same answer.
+
+    Ids are excluded too: deleting a requirement and typing the identical one back
+    asks the same question of the same document.
+    """
+    payload = json.dumps(
+        [[item.kind, item.label, item.detail or ""] for item in requirements],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _is_better(candidate: Judgment, incumbent: Judgment) -> bool:

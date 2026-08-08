@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, jobs, resumes
+from app.api.routes import auth, jobs, resumes, screenings
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.jobs import JobContext
@@ -83,6 +83,9 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(resumes.router)
     app.include_router(jobs.router)
+    # No prefix of its own: creation is nested under /jobs and reads are flat under
+    # /screenings, so the paths are spelled out on the routes themselves.
+    app.include_router(screenings.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:

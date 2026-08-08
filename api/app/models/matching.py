@@ -1,4 +1,4 @@
-"""Tables for M3: a job posting, broken into the requirements it is judged by.
+"""Tables for M3: a job posting, the requirements it is judged by, and a screening.
 
 A requirement is an **input** to the system, not a claim about a person. Nothing
 here is model-generated, so nothing here needs evidence — the guardrail applies to
@@ -15,11 +15,14 @@ without changing the shape of these tables.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     Enum,
     Float,
     ForeignKey,
@@ -27,11 +30,12 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, Timestamps, UUIDPrimaryKey
-from app.models.core import Candidate
+from app.models.base import JSON_VARIANT, Base, Timestamps, UUIDPrimaryKey
+from app.models.core import Candidate, Resume
 
 
 class RequirementKind(StrEnum):
@@ -114,3 +118,110 @@ class JobRequirement(UUIDPrimaryKey, Timestamps, Base):
     """Relative importance among the requirements that are not gates."""
 
     job: Mapped[Job] = relationship(back_populates="requirements")
+
+
+class ScreeningStatus(StrEnum):
+    """Deliberately *not* `ResumeStatus`, though they rhyme.
+
+    A screening is never `parsed` or `extracted` — those describe a document, and
+    this describes a comparison. The shared part is the retry policy, and that is
+    shared as a function (`jobs.decide_retry`) rather than by making two tables wear
+    one vocabulary.
+    """
+
+    PENDING = "pending"
+    """Queued, or waiting out a retry backoff."""
+
+    PROCESSING = "processing"
+    """A worker has claimed it."""
+
+    COMPLETED = "completed"
+    """A judgment exists. Terminal — see `is_stale` for when it stops being current."""
+
+    FAILED = "failed"
+    """This screening cannot be produced: the resume has no text to judge, or the
+    provider is misconfigured. Retrying changes nothing unless something else does."""
+
+    DEAD_LETTERED = "dead_lettered"
+    """Transient failures used up the budget. Worth replaying."""
+
+
+class Screening(UUIDPrimaryKey, Timestamps, Base):
+    """One resume judged against one job's requirements.
+
+    A first-class row rather than a computed view, because producing it costs a
+    model call: it has to be resumable, retryable and inspectable for the same
+    reasons `Resume` does, and it carries the same four job-state columns so
+    `jobs.decide_retry` can drive both.
+    """
+
+    __tablename__ = "screenings"
+    __table_args__ = (
+        # One screening per pair. Re-screening after the requirements change
+        # rewrites this row rather than growing a history nobody reads yet — the
+        # same call `Resume` makes for a re-uploaded file.
+        UniqueConstraint("job_id", "resume_id", name="uq_screenings_job_resume"),
+        Index("ix_screenings_status", "status"),
+    )
+
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    resume_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("resumes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    status: Mapped[ScreeningStatus] = mapped_column(
+        Enum(ScreeningStatus, native_enum=False, length=20),
+        default=ScreeningStatus.PENDING,
+        nullable=False,
+    )
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Total claims by a worker. Never reset — it is also what makes each dispatch's
+    queue job id unique, so a replay is not refused as a duplicate."""
+
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """The retry budget. Cleared by a success or a manual retry."""
+
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    requirements_hash: Mapped[str | None] = mapped_column(String(64))
+    """Fingerprint of what the judge was actually shown — kind, label, detail and
+    their order (`pipeline.judge.requirements_fingerprint`).
+
+    Deliberately excludes `must_have` and `weight`: neither reaches the judge, so
+    changing them cannot change a verdict. They are ranking's inputs, and changing
+    one should stale a *ranking*, not a screening that is still correct."""
+
+    prompt_version: Mapped[str | None] = mapped_column(String(60))
+    """Which judging prompt produced this. Kept beside the hash rather than folded
+    into it so "the requirements changed" and "we changed the prompt" stay
+    distinguishable — they call for different conversations."""
+
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT)
+    """A serialized `Judgment`, dropped claims included."""
+
+    # Lifted out of the JSON so the metrics query is a GROUP BY, not a JSON walk —
+    # the same call `ExtractedProfileRow` makes.
+    requirements_met: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requirements_total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claims_verified: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claims_dropped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    hallucination_rate: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    job: Mapped[Job] = relationship()
+    resume: Mapped[Resume] = relationship()
+
+    def is_stale(self, *, requirements_hash: str, prompt_version: str) -> bool:
+        """Whether this result answers a question that is no longer being asked.
+
+        A completed screening whose job has since been edited is not wrong — it was
+        true of the requirements it saw — so it is reported as stale rather than
+        deleted or silently recomputed. Anything not yet completed is never stale:
+        it has no answer to be out of date.
+        """
+        if self.status is not ScreeningStatus.COMPLETED:
+            return False
+        return self.requirements_hash != requirements_hash or self.prompt_version != prompt_version

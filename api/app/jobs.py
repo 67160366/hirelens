@@ -23,16 +23,20 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from enum import StrEnum
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.llm.base import LLMConfigError, LLMError, StructuredExtractor
-from app.models import Resume, ResumeStatus
+from app.models import Job, Resume, ResumeStatus, Screening, ScreeningStatus
 from app.models.base import utcnow
 from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
 from app.pipeline.parse import ParseError
-from app.services import resume_service
+from app.services import resume_service, screening_service
+from app.services.screening_service import NotScreenable
 from app.storage import ObjectNotFoundError, Storage
 
 logger = logging.getLogger(__name__)
@@ -84,7 +88,8 @@ def is_retryable(error: BaseException) -> bool:
     # Tesseract will still be missing in five seconds, and `POST /retry` is the
     # path once the configuration is fixed.
     return not isinstance(
-        error, ParseError | ObjectNotFoundError | LLMConfigError | OCRUnavailableError
+        error,
+        ParseError | ObjectNotFoundError | LLMConfigError | OCRUnavailableError | NotScreenable,
     )
 
 
@@ -100,8 +105,9 @@ def backoff_seconds(settings: Settings, *, failures: int) -> float:
 # storage key (candidate id + content hash), and the job already records a
 # friendly reason before raising it. `OCRUnavailableError` is: it names a binary
 # and a setting, never document text, and quoting it is what makes the failure
-# actionable instead of a bare type name.
-_SAFE_TO_QUOTE = (LLMError, ParseError, OCRUnavailableError)
+# actionable instead of a bare type name. `NotScreenable` is too — its message is
+# an instruction to the user ("process the resume first"), written right here.
+_SAFE_TO_QUOTE = (LLMError, ParseError, OCRUnavailableError, NotScreenable)
 
 
 def _describe(error: Exception) -> str:
@@ -109,6 +115,66 @@ def _describe(error: Exception) -> str:
     if isinstance(error, _SAFE_TO_QUOTE):
         return f"{type(error).__name__}: {error}"
     return type(error).__name__
+
+
+class RetryVerdict(StrEnum):
+    """What the policy decided, in terms no particular row understands.
+
+    Deliberately not a status. `Resume` and `Screening` keep their own status enums
+    — a screening is never `parsed` or `extracted` — so the shared policy answers in
+    intents and each job maps the intent onto its own vocabulary. Sharing the enum
+    instead would have meant one table's states leaking into the other's.
+    """
+
+    PERMANENT = "permanent"
+    """Stop. Failing again would fail the same way."""
+
+    RETRY = "retry"
+    """Go back to pending and try again after the delay."""
+
+    EXHAUSTED = "exhausted"
+    """The budget is spent. Dead-letter it so a human can replay it."""
+
+
+@dataclass(frozen=True, slots=True)
+class RetryDecision:
+    verdict: RetryVerdict
+    reason: str
+    """PII-safe, and already worded for the row's `failure_reason`. For
+    `PERMANENT` it is the bare description, because the caller may already hold a
+    better one written by the code that knew what went wrong."""
+
+    outcome: JobOutcome
+
+
+def decide_retry(error: Exception, *, failed_attempts: int, settings: Settings) -> RetryDecision:
+    """The whole retry policy, as a pure function.
+
+    Extracted so screening jobs share it rather than copy it. It touches no session
+    and no row: give it an error and the count of consecutive failures *including*
+    this one, and it answers what should happen. That is what lets the policy be
+    tested exhaustively without a database, and what makes a second job type
+    inherit it without a second chance to get backoff or dead-lettering subtly
+    wrong.
+    """
+    reason = _describe(error)
+
+    if not is_retryable(error):
+        return RetryDecision(verdict=RetryVerdict.PERMANENT, reason=reason, outcome=DONE)
+
+    if failed_attempts >= settings.job_max_attempts:
+        return RetryDecision(
+            verdict=RetryVerdict.EXHAUSTED,
+            reason=f"Gave up after {failed_attempts} attempts. Last error — {reason}",
+            outcome=DONE,
+        )
+
+    delay = backoff_seconds(settings, failures=failed_attempts)
+    return RetryDecision(
+        verdict=RetryVerdict.RETRY,
+        reason=f"Attempt {failed_attempts} failed, retrying — {reason}",
+        outcome=JobOutcome(retry_after_seconds=delay),
+    )
 
 
 async def run_resume_job(context: JobContext, resume_id: uuid.UUID) -> JobOutcome:
@@ -186,45 +252,43 @@ async def _claim(session: AsyncSession, resume_id: uuid.UUID) -> Resume | None:
 async def _record_failure(
     session: AsyncSession, resume: Resume, error: Exception, settings: Settings
 ) -> JobOutcome:
-    """Decide retry, dead-letter or permanent failure, and commit the decision."""
+    """Apply `decide_retry` to a resume row and commit the decision."""
     resume.failed_attempts += 1
-    reason = _describe(error)
+    decision = decide_retry(error, failed_attempts=resume.failed_attempts, settings=settings)
 
-    if not is_retryable(error):
-        # `process_resume` already wrote a reason for the failures it knows how to
-        # describe; only fill one in when it did not.
-        resume.status = ResumeStatus.FAILED
-        resume.failure_reason = resume.failure_reason or reason
-        await session.commit()
-        logger.warning("resume %s: failed permanently (%s)", resume.id, type(error).__name__)
-        return DONE
+    match decision.verdict:
+        case RetryVerdict.PERMANENT:
+            # `process_resume` already wrote a reason for the failures it knows how
+            # to describe; only fill one in when it did not.
+            resume.status = ResumeStatus.FAILED
+            resume.failure_reason = resume.failure_reason or decision.reason
+            await session.commit()
+            logger.warning("resume %s: failed permanently (%s)", resume.id, type(error).__name__)
 
-    if resume.failed_attempts >= settings.job_max_attempts:
-        resume.status = ResumeStatus.DEAD_LETTERED
-        resume.failure_reason = (
-            f"Gave up after {resume.failed_attempts} attempts. Last error — {reason}"
-        )
-        await session.commit()
-        logger.error(
-            "resume %s: dead-lettered after %d attempts (%s)",
-            resume.id,
-            resume.failed_attempts,
-            type(error).__name__,
-        )
-        return DONE
+        case RetryVerdict.EXHAUSTED:
+            resume.status = ResumeStatus.DEAD_LETTERED
+            resume.failure_reason = decision.reason
+            await session.commit()
+            logger.error(
+                "resume %s: dead-lettered after %d attempts (%s)",
+                resume.id,
+                resume.failed_attempts,
+                type(error).__name__,
+            )
 
-    delay = backoff_seconds(settings, failures=resume.failed_attempts)
-    resume.status = ResumeStatus.PENDING
-    resume.failure_reason = f"Attempt {resume.failed_attempts} failed, retrying — {reason}"
-    await session.commit()
-    logger.warning(
-        "resume %s: attempt %d failed (%s), retrying in %.0fs",
-        resume.id,
-        resume.failed_attempts,
-        type(error).__name__,
-        delay,
-    )
-    return JobOutcome(retry_after_seconds=delay)
+        case RetryVerdict.RETRY:
+            resume.status = ResumeStatus.PENDING
+            resume.failure_reason = decision.reason
+            await session.commit()
+            logger.warning(
+                "resume %s: attempt %d failed (%s), retrying in %.0fs",
+                resume.id,
+                resume.failed_attempts,
+                type(error).__name__,
+                decision.outcome.retry_after_seconds or 0.0,
+            )
+
+    return decision.outcome
 
 
 async def _record_failure_on_a_fresh_session(
@@ -239,3 +303,129 @@ async def _record_failure_on_a_fresh_session(
         if resume is None:
             return DONE
         return await _record_failure(session, resume, error, context.settings)
+
+
+# --------------------------------------------------------------------------- #
+# Screening: the second job type. Same policy, different row.
+# --------------------------------------------------------------------------- #
+
+_SCREENING_NOT_OURS_TO_RUN = frozenset({ScreeningStatus.PROCESSING})
+"""Only `processing`, unlike a resume's set.
+
+`completed` is missing on purpose. A resume that is `extracted` refuses to run
+again because redoing it would bill a second call for a profile we already have; a
+screening's requirements can *change*, and re-running it against the new ones is
+the whole point. `screening_service.request_screening` is what decides whether
+there is anything new to ask — by then the work has been queued deliberately.
+"""
+
+
+async def run_screening_job(context: JobContext, screening_id: uuid.UUID) -> JobOutcome:
+    """Judge one resume against one job, committing the outcome and the job state."""
+    async with context.sessionmaker() as session:
+        claimed = await _claim_screening(session, screening_id)
+        if claimed is None:
+            return DONE
+        screening, job, resume = claimed
+
+        try:
+            await screening_service.process_screening(
+                session,
+                screening=screening,
+                job=job,
+                resume=resume,
+                extractor=context.extractor,
+                settings=context.settings,
+            )
+
+            screening.failed_attempts = 0
+            # Inside the try for the same reason `run_resume_job` does it: a commit
+            # can fail, and a persistence failure must go through the policy rather
+            # than escape and strand the row at `processing`.
+            await session.commit()
+        except (LLMError, NotScreenable) as exc:
+            # Raised by pipeline code, never by the database, so the session is
+            # still usable and the failure commits on it.
+            return await _record_screening_failure(session, screening, exc, context.settings)
+        except Exception as exc:
+            await session.rollback()
+            return await _record_screening_failure_on_a_fresh_session(context, screening_id, exc)
+
+        return DONE
+
+
+async def _claim_screening(
+    session: AsyncSession, screening_id: uuid.UUID
+) -> tuple[Screening, Job, Resume] | None:
+    """Mark the screening as ours and load what judging needs, or explain the skip.
+
+    The job comes back with its requirements eagerly loaded: rendering them happens
+    after the claim commits, and a lazy load on an async session at that point is an
+    error rather than a query — the shape that produced slice 1's `MissingGreenlet`.
+    """
+    screening = await session.get(Screening, screening_id, with_for_update=True)
+    if screening is None:
+        logger.warning("screening %s: queued but no longer exists", screening_id)
+        return None
+
+    if screening.status in _SCREENING_NOT_OURS_TO_RUN:
+        logger.info("screening %s: already %s, skipping", screening_id, screening.status)
+        await session.rollback()
+        return None
+
+    job = (
+        await session.execute(
+            select(Job).where(Job.id == screening.job_id).options(selectinload(Job.requirements))
+        )
+    ).scalar_one_or_none()
+    resume = await session.get(Resume, screening.resume_id)
+
+    if job is None or resume is None:
+        # Deleted between request and pickup. Nothing to do, and nothing wrong.
+        logger.warning("screening %s: its job or resume is gone", screening_id)
+        await session.rollback()
+        return None
+
+    screening.status = ScreeningStatus.PROCESSING
+    screening.attempts += 1
+    screening.last_attempt_at = utcnow()
+    await session.commit()
+    return screening, job, resume
+
+
+async def _record_screening_failure(
+    session: AsyncSession, screening: Screening, error: Exception, settings: Settings
+) -> JobOutcome:
+    """Apply `decide_retry` to a screening row and commit the decision."""
+    screening.failed_attempts += 1
+    decision = decide_retry(error, failed_attempts=screening.failed_attempts, settings=settings)
+
+    match decision.verdict:
+        case RetryVerdict.PERMANENT:
+            screening.status = ScreeningStatus.FAILED
+        case RetryVerdict.EXHAUSTED:
+            screening.status = ScreeningStatus.DEAD_LETTERED
+        case RetryVerdict.RETRY:
+            screening.status = ScreeningStatus.PENDING
+
+    screening.failure_reason = decision.reason
+    await session.commit()
+    logger.warning(
+        "screening %s: attempt %d %s (%s)",
+        screening.id,
+        screening.failed_attempts,
+        decision.verdict,
+        type(error).__name__,
+    )
+    return decision.outcome
+
+
+async def _record_screening_failure_on_a_fresh_session(
+    context: JobContext, screening_id: uuid.UUID, error: Exception
+) -> JobOutcome:
+    logger.error("screening %s: unexpected job failure (%s)", screening_id, type(error).__name__)
+    async with context.sessionmaker() as session:
+        screening = await session.get(Screening, screening_id)
+        if screening is None:
+            return DONE
+        return await _record_screening_failure(session, screening, error, context.settings)

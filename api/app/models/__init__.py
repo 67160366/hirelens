@@ -12,7 +12,13 @@ from app.models.core import (
     Resume,
     ResumeStatus,
 )
-from app.models.matching import Job, JobRequirement, RequirementKind
+from app.models.matching import (
+    Job,
+    JobRequirement,
+    RequirementKind,
+    Screening,
+    ScreeningStatus,
+)
 
 __all__ = [
     "Base",
@@ -24,4 +30,6 @@ __all__ = [
     "RequirementKind",
     "Resume",
     "ResumeStatus",
+    "Screening",
+    "ScreeningStatus",
 ]

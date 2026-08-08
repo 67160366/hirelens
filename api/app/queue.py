@@ -19,12 +19,13 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
 from app.config import QueueBackend, Settings
-from app.jobs import JobContext, run_resume_job
+from app.jobs import JobContext, run_resume_job, run_screening_job
 
 logger = logging.getLogger(__name__)
 
 PROCESS_RESUME_TASK = "process_resume"
-"""The name the worker registers the job under. Shared so a rename cannot leave
+RUN_SCREENING_TASK = "run_screening"
+"""The names the worker registers the jobs under. Shared so a rename cannot leave
 the enqueuer and the worker silently disagreeing."""
 
 
@@ -41,6 +42,10 @@ class JobQueue(ABC):
         the next. Passing the same one twice is how a duplicate upload is
         recognised; passing a higher one is how a manual retry gets through.
         """
+
+    @abstractmethod
+    async def enqueue_screening(self, screening_id: uuid.UUID, *, attempt: int = 0) -> None:
+        """Arrange for `screening_id` to be judged. `attempt` behaves as above."""
 
     async def aclose(self) -> None:  # noqa: B027 — nothing to close by default
         """Release any connection held. Safe to call more than once."""
@@ -71,6 +76,15 @@ class InlineQueue(JobQueue):
                 resume_id,
             )
 
+    async def enqueue_screening(self, screening_id: uuid.UUID, *, attempt: int = 0) -> None:
+        outcome = await run_screening_job(self._context, screening_id)
+        if outcome.should_retry:
+            logger.warning(
+                "screening %s: needs a retry, but the inline queue cannot defer work. "
+                "It stays pending; ask for it again, or run the ARQ worker.",
+                screening_id,
+            )
+
 
 class ArqQueue(JobQueue):
     """Hand the job to an ARQ worker over Redis."""
@@ -95,6 +109,18 @@ class ArqQueue(JobQueue):
             logger.info("resume %s: already queued, not enqueued again", resume_id)
             return
         logger.info("resume %s: queued as job %s", resume_id, job.job_id)
+
+    async def enqueue_screening(self, screening_id: uuid.UUID, *, attempt: int = 0) -> None:
+        # Same idempotence trick as above, and the attempt counter is in the id for
+        # the same reason: arq's refusal of a known id outlives the job, so without
+        # it a re-screening would be dropped as a duplicate of the run it replaces.
+        job = await self._pool.enqueue_job(
+            RUN_SCREENING_TASK, str(screening_id), _job_id=f"screening:{screening_id}:{attempt}"
+        )
+        if job is None:
+            logger.info("screening %s: already queued, not enqueued again", screening_id)
+            return
+        logger.info("screening %s: queued as job %s", screening_id, job.job_id)
 
     async def aclose(self) -> None:
         await self._pool.aclose()

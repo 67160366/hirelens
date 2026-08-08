@@ -24,11 +24,11 @@ from arq.connections import RedisSettings
 
 from app.config import get_settings
 from app.db import build_engine, build_sessionmaker
-from app.jobs import JobContext, run_resume_job
+from app.jobs import JobContext, run_resume_job, run_screening_job
 from app.llm.registry import build_extractor
 from app.logging_config import configure_logging
 from app.pipeline.ocr import build_ocr_engine
-from app.queue import PROCESS_RESUME_TASK
+from app.queue import PROCESS_RESUME_TASK, RUN_SCREENING_TASK
 from app.storage import build_storage
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,13 @@ async def process_resume(ctx: dict[str, Any], resume_id: str) -> None:
     if outcome.retry_after_seconds is not None:
         # The resume row already records the failure and is back at `pending`;
         # this only asks arq to redeliver the job after the backoff.
+        raise Retry(defer=outcome.retry_after_seconds)
+
+
+async def run_screening(ctx: dict[str, Any], screening_id: str) -> None:
+    """The judging task. Same adapter shape as `process_resume` above."""
+    outcome = await run_screening_job(ctx[CONTEXT_KEY], uuid.UUID(screening_id))
+    if outcome.retry_after_seconds is not None:
         raise Retry(defer=outcome.retry_after_seconds)
 
 
@@ -86,7 +93,12 @@ class WorkerSettings:
             process_resume,
             name=PROCESS_RESUME_TASK,
             max_tries=get_settings().job_max_attempts + 2,
-        )
+        ),
+        func(
+            run_screening,
+            name=RUN_SCREENING_TASK,
+            max_tries=get_settings().job_max_attempts + 2,
+        ),
     ]
     on_startup = staticmethod(on_startup)
     on_shutdown = staticmethod(on_shutdown)

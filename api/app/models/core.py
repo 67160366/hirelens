@@ -171,6 +171,16 @@ class LLMCallLog(UUIDPrimaryKey, Timestamps, Base):
     resume_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("resumes.id", ondelete="CASCADE"), index=True
     )
+
+    screening_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("screenings.id", ondelete="CASCADE"), index=True
+    )
+    """Set instead of `resume_id` for a judging call. Both are nullable and exactly
+    one is filled: a call belongs to the piece of work that paid for it, and a
+    screening is not a resume. Without this a judging call would either hang off the
+    resume — making "what did extracting this document cost" wrong — or go
+    unrecorded, and an unrecorded call is a cost figure that quietly lies."""
+
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     model: Mapped[str] = mapped_column(String(120), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(60), nullable=False)

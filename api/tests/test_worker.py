@@ -33,9 +33,13 @@ class RecordingQueue(JobQueue):
 
     def __init__(self) -> None:
         self.dispatches: list[tuple[uuid.UUID, int]] = []
+        self.screenings: list[tuple[uuid.UUID, int]] = []
 
     async def enqueue_resume(self, resume_id: uuid.UUID, *, attempt: int = 0) -> None:
         self.dispatches.append((resume_id, attempt))
+
+    async def enqueue_screening(self, screening_id: uuid.UUID, *, attempt: int = 0) -> None:
+        self.screenings.append((screening_id, attempt))
 
     @property
     def enqueued(self) -> list[uuid.UUID]:
