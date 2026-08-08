@@ -12,7 +12,7 @@ should review them before anyone treats the details as commitments.
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | Parse (PDF, offsets, Thai), extract, verify evidence, retry, auth, upload API, web UI | ✅ done (2026-07-30) |
-| M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ▶ in progress |
+| M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
 | M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | draft |
 | M4 | Application state machine, idempotency, race conditions, RBAC, PDPA | draft |
 | M5 | Full recruiter UI, observability, deploy | draft |
@@ -119,11 +119,71 @@ should review them before anyone treats the details as commitments.
   relabelled file is still refused before it is stored or billed. Pinned by
   `tests/test_docx.py`; verified end to end with `python -m app.cli`: 7/7 verified,
   every match exact, Thai and table cells cited.
-- [ ] 6. Two-column fix via bbox column detection. The strict xfail in
-  `api/tests/test_parse.py` defines "done".
-- [ ] 7. MinIO storage backend. `build_storage` has the `MINIO` branch stubbed.
+- [x] 6. **Two-column fix via bbox column detection** (2026-08-08).
+  `app/pipeline/layout.py` does a bounded XY-cut: cut horizontally at wide row gaps
+  *first* — a full-width header line spans the gutter and hides it from any profile
+  taken over the whole page, which is why the obvious column-profile approach fails
+  on almost every real two-column resume — then find a gutter inside each band, then
+  re-merge adjacent two-column bands that share one so the body is not read left,
+  right, left, right. Regions are extracted by cropping and letting pdfplumber
+  assemble the text; rebuilding lines from word boxes would mean re-deciding where
+  spaces go, and Thai has no spaces between words. The load-bearing property is that
+  `detect_reading_order` returns `None` for anything it is not confident about, so
+  the pre-M2 code path runs and a single-column document parses **byte-identically**
+  — verified across every fixture, with only the two two-column documents reordered.
+  Four guards produce that `None`; the fourth (a gutter must be narrower than the
+  text beside it) came from the fixture written to catch the realistic false
+  positive, a resume with its dates right-aligned at the margin. The strict xfail
+  started passing and failed the suite, which is what it was for: the paired
+  characterization test is deleted and the marker is off, the assertion stays.
+  Verified live against Gemini — 7/7 verified on attempt 1, where the first live run
+  needed the re-ask loop for this fixture, and 8/8 on the new header fixture.
+- [x] 7. **MinIO storage backend** (2026-08-08). `MinioStorage` sits beside
+  `LocalStorage` and nothing above `app/storage.py` can tell them apart. The part
+  that matters is the error mapping: `jobs.is_retryable` treats
+  `ObjectNotFoundError` as *permanent*, so only a 404 may map to it and every other
+  fault — a refused connection, a timeout, a 500 — must stay a plain `StorageError`
+  and be retried. Backwards, a thirty-second MinIO restart would permanently fail
+  every resume uploaded during it, so that rule is pinned on every run against a stub
+  client rather than only where a server is up. boto3 (so the same adapter points at
+  real S3 later) in `asyncio.to_thread`, the move `process_resume` already makes for
+  parsing. A missing bucket is refused at startup like `build_ocr_engine`'s
+  language-pack probe; compose creates it in a one-shot service shaped like
+  `migrate`, so `build_storage` never creates one and a typo in `MINIO_BUCKET` fails
+  loudly. `tests/storage_contract.py` is written once and run twice — against
+  `LocalStorage` on every `pytest -q`, against real MinIO on `TEST_MINIO_ENDPOINT`.
+  Verified live in the containers with real Gemini: `pending` in 22 ms, `extracted`
+  in 10.2 s, 10/10 verified with every span slicing back out, the blob in the bucket,
+  nothing written to the uploads volume, and a re-upload deduped to the same row
+  without billing a second extraction.
 - [x] 8. Evidence viewer, text-layer only (`web/components/DocumentPane.tsx`).
-  The true pdf.js overlay needs bbox geometry — do it with #6.
+  The true pdf.js overlay needs bbox geometry. #6 now extracts that geometry per
+  page, so the remaining work is an endpoint serving the original file and a pdf.js
+  canvas — it is a frontend slice now, not a parser one. Left for M5's recruiter UI.
+
+## M2 follow-ups — the open questions M2 left behind (2026-08-08)
+
+- [x] **OCR confidence gating.** The hole M2 #4 left: a badly degraded scan does not
+  fail, it succeeds with nonsense — at 6px blur the page still clears
+  `MIN_CHARS_PER_TEXT_PAGE` while "Somchai Jaidee" reads "Sore hector". A character
+  count cannot tell text from noise; Tesseract's per-word confidence can.
+  `OCR_MIN_CONFIDENCE` drops a page below the bar into the path a page that
+  recognized nothing already takes, so the user gets "the scan may be too low
+  quality" instead of a confident profile of the wrong words. The threshold is
+  measured, not chosen: `tests/tools/ocr_degradation.py` is committed this time, and
+  every degradation that still yielded the fixture's content scored 90.2+ while every
+  one that yielded none scored 47.4 or less. The default 75 sits low in that gap
+  because the fixtures are clean synthetic renders and a real photograph will score
+  lower while still being readable. Costs a second Tesseract call per accepted page,
+  because TSV tokenizes Thai per glyph and so cannot supply the text.
+- [x] **A deliberately malformed PDF fixture**, open since 2026-08-07.
+  `resume_broken_tounicode.pdf` reproduces the §11 incident with a real file: a
+  well-formed ToUnicode map that says several glyphs mean U+0000. Written by hand,
+  because reportlab only ever writes correct maps — and because *removing* the map,
+  the obvious approach, produces `(cid:N)` placeholders instead, which is a different
+  defect.
+- [ ] **The visibility timeout** for a worker that dies mid-job, the last §11
+  follow-up. Still scheduled with M5's observability work.
 
 ## M3 — matching engine (draft)
 

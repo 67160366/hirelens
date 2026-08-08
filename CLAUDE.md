@@ -2,8 +2,8 @@
 
 HireLens — resume screening where every claim the system makes cites the exact text
 it came from. FastAPI (`api/`) + Next.js (`web/`). Thai and English resumes.
-Current milestone: **M2** — the authoritative per-item status is the table in
-`docs/PLAN.md`. Orientation for a new session: this file, then `docs/HANDOFF.md` §3
+Current milestone: **M3** (M2 closed 2026-08-08) — the authoritative per-item
+status is the table in `docs/PLAN.md`. Orientation for a new session: this file, then `docs/HANDOFF.md` §3
 (reading order), then `docs/PLAN.md`.
 
 ## The one idea — never weaken it
@@ -63,6 +63,8 @@ TEST_DATABASE_URL=postgresql+asyncpg://hirelens:hirelens@localhost:5432/hirelens
   pytest tests/test_postgres.py -q          # opt-in: the JSONB path on real Postgres
 OCR_TESSERACT_CMD=C:\Users\golfv\tesseract.exe \
   pytest tests/test_ocr_tesseract.py -q     # opt-in: the real Tesseract, including Thai
+TEST_MINIO_ENDPOINT=http://localhost:9000 \
+  pytest tests/test_minio.py -q             # opt-in: the storage contract on real MinIO
 ruff check app tests migrations             # lint   — enforced in CI
 ruff format app tests migrations            # format — enforced in CI (--check)
 mypy app                                    # strict — enforced in CI
@@ -105,7 +107,8 @@ and the whole retry policy. Annotated tree of everything else: `docs/HANDOFF.md`
 
 Environment quirks: dev runs on Postgres + Redis from `docker compose up -d` +
 local storage (`var/uploads`); SQLite (`api/var/dev.db`) is a commented fallback
-in `.env`. MinIO is up but unused until M2 #7. The test suite runs on its own
+in `.env`. `STORAGE_BACKEND=minio` switches to the MinIO in compose, which creates
+its bucket in a one-shot service — a missing bucket is refused at startup. The test suite runs on its own
 in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server. `.env`
 selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating` demos
 the dropped-claims path.
@@ -116,7 +119,10 @@ here, `OCR_ENGINE=tesseract` plus `OCR_COMMAND=C:\Users\golfv\tesseract.exe`: th
 machine's Tesseract is a portable install and is **not on PATH**, so the bare name
 will not resolve. A missing language pack is refused at startup rather than
 returning noise for Thai, so `OCR_LANGUAGES` must name packs that are installed
-(`eng`, `tha`, `osd` are).
+(`eng`, `tha`, `osd` are). A page whose mean per-word confidence falls below
+`OCR_MIN_CONFIDENCE` (75) is refused rather than reported — a blurred scan yields
+plenty of characters, they are simply the wrong ones. That number came from
+`api/tests/tools/ocr_degradation.py`; change it only with new measurements.
 
 Upload stores the file, queues the work and answers `pending`; clients follow
 `GET /resumes/{id}/events` until the status is neither `pending` nor `processing`,

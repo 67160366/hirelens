@@ -6,7 +6,97 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-08 (latest) — the whole stack runs in containers
+## 2026-08-08 (latest) — M2 is closed
+
+Six commits, all local — **not pushed yet**. The two remaining M2 items shipped
+(#6 two-column, #7 MinIO) and three items came off the watch list with them.
+
+| | Commit |
+|---|---|
+| `cc4721c` | Bump the CI actions off Node 20 |
+| `5b6f8c8` | Read a two-column page one column at a time |
+| `cbad6ad` | Store uploads in MinIO behind the same interface |
+| `6b8194b` | Reject a scan Tesseract could not read with confidence |
+| `023468a` | Add a PDF that is broken on purpose |
+| *(this one)* | Close M2: refresh the handoff and the plan |
+
+Suite **214 → 270 passing**, 25 skipped (4 Postgres + 12 Tesseract + 9 MinIO, all
+opt-in), and **no xfail left** — the two-column one did its job.
+
+### Three findings that changed the design
+
+Each of these came from measuring something before building on it, and each one
+would have produced a plausible-looking wrong implementation if skipped.
+
+**1. A column profile over the whole page finds nothing on a real two-column
+resume.** The committed fixture has no header, so a projection profile splits it
+cleanly and the naive approach looks correct. Add the full-width header every real
+two-column resume has, and the header line spans the gutter and hides it. The fix is
+to cut *horizontally* first — bands — and look for a gutter inside each one. This is
+why the new `resume_two_column_header.pdf` exists: the old fixture could not have
+caught it.
+
+**2. Tesseract's TSV output destroys Thai.** The obvious way to add a confidence gate
+is one invocation with `tsv`, which gives per-word confidence *and* the text. But TSV
+tokenizes Thai per glyph, so `ทักษะ` comes back as six "words" and a line rebuilt from
+them reads `ท ั ก ษ ะ` — spaces between a character and its tone mark, in the string
+that becomes `document_text` with every evidence offset pointing into it. So the gate
+costs a second invocation. Measured before writing the code, not discovered after.
+
+**3. Removing `/ToUnicode` does not reproduce the §11 NUL bug.** pdfminer falls back
+to `(cid:1)(cid:2)...` placeholders — a different defect. The damage has to be *in*
+the map: a well-formed CMap that says a glyph means U+0000. That is why the fixture is
+hand-written rather than made with reportlab, which only ever writes correct maps.
+
+### The one number worth remembering
+
+`OCR_MIN_CONFIDENCE=75`. Degrading the scanned fixture sixteen ways: everything that
+still yielded its content scored **90.2 or better**, everything that yielded none
+scored **47.4 or worse**. The full table is in `HANDOFF.md` §7, and
+`tests/tools/ocr_degradation.py` is committed this time so it can be re-run rather
+than re-derived. It is tuned on one clean synthetic render, which is its main
+weakness — a real photograph will score lower while still being readable.
+
+### The property most worth not losing
+
+Column detection returns `None` for anything it is not confident about, and `None`
+is the *old code path*. Verified by parsing every fixture twice, with detection on
+and forced off: byte-identical everywhere except the two two-column documents, which
+were reordered with the same words present. That is what keeps every citation already
+shown to a user pointing where it did, and any future change to `layout.py` should be
+checked the same way.
+
+### Still open
+
+1. **Push, and watch CI.** Six commits is at the edge of comfortable, and CI is the
+   only thing that tests a clean machine with no `.env`, no Docker, no MinIO and no
+   key.
+2. **The browser has not seen either new feature.** A two-column resume rendering in
+   `DocumentPane` is the cheapest outstanding check.
+3. **M3.** Its scope in `PLAN.md` is still a draft — review it before building to it.
+4. The visibility timeout for a worker that dies mid-job (M5) is the last §11
+   follow-up left.
+
+### Worth knowing next time
+
+- **The stack was left back on `STORAGE_BACKEND=local`**, matching `.env`, and the
+  worker log confirms `storage=local`. MinIO was verified with
+  `STORAGE_BACKEND=minio docker compose up -d --build` — an env var on the command
+  line rather than an edit to `.env`, so there was nothing to restore afterwards.
+  Restoring it anyway was deliberate: a running stack that disagrees with the config
+  file is the same class of trap as the zombie server and the stale worker, and this
+  project has already lost time to both. **Note the bucket keeps its objects**, so
+  flipping back to `minio` later finds the earlier uploads still there.
+- **Git Bash mangles container paths.** `docker compose exec api find /data/uploads`
+  becomes `C:/Program Files/Git/data/uploads` inside the container. Use PowerShell
+  for `docker compose exec`, or `MSYS_NO_PATHCONV=1`. Cost ten minutes.
+- **`git hash-object` still lies about CRLF damage** (previous entry), and
+  `uv.lock` must be regenerated whenever `pyproject.toml` changes or CI's
+  `uv sync --locked` fails the build.
+
+---
+
+## 2026-08-08 — the whole stack runs in containers
 
 Driven by a course deliverable ("REST API + Docker & Docker Compose จัดการ
 container"), which turned out to want the one thing the project genuinely lacked:

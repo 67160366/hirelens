@@ -1,9 +1,9 @@
 # Handoff
 
 Written 2026-07-30 at the end of M1, rewritten 2026-08-07 after the Postgres
-cutover and the first two M2 items. Read this first when picking the project back
-up — then `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item
-milestone status. Short dated session notes and owner advice live in
+cutover, and again 2026-08-08 when M2 completed. Read this first when picking the
+project back up — then `CLAUDE.md` for the rules and commands, and `docs/PLAN.md`
+for per-item milestone status. Short dated session notes and owner advice live in
 `docs/NOTES.md`.
 
 ---
@@ -14,18 +14,24 @@ milestone status. Short dated session notes and owner advice live in
 profile in which every field cites the exact text it came from, and anything the
 model could not cite is dropped and reported.
 
-**M2 is in progress: items #1, #2, #3, #4, #5 and #8 are done.** Parsing and
-extraction run on a background worker with retry, backoff and a dead-letter queue
-around them, the web client follows a resume over a progress stream instead of
-polling for it, a scanned page is recovered with OCR instead of being a permanent
-failure, and `.docx` uploads are read as well as PDFs. **The two-column fix (#6)
-and MinIO (#7) are what remain.**
+**M2 is complete.** Parsing and extraction run on a background worker with retry,
+backoff and a dead-letter queue around them; the web client follows a resume over a
+progress stream instead of polling for it; a scanned page is recovered with OCR
+instead of being a permanent failure, and refused rather than misread when the
+recognition is not trustworthy; `.docx` uploads are read as well as PDFs; a
+two-column page is read one column at a time; and uploads can live in object storage
+instead of on a disk. **M3 — the matching engine — is next.**
+
+Three long-standing items came off the watch list with it: the CI actions are off
+Node 20, there is finally a PDF in the fixtures that is broken on purpose, and the
+OCR confidence question has an answer with numbers behind it.
 
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 188 passed, 10 skipped, 1 xfailed (the xfail is deliberate — §7) |
+| `pytest -q` | 270 passed, 25 skipped, **no xfail** — the two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
 | `ruff check` / `ruff format --check` | clean |
@@ -47,14 +53,19 @@ and MinIO (#7) are what remain.**
 | Migration `0003` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `pages_from_ocr` lands as real `jsonb` and `alembic check` finds no drift (2026-08-08) |
 | **The whole stack in containers** | `docker compose up -d --build` from a clean daemon: seven services, `api` and `web` healthy, `migrate` exit 0. Against real Gemini — auth journey end to end (register → login → me → change-password → old password refused 401 → new one accepted → wrong current refused 403), `resume_th.pdf` 10/10 verified with 10/10 spans slicing back out of `document_text`, `resume_scanned.pdf` `extracted` with `pages_from_ocr=[1]` and 7/7 exact from the Tesseract *in the image*. Worker log shows arq taking the job; CORS preflight from :3000 passes; the web bundle carries `localhost:8000` and not `http://api:8000` (2026-08-08) |
 | **Browser: a scan, end to end** | uploading `resume_scanned.pdf` at :3002 against live Gemini shows the amber banner "Page 1 had no text layer and was read by OCR. Quotes from it match what was recognized, which may differ from what was printed.", `7/7 claims verified`, and the document pane rendering the recognized text — six `<mark>` highlights over it, including two inside the Thai line, with the ambiguous `Python` in amber and the rest emerald (2026-08-08) |
+| **Two columns, live** | `resume_two_column.pdf` through `app.cli` against Gemini: 7/7 verified, 0 dropped, **on attempt 1** — the first live run of this fixture needed the re-ask loop. `resume_two_column_header.pdf` 8/8, every match tier-1 exact (2026-08-08) |
+| Single-column output is unchanged | every text-layer fixture parsed with column detection on and with it forced off: **byte-identical** in each case, and only the two two-column documents reordered, with the same words present (2026-08-08) |
+| **MinIO, end to end in the containers** | `STORAGE_BACKEND=minio docker compose up -d --build` against real Gemini: upload answered `pending` in 22 ms, `resume_th.pdf` reached `extracted` in 10.2 s, 10/10 verified, 0 dropped, all matches exact, all 10 spans slicing back out of `document_text`. `mc ls` shows the object in `hirelens-resumes`; **nothing** was written to the uploads volume; the worker logs `storage=minio`; re-uploading the same bytes returned 200 on the same row with `attempts` still 1 (2026-08-08) |
+| The OCR confidence gate, against the real binary | a clean `resume_scanned.pdf` scores 94.8 and passes; the same page at 6px blur scores 47.4 and is refused, where with the gate off it is accepted with "Somchai Jaidee" nowhere in the text (2026-08-08) |
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>, and everything
-through M2 #5 is pushed and green on CI (run `31212427540`, 2026-08-08): 209
-passed, 12 skipped on a runner with no Tesseract, no database and no API key —
-which is the opt-in test design doing its job — plus 9 vitest cases in `web/`.
-Check `git rev-list --count origin/main..main` before assuming that is still true —
+`main` is on GitHub at <https://github.com/67160366/hirelens>. Everything through
+the container work was pushed and green on CI (run `31212427540`, 2026-08-08) on a
+runner with no Tesseract, no database, no MinIO and no API key — which is the opt-in
+test design doing its job — plus 9 vitest cases in `web/`. **The six commits that
+close M2 are local only at the time of writing.**
+Check `git rev-list --count origin/main..main` before assuming otherwise —
 a batch of verified-but-unpushed commits is the easiest way for local and CI to
 drift apart, and CI is the only thing that tests a clean machine with no `.env`,
 no Docker and no API key.
@@ -102,7 +113,7 @@ Roughly 30 minutes to get oriented on the pipeline, plus 15 for the job layer.
 | 1 | `README.md` | The idea, quick start, honest limitations |
 | 2 | **`api/app/pipeline/evidence.py`** | The heart of the project. Three-tier matching, offset maps, rejection reasons. Everything else serves this. |
 | 3 | `api/tests/test_evidence.py` | The clearest specification of intended behaviour, including the Thai cases |
-| 4 | `api/app/pipeline/parse.py` | The offset contract: `ParsedDocument.text` is the single coordinate space all evidence points into |
+| 4 | `api/app/pipeline/parse.py` | The offset contract: `ParsedDocument.text` is the single coordinate space all evidence points into. `layout.py` beside it decides *reading order* and is worth skimming for why it answers `None` so often |
 | 5 | `api/app/pipeline/extract.py` | How verification is enforced and how the re-ask loop picks a result |
 | 6 | `api/app/schemas/extraction.py` + `profile.py` | The two-layer split: what the model returns (quotes only) vs what we store (offsets + stats) |
 | 7 | `api/app/llm/fake.py` | Load-bearing infrastructure, not a stub — read before touching the provider seam |
@@ -124,7 +135,9 @@ api/app/
   pipeline/
     evidence.py      ★ locate quotes in the source; reject what cannot be found
     parse.py           PDF/DOCX → text + char offsets + page spans; scans vs blank
-    ocr.py             OCREngine seam + Tesseract; recovers pages with no text layer
+    layout.py          column detection; `None` means "read it the old way"
+    ocr.py             OCREngine seam + Tesseract; recovers pages with no text layer,
+                       and refuses one it read badly
     extract.py         orchestrates: ask → verify → re-ask → keep the cleanest result
     prompts.py         versioned prompts (EXTRACTION_PROMPT_VERSION)
   llm/
@@ -136,6 +149,7 @@ api/app/
     extraction.py      what the model returns — quotes only, no offsets
     profile.py         what we store — offsets, pages, stats, dropped claims
   models/core.py       candidates, resumes, extracted_profiles, llm_call_logs
+  storage.py           LocalStorage / MinioStorage behind one interface
   services/resume_service.py   upload path: store, insert, queue; and process_resume
   jobs.py            ★ run_resume_job — the unit of background work and the retry policy
   queue.py             JobQueue seam: inline (no server) / arq (Redis)
@@ -224,6 +238,29 @@ Worth reading once, because the request no longer does the work.
   that, a Tesseract lacking `tha` would keep working for English and return noise
   for Thai — the failure mode this project can least afford, and the same class of
   silent corruption as a stale price table.
+- **Column detection answers `None` whenever it is not sure, and `None` is the old
+  code path.** `layout.detect_reading_order` returns crop boxes only for a page it
+  is confident is multi-column; everything else falls through to the
+  `page.extract_text()` call that ran before M2 #6, so a single-column document
+  parses byte-identically and no citation already shown to a user can shift. Four
+  guards exist to produce that `None`, and the reordering is done by *cropping* to a
+  region and letting pdfplumber assemble the text — rebuilding lines from word boxes
+  would mean re-deciding where spaces go, and Thai has no spaces between words.
+- **The horizontal cut comes before the vertical one.** A full-width header line
+  spans the gutter, so a column profile taken over the whole page finds nothing on
+  almost every real two-column resume. Cutting into bands at wide row gaps first is
+  what makes the header its own region and exposes the gutter underneath it.
+- **Only a missing object may raise `ObjectNotFoundError`.** `is_retryable` reads
+  that exception as permanent. Every other storage fault — a refused connection, a
+  timeout, a 500 — is a plain `StorageError` and gets the retry budget. Backwards,
+  a MinIO restart would permanently fail every resume uploaded during it.
+- **A page OCR read badly is refused, not reported.** A character count cannot tell
+  text from noise, so `OCR_MIN_CONFIDENCE` reads Tesseract's own per-word confidence
+  and returns `""` for a page below it — deliberately the same answer as "I read
+  this and found nothing", so it reuses a path that already exists and already says
+  the right thing to the user. The threshold is measured (§7), and the TSV pass that
+  produces it is a *second* invocation because TSV tokenizes Thai per glyph and
+  cannot supply the text.
 - **Two attempt counters, because one cannot do both jobs.** `failed_attempts` is
   the retry budget and is cleared by a success or a manual retry. `attempts` is the
   honest total and never resets — it is also what makes each dispatch's queue job id
@@ -294,11 +331,18 @@ want the retry policy run the ARQ worker.
 
 ## 7. Deliberate loose ends (not bugs — leave the shape intact)
 
-- **`tests/test_parse.py::TestTwoColumnLayout`** contains a characterization test
-  pinning current wrong-but-known behaviour, plus a `@pytest.mark.xfail(strict=True)`
-  describing the behaviour we want. When M2 adds column detection, the xfail starts
-  passing and *fails the suite* — that is the signal to delete the characterization
-  test. Do not "fix" the xfail by removing it.
+- **Column detection is conservative on purpose, and will miss layouts.** It refuses
+  anything it is not confident about, so a two-column resume with an unusually narrow
+  gutter, or one whose columns are wildly unequal in size, still reads interleaved —
+  as it always did. That direction is deliberate: a page wrongly split reorders text
+  that was fine, and there is no test in this repo that would notice. The four guards
+  and the numbers behind them are in `app/pipeline/layout.py`; `tests/test_layout.py`
+  pins each one separately, because a guard that quietly stops firing is the failure
+  this module is least able to see.
+  *(The strict xfail that used to live here started passing on 2026-08-08 and failed
+  the suite, which is exactly what it was for. The characterization test beside it is
+  deleted and the marker is off; `test_columns_should_read_one_after_the_other`
+  survives as an ordinary test under the same name.)*
 - **`registry.py` raises for `LLM_PROVIDER=anthropic`** on purpose. An adapter never
   run against the real API is worse than an honest error.
 - **An OCR'd citation is faithful to what was read, not to what was printed.** The
@@ -324,15 +368,31 @@ want the retry policy run the ARQ worker.
   cliff that is both steep and common** — a phone photo of a resume is rotated far
   more often than it is blurred. A deskew step is the one preprocessing item with
   evidence behind it.
-- **A badly degraded scan fails by producing confident nonsense, not by failing.**
-  At 6px blur the page still yields 169 characters — far above
-  `MIN_CHARS_PER_TEXT_PAGE` — so it is accepted as readable and reported in
-  `pages_from_ocr`, but "Somchai Jaidee" has become "Sore hector". The guardrail is
-  not breached (a quote still has to be located in that text, so fabrications are
-  still dropped) and the UI banner still warns that the page was OCR'd, but the
-  system does report success. Closing this properly means reading Tesseract's
-  per-word confidence and rejecting a page below a threshold; the character count
-  cannot tell text from noise.
+- **A badly degraded scan used to fail by producing confident nonsense** — at 6px
+  blur the page still yields 160+ characters, far above `MIN_CHARS_PER_TEXT_PAGE`, so
+  it was accepted as readable while "Somchai Jaidee" had become "Sore hector".
+  **Closed on 2026-08-08** by `OCR_MIN_CONFIDENCE`, which reads Tesseract's per-word
+  confidence and refuses the page. The threshold was measured, not guessed — rerun
+  `python tests/tools/ocr_degradation.py --tesseract <path>` to reproduce the table:
+
+  | Degradation | lines found | mean confidence |
+  |---|---|---|
+  | clean | 5/5 | **94.8** |
+  | rotate 2° / 5° | 4/5 | 94.2 / 91.5 |
+  | rotate 8° / 12° | 2/5 / 0/5 | 72.4 / 0.0 |
+  | blur 1.5px / 3.0px | 5/5 | 94.8 / 94.5 |
+  | blur 4.5px / 6.0px | 2/5 / 0/5 | 83.6 / **47.4** |
+  | scale ½ / ¼ | 5/5 | 94.8 / **90.2** |
+  | scale ⅙ / ⅛ | 2/5 / 0/5 | 57.9 / 46.9 |
+  | contrast 0.4, JPEG q3 | 5/5 | 94.8 |
+
+  Everything that still yielded the fixture's content scored **90.2 or better**;
+  everything that yielded none scored **47.4 or worse**. The default 75 sits in that
+  gap and low in it on purpose: these are clean synthetic renders, and a real
+  photograph will score lower while still being readable. A wrongly refused scan is a
+  message the user can act on; a wrongly accepted one is a confident, fully cited
+  profile of the wrong words. **What is still true:** the gate is tuned on one
+  synthetic fixture, and blur 4.5px (83.6, 2/5 lines) still gets through.
 - **A `.docx` citation says "page 1" because a `.docx` has no pages.** Word decides
   where a page breaks when it renders, so the file does not contain the answer.
   Reporting the whole document as one page is the honest version; author-inserted
@@ -401,13 +461,13 @@ without an editable install at all.
 
 | Thing | State |
 |---|---|
-| Docker | **Installed and running.** `docker compose up -d --build` now brings up the *whole system*: `postgres` (pgvector/pg17), `redis`, `minio`, a one-shot `migrate`, plus `api`, `worker` and `web` from two locally built images. MinIO is up but unused until M2 #7. Docker Desktop lives at `%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe` — a per-user install, *not* under `Program Files`. |
+| Docker | **Installed and running.** `docker compose up -d --build` brings up the *whole system*: `postgres` (pgvector/pg17), `redis`, `minio`, the one-shot `migrate` and `createbucket`, plus `api`, `worker` and `web` from two locally built images. Docker Desktop lives at `%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe` — a per-user install, *not* under `Program Files`. |
 | Database | **Postgres** in Docker (`.env` → `DATABASE_URL`), migrated and verified 2026-08-07. SQLite at `api/var/dev.db` is a commented fallback. The test suite uses its own in-memory SQLite. |
 | Test database | `hirelens_test`, created by hand. Only `tests/test_postgres.py` uses it, and it refuses to run against the dev database because it drops every table. |
 | Queue | **`arq`** (`.env` → `QUEUE_BACKEND`). Needs `arq app.worker.WorkerSettings` running. `inline` processes in-request with no Redis. |
 | LLM provider | **`gemini`** (`gemini-3.6-flash`) in `.env`; live-verified against every fixture on 2026-08-06 — `docs/llm-providers.md`. Tests and CI run on `fake`. |
-| Storage | Local filesystem at `var/uploads` |
-| OCR | **Tesseract 5.5.3** installed 2026-08-08, with `eng`, `tha` and `osd`. A *portable* install at `C:\Users\golfv\tesseract.exe` (tessdata beside it), so it is **not on PATH** — `OCR_COMMAND` must carry the full path. Off by default; tests and CI run without it. |
+| Storage | **Local filesystem** at `var/uploads` by default. `STORAGE_BACKEND=minio` switches the API and the worker to the MinIO in compose, which creates its bucket in a `createbucket` one-shot; a missing bucket is refused at startup. Verified end to end on 2026-08-08 (§1). Opt-in tests need `TEST_MINIO_ENDPOINT`. |
+| OCR | **Tesseract 5.5.3** installed 2026-08-08, with `eng`, `tha` and `osd`. A *portable* install at `C:\Users\golfv\tesseract.exe` (tessdata beside it), so it is **not on PATH** — `OCR_COMMAND` must carry the full path. Off by default; tests and CI run without it. A recognized page below `OCR_MIN_CONFIDENCE` (default 75) is refused rather than reported — §7 has the measurements. |
 
 ### Start it
 
@@ -441,10 +501,13 @@ the API and the worker, upload again. To see the dead-letter path: set
 | File | What it pins |
 |---|---|
 | `test_evidence.py` | Three-tier matching, rejection reasons, Thai. The specification. |
-| `test_parse.py` | Offsets, page spans, scan detection, the two-column xfail |
+| `test_parse.py` | Offsets, page spans, scan detection, two-column reading order, and the PDF that is broken on purpose |
+| `test_layout.py` | Column detection: every guard that produces `None`, separately, plus the band merge |
+| `test_storage.py` | The storage contract on `LocalStorage`, and the MinIO error mapping the retry policy depends on — stubbed, so it runs everywhere |
+| `test_minio.py` | The same contract against a real object store. **Opt-in**, needs `TEST_MINIO_ENDPOINT` |
 | `test_docx.py` | Paragraphs, tables, document order, and that a page-less format is not given invented page numbers |
 | `test_ocr.py` | The OCR fallback through a stub engine: which pages are chosen, the offset contract across a rescued page, and what happens when recognition finds nothing |
-| `test_ocr_tesseract.py` | The real binary, including Thai. **Opt-in**, needs `OCR_TESSERACT_CMD` |
+| `test_ocr_tesseract.py` | The real binary, including Thai and the confidence gate's actual numbers. **Opt-in**, needs `OCR_TESSERACT_CMD` |
 | `test_extract.py` | The re-ask loop and how it picks a result |
 | `test_llm.py` / `test_gemini.py` | The provider seam; Gemini's contract via mocks |
 | `test_api.py` | Auth, upload gates, reading a profile back |
@@ -459,10 +522,21 @@ the API and the worker, upload again. To see the dead-letter path: set
 
 ## 9. Next steps
 
-**All setup items are done.** Docker is installed, development runs on Postgres,
-the JSONB path is verified, Gemini has run live, and the queue is real.
+**All setup items are done, and M2 is closed.** Docker is installed, development
+runs on Postgres, the JSONB path is verified, Gemini has run live, the queue is
+real, and every M2 item below is shipped and verified against a running system.
 
-**Next is M2 #6.** In dependency order (live status in `docs/PLAN.md`):
+**Next is M3 — the matching engine**, whose draft scope is in `docs/PLAN.md`: job
+requirements as first-class rows, hybrid retrieval over verified claims (the compose
+file already runs `pgvector/pgvector:pg17`, so this needs no new infrastructure),
+requirement-level judging where a judgment that cannot cite evidence is dropped
+exactly as a claim is, and ranking whose rationale is the list of citations rather
+than a score. Two things to decide early, and both are worth a plan before code: what
+a requirement *is* as a schema, and whether judging reuses `EvidenceResolver`
+unchanged — it should, because a judgment is just another claim that has to be
+locatable.
+
+M2, for the record (live status in `docs/PLAN.md`):
 
 | # | Work | Notes |
 |---|---|---|
@@ -471,19 +545,29 @@ the JSONB path is verified, Gemini has run live, and the queue is real.
 | 3 | ~~SSE progress endpoint~~ **done** | `GET /resumes/{id}/events` (`api/app/api/routes/resumes.py`), consumed by `waitForProfile` in `web/lib/api.ts`, which keeps polling as the fallback. Pinned by `api/tests/test_events.py` |
 | 4 | ~~OCR fallback for scans~~ **done** | `app/pipeline/ocr.py` is the seam; `parse.py` substitutes recognized text before spans are measured. Off by default (`OCR_ENGINE=none`), so CI and a fresh clone are unchanged. Pinned by `tests/test_ocr.py` (stub engine) plus the opt-in `tests/test_ocr_tesseract.py` |
 | 5 | ~~DOCX parser~~ **done** | `parse_docx` in `parse.py` reads paragraphs and tables in document order; a `.docx` has no pages so it is reported as one. The upload gate keeps a magic-byte signature per type. Pinned by `tests/test_docx.py` |
-| 6 | **Two-column fix** via bbox column detection | The strict xfail defines "done" |
-| 7 | MinIO storage backend | `build_storage` has the `MINIO` branch stubbed with a clear error. The worker and the API both build storage independently, so both pick it up |
-| 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay on the rendered page is *not* done: it needs bbox geometry, which `ParsedDocument` does not keep, plus an endpoint serving the original file. Do it with #6, which needs the same bbox extraction. |
+| 6 | ~~Two-column fix~~ **done** | `app/pipeline/layout.py` — a bounded XY-cut. `None` for anything it is unsure of, which is the pre-M2 code path, so single-column output is byte-identical. Pinned by `tests/test_layout.py` |
+| 7 | ~~MinIO storage backend~~ **done** | `MinioStorage` in `app/storage.py`; the API and the worker build storage independently so both pick it up. The contract in `tests/storage_contract.py` runs against both backends |
+| 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay is still not done, but #6 now extracts the bbox geometry it needs, so what remains is an endpoint serving the original file and a pdf.js canvas — a frontend slice, parked with M5's recruiter UI |
 
-Nothing else is outstanding: the browser walkthrough was re-done on 2026-08-08 and
-covered the whole journey, including the retry path (§1).
+Nothing from M2 is outstanding. The browser walkthrough was re-done on 2026-08-08
+and covered the whole journey including the retry path (§1); the OCR banner was
+checked in a real browser once `CORS_ORIGINS` became a setting and unblocked running
+the dev server on a free port.
 
-Since then the stack has been containerized (M5's "containerize API + web", pulled
-forward for a course deliverable) and `POST /auth/change-password` landed — both in
-`docs/NOTES.md`, newest entry. The next commit here should be **M2 #6**.
+Two things landed alongside M2 and are recorded in `docs/NOTES.md`: the stack was
+containerized (M5's "containerize API + web", pulled forward for a course
+deliverable) and `POST /auth/change-password` shipped.
 
-The OCR banner was checked in a real browser too, once `CORS_ORIGINS` became a
-setting and unblocked running the dev server on a free port (§1).
+**Three things a new session should know before starting M3:**
+
+1. **The browser has not seen the two-column or MinIO work.** Both are verified at
+   the HTTP level and in the containers, but no one has watched a two-column resume
+   render in `DocumentPane`. That is the cheapest outstanding check.
+2. **`docs/PLAN.md`'s M3–M6 are still a draft** reconstructed from the README, not
+   commitments. Review the M3 scope before building to it.
+3. **The scope lines still hold**: the baseline-ranking evaluation stays in M6 with
+   its one-week timebox, and `LLM_PROVIDER=anthropic` stays an error until a live
+   verification run.
 
 M3 onward (matching engine, backend depth, frontend, ship) is in
 [`docs/PLAN.md`](PLAN.md), which also tracks the status of the items above.
@@ -552,13 +636,19 @@ fixed worker against live Gemini — `extracted` on attempt 2, 9 verified, 0
 dropped, all 9 spans resolving exactly against the stored text (1743 chars; the
 8 NULs gone), and the worker log carrying ids and counts only.
 
-Two follow-ups deliberately left open:
+One follow-up closed, one still open:
 
-- **A deliberately malformed fixture** alongside the clean ones. The wider
-  lesson stands: the synthetic fixtures are all well-formed, so classes of
-  real-world PDF damage — broken ToUnicode maps, mixed encodings — still cannot
-  appear in the suite. The NUL case is covered at the `_assemble` seam; a truly
-  damaged PDF fixture would cover the road to it.
+- ~~**A deliberately malformed fixture** alongside the clean ones.~~ **Done
+  2026-08-08**: `resume_broken_tounicode.pdf` is a PDF whose font map is well-formed
+  and says several glyphs mean U+0000, so pdfplumber emits real NUL and the road to
+  the `_assemble` seam is covered by a real file. Two findings from building it:
+  *removing* the `/ToUnicode` reference does **not** reproduce this — pdfminer falls
+  back to `(cid:N)` placeholders, a different defect — so the damage has to be inside
+  the map; and the fixture is therefore written by hand rather than by reportlab,
+  which only ever writes correct maps. It is the one fixture that needs no Thai font
+  to regenerate. The wider lesson still stands for *other* damage classes: mixed
+  encodings, broken xrefs and real photographs are still unrepresented.
 - **The visibility timeout from §7.** Bug 2's fix covers a commit that *fails*;
   a worker that dies mid-job (power loss, kill) can still strand a row at
-  `processing`. That reaper belongs with M5's observability work.
+  `processing`. That reaper belongs with M5's observability work, and is now the
+  last open item from this incident.
