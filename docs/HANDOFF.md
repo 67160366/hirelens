@@ -607,6 +607,8 @@ the API and the worker, upload again. To see the dead-letter path: set
 | `test_ocr.py` | The OCR fallback through a stub engine: which pages are chosen, the offset contract across a rescued page, and what happens when recognition finds nothing |
 | `test_ocr_tesseract.py` | The real binary, including Thai and the confidence gate's actual numbers. **Opt-in**, needs `OCR_TESSERACT_CMD` |
 | `test_extract.py` | The re-ask loop and how it picks a result |
+| `test_judge.py` | Requirement-level judging: verdicts derived from what resolved, unknown/duplicate requirement numbers, the empty case, and the retry rule that differs from extraction's |
+| `test_judge_live.py` | Judging against a real model — semantic matching, and that the guardrail holds on output nobody scripted. **Opt-in**, needs `TEST_LIVE_LLM=1`, and gated on that flag rather than on a key because `.env` already has one |
 | `test_llm.py` / `test_gemini.py` | The provider seam; Gemini's contract via mocks |
 | `test_api.py` | Auth, upload gates, reading a profile back |
 | `test_resume_service.py` | The duplicate-upload race, blob cleanup, PII-safe logging |

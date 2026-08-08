@@ -124,6 +124,24 @@ and `schemas.profile`, and `schemas.profile` already imports `pipeline.evidence`
 **One npm advisory closed.** `npm audit fix` fixes nanoid with a lockfile bump; 4
 high → 3. postcss and sharp both need `next@16`, a framework major, and were left.
 
+**`tests/test_judge_live.py`** closes the gap this session reported: the fake matches
+a requirement label by substring, so under it a requirement worded differently from
+the document *always* reads `not_evidenced` — and real screening is mostly that case.
+Twelve cases against the real provider, shaped like `test_postgres.py` and
+`test_minio.py`.
+
+The gate is `TEST_LIVE_LLM=1`, **not** the presence of a key. That distinction is the
+whole design: `.env` on any development machine already holds a real Gemini key, so
+gating on the key would have turned every `pytest -q` into a billed run — the exact
+opposite of the property §2 of the handoff calls load-bearing.
+
+It was checked the same way as everything else this session: pointed at the fake
+provider, **exactly the three semantic-matching cases fail** and the other nine pass.
+That partition is the useful part — nine of the twelve assert things that must hold
+for *any* provider (every span slices back out, no `met` without evidence, the
+numbering contract survives, absence is never asserted), so they are worth running
+against a new provider on day one.
+
 ### A check that silently proved nothing
 
 The refactor was verified by diffing CLI output before and after — except the first

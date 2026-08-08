@@ -65,10 +65,15 @@ OCR_TESSERACT_CMD=C:\Users\golfv\tesseract.exe \
   pytest tests/test_ocr_tesseract.py -q     # opt-in: the real Tesseract, including Thai
 TEST_MINIO_ENDPOINT=http://localhost:9000 \
   pytest tests/test_minio.py -q             # opt-in: the storage contract on real MinIO
+TEST_LIVE_LLM=1 \
+  pytest tests/test_judge_live.py -q        # opt-in: judging against the real provider.
+                                            # SPENDS QUOTA, and is gated on this flag
+                                            # rather than on a key, which .env has
 ruff check app tests migrations             # lint   — enforced in CI
 ruff format app tests migrations            # format — enforced in CI (--check)
 mypy app                                    # strict — enforced in CI
 python -m app.cli tests/fixtures/resume_th.pdf   # fastest end-to-end sanity check
+python -m app.cli tests/fixtures/resume_th.pdf --requirement skill:Python   # …and judging
 uvicorn app.main:app --reload               # API on :8000, /docs for OpenAPI
 alembic upgrade head                        # migrations (against DATABASE_URL)
 arq app.worker.WorkerSettings               # the job worker (needs QUEUE_BACKEND=arq + Redis)
