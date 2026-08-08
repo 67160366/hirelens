@@ -1,0 +1,25 @@
+# Keep the build context to source. Everything here is either rebuilt inside the
+# image, machine-specific, or must never enter an image at all.
+
+# A host virtualenv holds Windows-linked binaries and would shadow the one uv
+# builds in the image. This line is load-bearing, not tidiness.
+.venv/
+venv/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Uploaded resumes and the dev SQLite file. Resumes are PII and the container
+# gets its own volume for them.
+var/
+
+# Secrets. `.env` lives at the repository root so this context cannot reach it
+# anyway, but an excluded secret should not depend on the context boundary.
+.env
+.env.*

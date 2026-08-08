@@ -1,5 +1,20 @@
 name: hirelens
 
+# The whole system, start to finish:
+#
+#   postgres ─healthy─┐
+#                     ├─> migrate ─completed─┬─> api    :8000
+#   redis ────healthy─┘                      └─> worker
+#                                                  │
+#                                                web  :3000
+#
+# `docker compose up -d --build` from a fresh clone is the only setup step. No
+# Python, Node or Tesseract needs to exist on the host.
+#
+# Secrets are read from the host's .env by compose's own variable substitution and
+# passed in as environment — they are never copied into an image. `${VAR:-default}`
+# keeps the stack working for someone who has no .env at all.
+
 services:
   postgres:
     # pgvector ships in this image, so M3's vector search needs no extra setup.
@@ -31,7 +46,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # Not used until M2 swaps the local-filesystem storage backend for object
+  # Not used until M2 #7 swaps the local-filesystem storage backend for object
   # storage. Started now so the compose file matches the target architecture.
   minio:
     image: minio/minio:latest
@@ -50,6 +65,116 @@ services:
       timeout: 3s
       retries: 10
 
+  # Schema migrations run once, as their own service, before anything connects.
+  # Doing it in the API's entrypoint instead would race: two replicas would both
+  # run `alembic upgrade head` against the same database at the same time.
+  migrate:
+    build:
+      context: ./api
+      target: runtime
+    image: hirelens-api:local
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://hirelens:hirelens@postgres:5432/hirelens
+      JWT_SECRET: ${JWT_SECRET:-change-me-before-deploying}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./api
+      target: runtime
+    image: hirelens-api:local
+    ports:
+      - "8000:8000"
+    environment: &api_env
+      APP_ENV: ${APP_ENV:-dev}
+
+      # Service names, not localhost: inside a container localhost is the
+      # container itself.
+      DATABASE_URL: postgresql+asyncpg://hirelens:hirelens@postgres:5432/hirelens
+      REDIS_URL: redis://redis:6379/0
+
+      # A real worker exists here, so the queue is the real one. Left on `inline`
+      # the worker would sit idle and the retry policy would never run.
+      QUEUE_BACKEND: arq
+
+      # Absolute, because Settings.storage_path resolves a relative STORAGE_DIR
+      # against a REPO_ROOT that is `/` inside this image. See api/Dockerfile.
+      STORAGE_DIR: /data/uploads
+      STORAGE_BACKEND: local
+
+      # The browser talks to the published port on the host, so that is the origin
+      # the API must allow — not the compose service name.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+
+      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      FAKE_MODE: ${FAKE_MODE:-faithful}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+
+      JWT_SECRET: ${JWT_SECRET:-change-me-before-deploying}
+
+      # Tesseract and its Thai pack are installed in the image, so turning OCR on
+      # is this one variable — no OCR_COMMAND path needed. Off by default, as on
+      # the host: a scan should fail loudly rather than depend on a hidden default.
+      OCR_ENGINE: ${OCR_ENGINE:-none}
+      OCR_LANGUAGES: ${OCR_LANGUAGES:-tha+eng}
+    volumes:
+      - uploads_data:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Same image as the API, different command: app/worker.py is an adapter over
+  # app/jobs.py, and building the two separately would let their dependencies
+  # drift apart without anything noticing.
+  worker:
+    build:
+      context: ./api
+      target: runtime
+    image: hirelens-api:local
+    command: ["arq", "app.worker.WorkerSettings"]
+    # The image's HEALTHCHECK probes the HTTP server, which this process does not
+    # run. Inherited unchanged it would report the worker permanently unhealthy —
+    # a false alarm that trains people to ignore `docker compose ps`.
+    healthcheck:
+      disable: true
+    environment: *api_env
+    volumes:
+      # The same volume as the API: upload writes the blob, the worker reads it.
+      - uploads_data:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ./web
+      args:
+        # Build-time, not runtime: NEXT_PUBLIC_* is inlined into the client bundle
+        # by `next build`. Changing it needs a rebuild, not a restart.
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+    image: hirelens-web:local
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   minio_data:
+  # Uploaded resumes. A named volume rather than a bind mount: these are PII and
+  # should not land in the working tree.
+  uploads_data:
