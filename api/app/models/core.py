@@ -121,6 +121,15 @@ class Resume(UUIDPrimaryKey, Timestamps, Base):
     """The parsed text. Evidence offsets index into exactly this string, so it has
     to be stored verbatim — re-parsing later could shift every offset."""
 
+    page_spans: Mapped[list[dict[str, int]] | None] = mapped_column(JSON_VARIANT)
+    """Where each page begins and ends inside `document_text`.
+
+    Stored because a quote located in that text *later* — which is what judging a
+    requirement does — has no other way to name a page. Extraction never needed
+    this: it reads the live `ParsedDocument` it just built. Holds `PageSpan`'s own
+    field names, so `ParsedDocument.from_stored` reads it back with no mapping
+    layer. Null on rows written before migration `0005`; those report page 1."""
+
     candidate: Mapped[Candidate] = relationship(back_populates="resumes")
     profile: Mapped[ExtractedProfileRow | None] = relationship(
         back_populates="resume", cascade="all, delete-orphan", uselist=False

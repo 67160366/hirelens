@@ -21,10 +21,10 @@ import io
 import logging
 import unicodedata
 from bisect import bisect_right
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import docx
 import docx.document
@@ -164,6 +164,58 @@ class ParsedDocument:
             return 1
         index = bisect_right(self._page_starts, offset) - 1
         return self.pages[max(index, 0)].page_number
+
+    @property
+    def stored_page_spans(self) -> list[dict[str, int]]:
+        """The page boundaries in the shape `resumes.page_spans` holds.
+
+        Written out field by field rather than via `asdict` so the stored key names
+        are greppable, and kept beside `from_stored` because the two are the halves
+        of one round-trip: neither may change without the other.
+        """
+        return [
+            {
+                "page_number": span.page_number,
+                "char_start": span.char_start,
+                "char_end": span.char_end,
+            }
+            for span in self.pages
+        ]
+
+    @classmethod
+    def from_stored(
+        cls,
+        text: str,
+        page_spans: list[dict[str, int]] | None,
+        *,
+        pages_without_text: Sequence[int] = (),
+        pages_from_ocr: Sequence[int] = (),
+    ) -> Self:
+        """Rebuild a document from values already stored on a resume row.
+
+        This is what lets a *new* quote — one located in stored text long after the
+        upload, which is what judging does — be mapped back to a page. It re-reads
+        nothing: `text` is the verbatim `document_text` that every evidence offset
+        already indexes into, so no citation can shift.
+
+        That is the whole difference from `reparse_document` in
+        `services/resume_service.py`, which goes back to the stored *file*: pass it
+        a different OCR configuration and a page rescued then but not now comes back
+        empty, moving every offset after it. This function cannot do that, because
+        it never parses anything.
+
+        `page_spans` is None on rows written before migration `0005`. `pages` is
+        then empty and `page_for_offset` answers 1 for every offset — the honest
+        result, since those rows never recorded where their pages ended. Backfilling
+        them would mean re-parsing under the identical OCR configuration, which is
+        exactly the hazard above.
+        """
+        return cls(
+            text=text,
+            pages=tuple(PageSpan(**span) for span in page_spans or ()),
+            pages_without_text=tuple(pages_without_text),
+            pages_from_ocr=tuple(pages_from_ocr),
+        )
 
 
 def parse_document(path: Path, *, ocr: OCREngine | None = None) -> ParsedDocument:

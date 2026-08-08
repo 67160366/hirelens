@@ -7,6 +7,7 @@ exact, and Thai has to survive extraction intact.
 
 from __future__ import annotations
 
+import json
 import unicodedata
 from itertools import pairwise
 from pathlib import Path
@@ -19,6 +20,7 @@ from app.pipeline.parse import (
     CorruptDocumentError,
     EmptyDocumentError,
     NoTextLayerError,
+    ParsedDocument,
     UnsupportedFileTypeError,
     _assemble,
     parse_document,
@@ -122,6 +124,61 @@ class TestPageMapping:
         result = resolver.resolve("Page 2 project 4: distinctive marker P2I4.")
         assert isinstance(result, ResolvedSpan)
         assert multipage.page_for_offset(result.char_start) == 2
+
+
+class TestStoredPageSpans:
+    """Page mapping for a quote located long after the upload — what judging does.
+
+    The round trip goes through `resumes.page_spans`, so it has to survive being
+    stored as plain JSON and read back without re-parsing anything.
+    """
+
+    def test_spans_round_trip_through_the_stored_shape(self, multipage):
+        restored = ParsedDocument.from_stored(multipage.text, multipage.stored_page_spans)
+        assert restored.pages == multipage.pages
+        assert restored.page_count == multipage.page_count
+
+    def test_stored_shape_is_json_safe(self, multipage):
+        """It lands in a JSON column, so it may hold only ints and str keys."""
+        assert json.loads(json.dumps(multipage.stored_page_spans)) == multipage.stored_page_spans
+
+    @pytest.mark.parametrize("page_number", [1, 2, 3])
+    def test_a_restored_document_maps_offsets_to_the_same_pages(self, multipage, page_number: int):
+        restored = ParsedDocument.from_stored(multipage.text, multipage.stored_page_spans)
+        offset = multipage.text.index(f"distinctive marker P{page_number}I3")
+        assert restored.page_for_offset(offset) == page_number
+
+    def test_a_new_quote_resolves_against_restored_text_with_its_page(self, multipage):
+        """The judging path end to end: resolve, then name the page."""
+        restored = ParsedDocument.from_stored(multipage.text, multipage.stored_page_spans)
+        result = EvidenceResolver(restored.text).resolve(
+            "Page 2 project 4: distinctive marker P2I4."
+        )
+        assert isinstance(result, ResolvedSpan)
+        assert restored.page_for_offset(result.char_start) == 2
+
+    def test_rows_written_before_the_migration_report_page_one(self, multipage):
+        """Null `page_spans` is honest, not broken — those rows never recorded them."""
+        restored = ParsedDocument.from_stored(multipage.text, None)
+        assert restored.pages == ()
+        assert restored.page_for_offset(len(multipage.text) - 1) == 1
+
+    def test_restoring_reparses_nothing(self, multipage):
+        """The property that separates this from `reparse_document`: same text in,
+        same text out, byte for byte, whatever the OCR configuration now is."""
+        restored = ParsedDocument.from_stored(multipage.text, multipage.stored_page_spans)
+        assert restored.text == multipage.text
+
+    def test_ocr_page_lists_survive_when_supplied(self, multipage):
+        restored = ParsedDocument.from_stored(
+            multipage.text,
+            multipage.stored_page_spans,
+            pages_without_text=[3],
+            pages_from_ocr=[2],
+        )
+        assert restored.pages_without_text == (3,)
+        assert restored.pages_from_ocr == (2,)
+        assert restored.used_ocr
 
 
 class TestScannedAndBlank:

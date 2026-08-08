@@ -198,6 +198,9 @@ async def process_resume(
     # Stored verbatim: evidence offsets index into exactly this string, so
     # re-parsing later could invalidate every citation already shown to a user.
     resume.document_text = document.text
+    # ...and the page boundaries measured over that same string, so a quote located
+    # in it later can still name a page without anything being re-parsed.
+    resume.page_spans = document.stored_page_spans
     resume.status = ResumeStatus.PARSED
     resume.failure_reason = None
 

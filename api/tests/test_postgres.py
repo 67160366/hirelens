@@ -36,7 +36,7 @@ from app.jobs import JobContext
 from app.llm.fake import FakeExtractor, FakeMode
 from app.models import Base, Candidate, ExtractedProfileRow, LLMCallLog, Resume, ResumeStatus
 from app.models.base import JSON_VARIANT
-from app.pipeline.parse import _assemble, parse_document_bytes
+from app.pipeline.parse import ParsedDocument, _assemble, parse_document_bytes
 from app.queue import InlineQueue
 from app.services import resume_service
 from app.storage import LocalStorage
@@ -222,6 +222,54 @@ class TestProfileRoundTrip:
                 await session.execute(select(Resume).where(Resume.id == resume_id))
             ).scalar_one()
             assert stored.document_text == document.text
+
+    async def test_page_spans_round_trip_as_jsonb(
+        self,
+        pg_sessionmaker: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Migration `0005`'s column on the dialect it is actually deployed on.
+
+        The rest of the suite stores these on SQLite, where `JSON_VARIANT` renders
+        plain JSON and a shape error can pass unnoticed. Here the list has to come
+        back a list of dicts of ints — not a string — and rebuild a document that
+        maps offsets to the same pages the parser did.
+        """
+        document = _assemble(["หน้าแรกของเรซูเม่ ผู้สมัคร", "Page two — Somchai Jaidee"])
+        assert document.page_count == 2
+
+        async with pg_sessionmaker() as session:
+            candidate = Candidate(email="page-spans@example.com")
+            session.add(candidate)
+            await session.commit()
+
+            resume = Resume(
+                candidate_id=candidate.id,
+                filename="page_spans.pdf",
+                content_hash="1" * 64,
+                size_bytes=1,
+                storage_key="test/page_spans.pdf",
+                status=ResumeStatus.PARSED,
+                document_text=document.text,
+                page_spans=document.stored_page_spans,
+            )
+            session.add(resume)
+            await session.commit()
+            resume_id = resume.id
+
+        async with pg_sessionmaker() as session:
+            stored = (
+                await session.execute(select(Resume).where(Resume.id == resume_id))
+            ).scalar_one()
+
+            assert isinstance(stored.page_spans, list)
+            assert all(isinstance(span, dict) for span in stored.page_spans or ())
+
+            assert stored.document_text is not None
+            restored = ParsedDocument.from_stored(stored.document_text, stored.page_spans)
+            assert restored.pages == document.pages
+
+            offset = restored.text.index("Somchai Jaidee")
+            assert restored.page_for_offset(offset) == 2
 
     async def test_jsonb_operators_query_inside_the_document(
         self,

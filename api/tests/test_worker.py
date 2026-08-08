@@ -186,6 +186,87 @@ class TestJob:
             assert resume.failure_reason == "The stored file is missing."
 
 
+class TestStoredPageSpans:
+    """The job has to leave behind enough to map a *later* quote to a page.
+
+    Extraction never needed this — it reads the live `ParsedDocument`. Judging a
+    requirement resolves a new quote against stored text months afterwards, and
+    `document_text` alone cannot say which page an offset landed on.
+    """
+
+    async def test_the_job_records_where_each_page_begins_and_ends(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await run_resume_job(context, resume_id)
+
+        async with sessionmaker_for_tests() as session:
+            resume = (
+                await session.execute(select(Resume).where(Resume.id == resume_id))
+            ).scalar_one()
+
+            assert resume.page_spans is not None
+            assert len(resume.page_spans) == resume.page_count
+            assert resume.page_spans[0]["page_number"] == 1
+
+    async def test_the_stored_spans_slice_the_stored_text(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """Spans and text are written in the same breath, so they must agree — and
+        a span that indexes past its own text is the bug this catches."""
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await run_resume_job(context, resume_id)
+
+        async with sessionmaker_for_tests() as session:
+            resume = (
+                await session.execute(select(Resume).where(Resume.id == resume_id))
+            ).scalar_one()
+
+            assert resume.document_text is not None
+            assert resume.page_spans is not None
+            spans = resume.page_spans
+            assert spans[0]["char_start"] == 0
+            assert spans[-1]["char_end"] == len(resume.document_text)
+
+    async def test_a_stored_resume_maps_an_offset_back_to_a_page(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """The whole point, exercised the way judging will: rebuild from the row
+        alone — no file read, no re-parse — and ask which page a quote is on."""
+        from app.pipeline.evidence import EvidenceResolver, ResolvedSpan
+        from app.pipeline.parse import ParsedDocument
+
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await run_resume_job(context, resume_id)
+
+        async with sessionmaker_for_tests() as session:
+            resume = (
+                await session.execute(select(Resume).where(Resume.id == resume_id))
+            ).scalar_one()
+            assert resume.document_text is not None
+
+            document = ParsedDocument.from_stored(resume.document_text, resume.page_spans)
+            resolved = EvidenceResolver(document.text).resolve("Somchai Jaidee")
+
+            assert isinstance(resolved, ResolvedSpan)
+            assert document.page_for_offset(resolved.char_start) == 1
+
+
 class TestWorkerWiring:
     async def test_the_task_name_matches_what_the_api_enqueues(self):
         """A rename on one side and not the other would be a silent dead queue."""
