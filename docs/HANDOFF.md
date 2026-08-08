@@ -83,19 +83,19 @@ available.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>. **M3 slice 1 is
-pushed and green on CI** (run `31247527205`, 2026-08-08): 295 passed, 25 skipped on
-a runner with no Tesseract, no database, no MinIO and no API key — the same numbers
-as a local run, which is the opt-in test design doing its job — plus 9 vitest cases
-in `web/`. The only annotations on that run come from inside `actions/setup-node`
-itself (Node's `punycode` and `url.parse` deprecations); nothing in this repo emits
-one.
+`main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything
+through M3 slice 2 is pushed and green on CI** (runs `31247527205` and
+`31248424123`, 2026-08-08): **339 passed, 26 skipped** on a runner with no
+Tesseract, no database, no MinIO and no API key — the same numbers as a local run,
+which is the opt-in test design doing its job — plus 9 vitest cases in `web/`. The
+only annotations on either run come from inside `actions/setup-node` itself (Node's
+`punycode` and `url.parse` deprecations); nothing in this repo emits one.
 
-**Slice 2's two commits are not yet pushed** — `page_spans` + migration `0005`, and
-judging. Check `git rev-list --count origin/main..main` before assuming anything
-here: a batch of verified-but-unpushed commits is the easiest way for local and CI
-to drift apart, and CI is the only thing that tests a clean machine with no `.env`,
-no Docker and no API key.
+Check `git rev-list --count origin/main..main` before assuming that is still true.
+A batch of verified-but-unpushed commits is the easiest way for local and CI to
+drift apart — slice 1 sat in the working tree, uncommitted, for a whole session —
+and CI is the only thing that tests a clean machine with no `.env`, no Docker and
+no API key.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`,
 `mypy app`, `pytest -q`, then `npm ci`/`typecheck`/`lint`/`build`. It has no
