@@ -759,6 +759,19 @@ also tracks the status of every item above.
   (`upgrade head` → `downgrade -1` → `upgrade head`), `alembic check` reports no
   drift, and you have queried it there. Both of migration `0004`'s defects were
   invisible to a green suite.
+- **A migration must also run on SQLite, because CI runs it there.**
+  `.github/workflows/ci.yml` has a `Verify migrations apply and reverse` step that
+  does `alembic upgrade head` → `alembic downgrade base` against
+  `sqlite+aiosqlite:///./var/ci.db`. Postgres passing is therefore only half the
+  check, and the half this project is more likely to do. **SQLite cannot ALTER a
+  constraint onto an existing table at all**, so `op.create_foreign_key` against a
+  table that already exists fails there while passing on Postgres — and declaring the
+  key inline on the column does *not* help, because alembic adds the column and then
+  adds each of its constraints as a separate statement. Use
+  `op.batch_alter_table`, which emits ordinary ALTERs on Postgres and rebuilds the
+  table copy-and-move on SQLite. Migration `0006` was written the wrong way, verified
+  on Postgres, and caught by CI. Run it locally before pushing:
+  `DATABASE_URL=sqlite+aiosqlite:///./var/ci_check.db alembic upgrade head && alembic downgrade base`.
 - **In a migration, name a check constraint with the bare name.** `ck` is the only
   convention in `models/base.py` that interpolates `%(constraint_name)s`, so
   `name="ck_<table>_<rule>"` gets wrapped a second time and `alembic check` reports

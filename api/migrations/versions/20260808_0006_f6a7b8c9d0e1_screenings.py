@@ -86,23 +86,30 @@ def upgrade() -> None:
     op.create_index("ix_screenings_resume_id", "screenings", ["resume_id"])
     op.create_index("ix_screenings_status", "screenings", ["status"])
 
-    op.add_column("llm_call_logs", sa.Column("screening_id", sa.Uuid(), nullable=True))
+    # Batch mode, because SQLite cannot ALTER a constraint onto an existing table
+    # and CI runs `alembic upgrade head` against SQLite (`.github/workflows/ci.yml`).
+    # On Postgres this emits the ordinary ALTERs; on SQLite it rebuilds the table
+    # copy-and-move. Declaring the foreign key inline on the column does *not*
+    # avoid this — alembic adds the column and then adds each of its constraints as
+    # a separate statement, so the inline form fails identically.
+    with op.batch_alter_table("llm_call_logs") as batch_op:
+        batch_op.add_column(sa.Column("screening_id", sa.Uuid(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_llm_call_logs_screening_id_screenings",
+            "screenings",
+            ["screening_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
+
     op.create_index("ix_llm_call_logs_screening_id", "llm_call_logs", ["screening_id"])
-    op.create_foreign_key(
-        "fk_llm_call_logs_screening_id_screenings",
-        "llm_call_logs",
-        "screenings",
-        ["screening_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "fk_llm_call_logs_screening_id_screenings", "llm_call_logs", type_="foreignkey"
-    )
     op.drop_index("ix_llm_call_logs_screening_id", table_name="llm_call_logs")
-    op.drop_column("llm_call_logs", "screening_id")
+    # Batch mode again: dropping the column takes the foreign key with it, and on
+    # SQLite that still means rebuilding the table.
+    with op.batch_alter_table("llm_call_logs") as batch_op:
+        batch_op.drop_column("screening_id")
 
     op.drop_table("screenings")

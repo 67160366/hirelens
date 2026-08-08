@@ -75,6 +75,34 @@ Through the containers against real Gemini, after rebuilding and confirming
 - In `psql`: 21 `extract-v1` rows all carrying `resume_id`, 2 `judge-v1` rows all
   carrying `screening_id`, none crossed.
 
+### A bug found by pushing, again
+
+Migration `0006` round-tripped on real Postgres, `alembic check` was clean, the row
+was queried there, and the whole slice was verified live in the containers. CI still
+went red.
+
+`.github/workflows/ci.yml` has a step nobody had written down anywhere:
+**`Verify migrations apply and reverse` runs `alembic upgrade head` → `downgrade base`
+against SQLite.** And SQLite cannot ALTER a constraint onto an existing table at all,
+so `op.create_foreign_key` on `llm_call_logs` passed on Postgres and failed the
+build.
+
+Two things worth keeping:
+
+1. **Declaring the foreign key inline on the column does not fix it.** That was the
+   obvious first attempt and it fails identically, because alembic adds the column
+   and *then* adds each of its constraints as a separate statement. `op.batch_alter_table`
+   is the answer: ordinary ALTERs on Postgres, copy-and-move rebuild on SQLite. The
+   rebuild was checked rather than trusted — `pragma foreign_key_list` and
+   `index_list` confirm both foreign keys and all three indexes survived.
+2. **"Verified on Postgres" was a half-check that felt like a whole one.** The
+   handoff's own rule said a migration is not verified until it round-trips on real
+   Postgres, which is true and was followed — and was not sufficient. §10 now says
+   both dialects, with the one-line local command.
+
+Same family as the `setup-uv` finding: nothing local could have told me, and CI's own
+output said it immediately.
+
 ### Worth knowing next time
 
 - **`RecordingQueue` means the resume is never processed.** Half of the first test
@@ -99,6 +127,12 @@ Through the containers against real Gemini, after rebuilding and confirming
   how a client learns, without asking, whether its question was already answered.
   That is cheaper than a `stale` flag nobody reads and more honest than always
   re-running.
+- **Ask what your check does *not* cover.** "Verified on real Postgres" was the rule,
+  it was followed, and it still missed a migration that cannot run on the dialect CI
+  uses. The previous advice here was to ask what instrument you used; the sharper
+  version is to ask what the instrument cannot see. Three sessions running, the answer
+  has been "the environment I am not standing in" — which is the argument for pushing
+  early, since CI is the cheapest way to stand somewhere else.
 
 ---
 
