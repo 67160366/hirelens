@@ -29,22 +29,24 @@ OCR confidence question has an answer with numbers behind it.
 
 **M3 — the matching engine — is under way.** Its scope was reviewed with the owner
 on 2026-08-08 and is no longer a draft: the agreed shape, the four decisions behind
-it and the six slices are in `docs/PLAN.md`. **Slice 1 is done** — a job posting and
-its requirements are first-class rows with CRUD behind them. The rest, in order:
-requirement-level judging, screening on the worker, ranking, a thin UI, retrieval.
+it and the six slices are in `docs/PLAN.md`. **Slices 1 and 2 are done** — a job
+posting and its requirements are first-class rows with CRUD behind them, and a
+resume can be judged against those requirements with every match cited. The rest, in
+order: screening on the worker, ranking, a thin UI, retrieval.
 
-The one idea to carry into the remaining slices: **the model is never asked for a
-verdict.** It is asked only for quotes showing a requirement is met, and the
-application derives `met` (a quote resolved) or `not_evidenced` (none did) from
-what `EvidenceResolver` could locate — so judging inherits the guardrail, the
-`dropped` list and the hallucination rate without any of them being re-implemented
-or weakened. §5 says why `not_met` is deliberately not available.
+The one idea to carry into the remaining slices, now shipped rather than planned:
+**the model is never asked for a verdict.** It is asked only for quotes showing a
+requirement is met, and the application derives `met` (a quote resolved) or
+`not_evidenced` (none did) from what `EvidenceResolver` could locate — so judging
+inherits the guardrail, the `dropped` list and the hallucination rate without any of
+them being re-implemented or weakened. §5 says why `not_met` is deliberately not
+available.
 
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 295 passed, 25 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `pytest -q` | 339 passed, 26 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans` and 32 for judging. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -73,21 +75,26 @@ or weakened. §5 says why `not_met` is deliberately not available.
 | The OCR confidence gate, against the real binary | a clean `resume_scanned.pdf` scores 94.8 and passes; the same page at 6px blur scores 47.4 and is refused, where with the gate off it is accepted with "Somchai Jaidee" nowhere in the text (2026-08-08) |
 | Migration `0004` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `alembic check` finds no drift, and the `weight > 0` check constraint refuses a bad row **on Postgres**, not only in the tests (2026-08-08) |
 | **Jobs and requirements, live in the containers** | `api` and `worker` rebuilt first, and `/openapi.json` lists all four `/jobs` routes — the proof the container serves the code just written. Then: create a job with four requirements → read it back in order → a second account gets **404** → `weight: 0` gets **422**. Thai round-trips exactly (`ภาษาไทย`, 7 chars / 21 bytes read straight out of Postgres — the console's mangled rendering was PowerShell 5.1, not the data) (2026-08-08) |
+| Migration `0005` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `page_spans` lands as real `jsonb` (checked in `psql`, not inferred) and `alembic check` finds no drift (2026-08-08) |
+| **Judging, live against Gemini** | `resume_th.pdf` via `app.cli`: a Thai requirement typed as `ปริญญาตรีวิศวกรรมคอมพิวเตอร์` matched the document's own differently-worded `วิศวกรรมศาสตรบัณฑิต สาขาวิศวกรรมคอมพิวเตอร์`, while `ประสบการณ์ Backend อย่างน้อย 3 ปี` came back `not_evidenced` — the resume never states a total, and the never-infer rule held. `resume_en.pdf` 3/5 met on semantic requirements ("Bachelor's degree in engineering" → the Chulalongkorn line). 0 dropped, 0% hallucination rate, every match tier-1 exact, 1 attempt (2026-08-08) |
+| **A judgment's pages come from the row, not a re-parse** | `resume_multipage.pdf` judged against a `ParsedDocument.from_stored` built from stored text + stored spans only: 2/2 met, cited on **pages 2 and 3**, every span slicing back out exactly. That is the screening path end to end, minus the row slice 3 adds (2026-08-08) |
+| Judging's three decisions, mutation-tested | Reverting each in turn — extraction's "fewest dropped" rule, trusting the model's requirement numbering, and letting a claimed match set the verdict — fails 1, 3 and 4 cases of `test_judge.py` respectively. The tests defend the decisions rather than describing them (2026-08-08) |
+| The CLI's old path is untouched | `python -m app.cli` over three fixtures, before and after `--requirement` was added: **identical**, 66 lines, timing masked (2026-08-08) |
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything
-through the close of M2 is pushed and green on CI** (run `31240479417`, 2026-08-08):
-270 passed, 25 skipped on a runner with no Tesseract, no database, no MinIO and no
-API key — the same numbers as a local run, which is the opt-in test design doing its
-job — plus 9 vitest cases in `web/`.
+`main` is on GitHub at <https://github.com/67160366/hirelens>. **M3 slice 1 is
+pushed and green on CI** (run `31247527205`, 2026-08-08): 295 passed, 25 skipped on
+a runner with no Tesseract, no database, no MinIO and no API key — the same numbers
+as a local run, which is the opt-in test design doing its job — plus 9 vitest cases
+in `web/`. The only annotations on that run come from inside `actions/setup-node`
+itself (Node's `punycode` and `url.parse` deprecations); nothing in this repo emits
+one.
 
-**M3 slice 1 is not among them.** It is verified locally and against Postgres and
-the containers, but it is neither committed nor pushed, so CI has never seen the
-`jobs` tables, migration `0004` or the 25 cases that take the suite to 295.
-Check `git rev-list --count origin/main..main` before assuming that is still true —
-a batch of verified-but-unpushed commits is the easiest way for local and CI to
-drift apart, and CI is the only thing that tests a clean machine with no `.env`,
+**Slice 2's two commits are not yet pushed** — `page_spans` + migration `0005`, and
+judging. Check `git rev-list --count origin/main..main` before assuming anything
+here: a batch of verified-but-unpushed commits is the easiest way for local and CI
+to drift apart, and CI is the only thing that tests a clean machine with no `.env`,
 no Docker and no API key.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`,
@@ -167,7 +174,9 @@ api/app/
     ocr.py             OCREngine seam + Tesseract; recovers pages with no text layer,
                        and refuses one it read badly
     extract.py         orchestrates: ask → verify → re-ask → keep the cleanest result
-    prompts.py         versioned prompts (EXTRACTION_PROMPT_VERSION)
+    judge.py           M3: the same shape for requirements — the verdict is *derived*
+                       from what resolved, never taken from the model
+    prompts.py         versioned prompts (EXTRACTION_PROMPT_VERSION, JUDGMENT_…)
   llm/
     base.py            StructuredExtractor interface, error taxonomy, usage/cost types
     fake.py          ★ rule-based extractor over the real document + failure modes
@@ -176,6 +185,8 @@ api/app/
   schemas/
     extraction.py      what the model returns — quotes only, no offsets
     profile.py         what we store — offsets, pages, stats, dropped claims
+    judgment.py        M3: both layers for judging. RequirementSpec is a plain DTO,
+                       so judge.py stays ORM-free the way extract.py is
   models/core.py       candidates, resumes, extracted_profiles, llm_call_logs
   models/matching.py   M3: jobs and the requirements they are screened by
   storage.py           LocalStorage / MinioStorage behind one interface
@@ -300,6 +311,28 @@ Worth reading once, because the request no longer does the work.
   project exists to refuse. It is also the honest label: the system cannot tell "the
   candidate lacks it" from "the resume does not mention it", and one of those is a
   statement about a person.
+- **Judging's retry loop keeps the most *met*, not the fewest dropped** (M3 slice 2).
+  `extract_profile` keeps the attempt with the fewest rejections, which is right for
+  a profile because every field is independent. It is wrong for judging: the retry
+  prompt tells the model to leave a requirement out rather than reword a rejected
+  quote, so a compliant second attempt can answer about nothing at all and score zero
+  rejections — and on extraction's rule that empty answer wins, silently discarding
+  requirements the first attempt had proven with real citations. `_is_better` in
+  `pipeline/judge.py` prefers more `met`, then fewer dropped. Mutation-tested: swap it
+  for extraction's rule and `test_judge.py` fails.
+- **A model refers to a requirement by number, and a bad number is a fabrication**
+  (M3 slice 2). 1-based index rather than UUID: far cheaper in tokens, and unlike a
+  garbled UUID an out-of-range integer is something the verifier can catch. It lands
+  in `dropped` as `RejectReason.UNKNOWN_REQUIREMENT` — pointing at a requirement that
+  does not exist is the same class of claim as quoting text that is not there, so it
+  belongs in the same counter. Duplicate numbers **merge** rather than overwrite,
+  because a model splitting one requirement's answer across two entries has still
+  answered, and dropping the second would lose verifiable evidence in silence.
+- **The requirement list sits outside `<resume>` in the prompt** (M3 slice 2). Not
+  cosmetic: `app/llm/fake.py` locates the document by that exact block, so a list
+  inside it would be quoted as though it were the resume and every quote would fail
+  verification. It also matches what the model is told — a requirement's own wording
+  is never evidence that a candidate meets it, and `test_judge.py` pins that.
 - **A requirement is an input, not a claim, so it needs no evidence** (M3).
   Requirements are typed in through CRUD rather than decomposed out of a pasted job
   description by a model. Nothing here is a statement about a candidate, so the
@@ -454,6 +487,19 @@ want the retry policy run the ARQ worker.
 - **Ambiguous citations are flagged, not resolved.** A quote like `Python` appearing
   in both a bullet and a skills list is reported ambiguous rather than guessed.
   A worthwhile refinement is to prefer the skills-section span for skill claims.
+- **`_reference` is duplicated between `extract.py` and `judge.py`** — the ~15 lines
+  that resolve a quote and record the outcome either way. A shared home would have to
+  import both `pipeline.evidence` and `schemas.profile`, and `schemas.profile` already
+  imports `evidence`, so it needs a new module rather than a function moved into an
+  existing one. Deliberately deferred: extracting it means editing `extract.py`, the
+  most load-bearing file after `evidence.py`, in the same milestone that already has
+  to pull `decide_retry` out of `jobs.py`. Worth doing when something wants it a third
+  time.
+- **Judging never sees `must_have` or `weight`, and that is the point.** They travel
+  on `RequirementSpec` and come back on `RequirementJudgment` untouched, for ranking
+  (slice 4) to read. Whether a requirement is evidenced is a question about the
+  document; how much it matters is a question about the job. A judge that consulted
+  the weight would be scoring, which is the thing this milestone refuses to become.
 - **A resume stuck at `processing` is never reaped.** If a worker dies mid-job
   nothing sweeps the row back to `pending`; the job that redelivers it will skip it
   as already claimed. A visibility timeout on `last_attempt_at` would fix it and
@@ -593,27 +639,31 @@ free.
 | # | Work | Status |
 |---|---|---|
 | 1 | Jobs and requirements as rows, with CRUD | **done** — `models/matching.py`, `api/routes/jobs.py`, migration `0004`, `tests/test_jobs.py` |
-| 2 | Requirement-level judging | next — `pipeline/judge.py` + `schemas/judgment.py`, written as twins of `extract.py` / `extraction.py` |
-| 3 | Screening as a row, on the background worker | shares the retry policy via a pure `decide_retry` extracted from `app/jobs.py` |
+| 2 | Requirement-level judging | **done** — `pipeline/judge.py` + `schemas/judgment.py`, `page_spans` + migration `0005`, `fake.py` teaching, `--requirement` on the CLI, `tests/test_judge.py` |
+| 3 | Screening as a row, on the background worker | next — shares the retry policy via a pure `decide_retry` extracted from `app/jobs.py` |
 | 4 | Ranking across candidates | a pure function, no model; must-haves gate, citations are the rationale |
 | 5 | A thin web UI | job authoring, verdicts, citation highlighting through the existing `DocumentPane` |
 | 6 | Retrieval — the pre-filter | `Retriever` seam; lexical default, pgvector opt-in |
 
-**Three things to know before starting slice 2:**
+**Four things to know before starting slice 3:**
 
-1. **`app/llm/fake.py` has to learn `RawJudgment` first.** It raises for any schema
-   that is not `RawExtraction`, so until it answers judgments the whole suite and CI
-   would need an API key — and "`git clone && pytest -q` works with no servers" is
-   the load-bearing property §2 describes. This is not optional work inside the
-   slice.
-2. **Page spans are not stored yet.** `resumes` keeps `document_text` verbatim but
-   not the page boundaries, so a *new* quote located in stored text cannot be mapped
-   to a page. Slice 2 adds `page_spans` (migration `0005`), written at parse time
-   from `document.pages`. Rows extracted before it keep `NULL` and their judgment
-   citations report page 1 — a safe backfill is impossible without re-parsing under
-   the identical OCR configuration, which is exactly what `reparse_document`'s
-   docstring warns about.
-3. **One model call per screening, carrying the whole `document_text`** — not one
+1. **`judge_requirements` is pure and takes no ORM.** It wants a `ParsedDocument`, a
+   `list[RequirementSpec]` and an extractor. Slice 3 builds the document with
+   `ParsedDocument.from_stored(resume.document_text, resume.page_spans)` — never
+   `reparse_document`, which reads the file again and can shift offsets — and the
+   specs from `JobRequirement` rows. That seam is why `tests/test_judge.py` needs no
+   database.
+2. **The screening row needs its own `prompt_version`.** `LLMCallLog.prompt_version`
+   is written with `EXTRACTION_PROMPT_VERSION` today; a judging call must record
+   `JUDGMENT_PROMPT_VERSION` or the two prompt families become indistinguishable in
+   the cost table. `LLMCallLog.resume_id` also assumes a resume — a screening's calls
+   need somewhere to hang.
+3. **`requirements_hash` has to cover what the judge actually saw.** The prompt
+   carries `kind`, `label` and `detail` **and their order**, so a reorder changes the
+   result and must change the hash. `must_have` and `weight` do not reach the judge
+   at all — they are ranking's inputs — so a change to either should stale a
+   *ranking*, not a screening.
+4. **One model call per screening, carrying the whole `document_text`** — not one
    call per requirement. Requirement count × resume count is this milestone's cost
    multiplier, and slice 6 exists to keep the resume side of that product small.
 

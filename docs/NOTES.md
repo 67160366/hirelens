@@ -6,7 +6,135 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-08 (latest) — M3 is scoped, and its first slice lands
+## 2026-08-08 (latest) — slice 1 is finally pushed, and judging lands
+
+Three commits. The first was written last session and had been sitting in the
+working tree ever since.
+
+| | Commit |
+|---|---|
+| `e69677f` | Add jobs and the requirements a candidate is screened against |
+| `0b3b830` | Store the page boundaries a stored quote maps back to |
+| `2fb1f11` | Judge a requirement by the quotes that prove it, or not at all |
+
+Suite **295 → 339 passing**, 26 skipped. `e69677f` is green on CI (run
+`31247527205`) with the same 295/25 a local run gives, on a machine with no
+Tesseract, no database, no MinIO and no API key.
+
+### The thing to do first, again
+
+Slice 1 had been verified against Postgres, against the containers and in a live
+run — and was **committed nowhere**. `git rev-list --count origin/main..main`
+answered `0`, which is the reading that matters: not "some commits are waiting" but
+"CI has never seen any of this". Pushing it took four minutes and the answer came
+back in one.
+
+It also mattered *this* session specifically, because slice 2 modifies
+`app/llm/fake.py`, which the entire suite depends on. Had that broken with slice 1
+still uncommitted, the two failures would have been indistinguishable. **Push before
+touching shared infrastructure, not after.**
+
+### What landed
+
+**`page_spans` first, as its own commit.** `resumes` stored `document_text`
+verbatim but not where its pages ended, so a quote located in that text *later* —
+which is exactly what judging does — had no way to name a page. `ParsedDocument`
+gained `stored_page_spans` and `from_stored`, written next to each other because
+they are the two halves of one round trip. The distinction worth keeping: the
+existing `reparse_document` goes back to the *file* and, under a different OCR
+configuration, can move every offset after a rescued page; `from_stored` parses
+nothing and cannot. Not backfilled, for that same reason — pre-`0005` rows report
+page 1, which is the honest answer for a row that never recorded its boundaries.
+
+**Judging.** `pipeline/judge.py` + `schemas/judgment.py` as twins of
+`extract.py` / `extraction.py`, reusing `EvidenceRef`, `DroppedClaim` and
+`EvidenceStats` unchanged — which is why the hallucination rate covers judging
+without a line of new metric code. `app/llm/fake.py` learned `RawJudgment`, not
+optional: it raised for every other schema, so the suite and CI would have needed an
+API key.
+
+### Three decisions, and how each was checked rather than assumed
+
+**1. The retry loop must NOT copy `extract_profile`.** Extraction keeps the attempt
+with the fewest rejections. The judging retry prompt tells the model to *leave a
+requirement out* rather than reword a bad quote — so a compliant second attempt can
+answer about nothing, score zero rejections, and on extraction's rule **win**,
+throwing away requirements the first attempt had proven with real citations.
+`_is_better` prefers more `met`, then fewer dropped.
+
+**2. A requirement is referred to by 1-based number, not UUID.** Cheaper in tokens
+by an order of magnitude across 30 requirements, and — the real reason — a garbled
+UUID is unrecoverable while an out-of-range integer is catchable. It becomes
+`RejectReason.UNKNOWN_REQUIREMENT`: pointing at a requirement that does not exist is
+the same class of claim as quoting text that is not there. Duplicate numbers merge
+instead of overwriting, which would lose verifiable evidence silently.
+
+**3. The requirement list goes outside `<resume>`.** `fake.py` finds the document by
+that exact block, so a list inside it gets quoted as though it were the resume.
+
+All 32 tests passed on the first run, which is the point at which this project's own
+advice says to stop and ask whether they *could* have failed. So each of the three
+decisions was reverted in a throwaway pytest plugin and the real suite re-run:
+**1, 3 and 4 cases fail** respectively. The tests defend the decisions rather than
+describing them. That is twenty minutes well spent, and it is the cheap version of
+the habit the fixture lessons keep teaching.
+
+### Verified by running it
+
+- Migration `0005`: `upgrade head` → `downgrade -1` → `upgrade head` on real
+  Postgres, `alembic check` clean, and `page_spans` confirmed `jsonb` **in `psql`**
+  rather than inferred from a green suite.
+- **Live Gemini, `resume_th.pdf`**: a requirement typed as
+  `ปริญญาตรีวิศวกรรมคอมพิวเตอร์` matched the document's own, differently worded
+  `วิศวกรรมศาสตรบัณฑิต สาขาวิศวกรรมคอมพิวเตอร์` — real semantic matching with an
+  exact quote. And `ประสบการณ์ Backend อย่างน้อย 3 ปี` came back `not_evidenced`,
+  because the resume never states a total: the never-infer rule holding on a
+  question it would have been easy to answer wrongly.
+- **`resume_multipage.pdf` judged through `from_stored`** — stored text plus stored
+  spans, no file read — cited on pages 2 and 3 with every span slicing back out
+  exactly. That is the screening path end to end, minus the row slice 3 adds.
+- The CLI's old path: three fixtures, before and after, **identical** output.
+
+### Still open, in order
+
+1. **Push the two slice-2 commits.** Same lesson as the top of this entry.
+2. **Slice 3 — screening as a row on the worker.** `HANDOFF.md` §9 now lists four
+   things to know first, including two that are easy to get wrong: a judging call
+   must log `JUDGMENT_PROMPT_VERSION`, and `requirements_hash` should cover what the
+   judge actually saw (kind, label, detail, order) but *not* `must_have`/`weight`,
+   which are ranking's inputs.
+3. Slices 4–6: ranking, the thin UI, retrieval.
+4. The visibility timeout for a worker that dies mid-job (M5) is still the last §11
+   follow-up.
+
+### Worth knowing next time
+
+- **`_reference` is now duplicated** between `extract.py` and `judge.py`, ~15 lines.
+  Deferred on purpose (`HANDOFF.md` §7): a shared home needs a new module, because
+  `schemas.profile` already imports `pipeline.evidence`, and extracting it means
+  editing `extract.py` in the same milestone that must also pull `decide_retry` out
+  of `jobs.py`. Do it when something wants it a third time.
+- **The fake quotes the whole line a label sits on, not the label.** Real skills are
+  short — "Go", "AWS", "SQL" — and `MIN_QUOTE_CHARS` is 4, so quoting the label would
+  reject legitimate requirements before they ever reached a verdict.
+- `ruff format` and the E501 rule can disagree about a long test name; run the
+  formatter *after* the last edit, not before.
+
+### Advice for the owner
+
+- **The "could this have failed?" habit now has a cheap mechanical form.** Writing a
+  ten-line pytest plugin that reverts one decision, then running the real suite
+  against it, answers in seconds what staring at a green tick never will. Worth doing
+  for any decision documented as deliberate — if reverting it fails nothing, either
+  the decision or the test is decorative.
+- **Notice when a rule from one module stops applying in the next.** Judging looks
+  like extraction everywhere except the one place it must not be, and copying
+  `extract_profile`'s tiebreak would have produced a system that quietly discarded
+  proven evidence. Twins are worth writing; twins are also worth diffing.
+
+---
+
+## 2026-08-08 — M3 is scoped, and its first slice lands
 
 M2's handoff asked for one thing before any M3 code: **review the scope, because
 `PLAN.md`'s M3 was a draft reconstructed from the README rather than a set of

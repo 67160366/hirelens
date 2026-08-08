@@ -201,7 +201,11 @@ And three taken by default: a job is owned by a `Candidate` row (RBAC widens *wh
 in M4 without changing the table); a screening is a first-class row with its own
 background job, **sharing** the retry policy rather than copying it; and
 `resumes.page_spans` is stored so a judgment quote maps to a page without
-re-parsing.
+re-parsing — shipped in migration `0005` with `ParsedDocument.from_stored`, which
+rebuilds a document from the row alone and parses nothing, deliberately unlike
+`reparse_document`. Not backfilled: pre-`0005` rows report page 1, because filling
+them in would mean re-parsing every stored file under the identical OCR
+configuration.
 
 **The idea that makes the guardrail generalize:** the model is never asked for a
 verdict. It is asked only for quotes showing a requirement is met, and to omit the
@@ -229,14 +233,31 @@ not mention it".
   `RequirementKind` persists as enum **names** (`SKILL`), like `ResumeStatus`
   before it, so the migration declares the upper-case forms rather than repeating
   `0001`'s misleading value list.
-- [ ] 2. **Requirement-level judging** — `app/pipeline/judge.py` and
-  `app/schemas/judgment.py`, written as twins of `extract.py` / `extraction.py`.
-  Reuses `EvidenceResolver` unchanged, and reuses `EvidenceRef`, `DroppedClaim` and
-  `EvidenceStats` from `schemas/profile.py` wholesale, so the hallucination metric
-  covers judging for free. One model call per screening, carrying the whole
-  `document_text`. Needs `resumes.page_spans` (migration `0005`) and — not
-  optional — `app/llm/fake.py` taught to answer `RawJudgment`, or the suite and CI
-  would need an API key.
+- [x] 2. **Requirement-level judging** (2026-08-08). `app/pipeline/judge.py` and
+  `app/schemas/judgment.py`, twins of `extract.py` / `extraction.py`. `EvidenceRef`,
+  `DroppedClaim` and `EvidenceStats` are reused **unchanged**, so the hallucination
+  metric covers judging for free and no part of the guardrail was reimplemented. One
+  model call per screening carries the whole document and the whole requirement list.
+  `resumes.page_spans` landed first as its own commit (migration `0005`), and
+  `app/llm/fake.py` learned `RawJudgment` — not optional, since it raises for any
+  other schema and the suite would otherwise need an API key.
+  Three decisions inside it:
+  **the model refers to a requirement by 1-based number, not UUID** — cheaper in
+  tokens, and unlike a garbled UUID an out-of-range number is something the verifier
+  can catch, so it becomes `RejectReason.UNKNOWN_REQUIREMENT` rather than vanishing,
+  while duplicate numbers merge instead of overwriting;
+  **the retry loop keeps the attempt with the most requirements *met***, where
+  `extract_profile` keeps the fewest rejections — the retry prompt tells the model to
+  leave a requirement out rather than reword a bad quote, so a compliant second
+  attempt can answer about nothing, score zero rejections, and on extraction's rule
+  win while discarding requirements the first attempt had proven;
+  and **an empty requirement list never reaches the model**, because this path runs
+  once per resume per job.
+  `--requirement kind:label` on `app/cli.py` is a flag rather than a subcommand, so
+  the bare command `CLAUDE.md` names stays byte-identical — verified by diffing three
+  fixtures against the previous commit's CLI. Pinned by `tests/test_judge.py` (32
+  cases; suite 307 → 339), and the three decisions above were each confirmed
+  load-bearing by mutating the code and watching the suite fail.
 - [ ] 3. **Screening as a row, on the background worker** — `screenings` with the
   same four job-state columns `Resume` carries, its result JSON, its stats lifted
   into real columns, and a `requirements_hash` so a result whose requirements have
