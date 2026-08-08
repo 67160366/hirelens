@@ -1,11 +1,18 @@
-"""Run the extraction pipeline from the terminal.
+"""Run the extraction or judging pipeline from the terminal.
 
     python -m app.cli path/to/resume.pdf
     python -m app.cli path/to/resume.pdf --provider gemini
+    python -m app.cli path/to/resume.pdf --requirement skill:Python
 
 Exists for three reasons: it proves the pipeline end-to-end without the web stack,
 it is the fastest way to eyeball a new document's output while tuning prompts, and
 it prints the verification counters that M6's metrics will aggregate.
+
+`--requirement` is a flag rather than a subcommand on purpose. The bare form above
+is named in `CLAUDE.md` as this project's fastest sanity check, and moving it under
+a subcommand would break the one command everybody already types. With no
+`--requirement` the run is exactly what it was — the same "the old path stays the
+old path" rule that made column detection safe to ship.
 """
 
 from __future__ import annotations
@@ -19,9 +26,11 @@ from app.config import LLMProvider, get_settings
 from app.llm.base import LLMError
 from app.llm.registry import build_extractor
 from app.pipeline.extract import ExtractionOutcome, extract_profile
+from app.pipeline.judge import JudgmentOutcome, judge_requirements
 from app.pipeline.ocr import OCRError, build_ocr_engine
 from app.pipeline.parse import ParseError, parse_document
-from app.schemas.profile import EvidenceRef
+from app.schemas.judgment import RequirementSpec, Verdict
+from app.schemas.profile import EvidenceRef, EvidenceStats
 
 
 def _cite(reference: EvidenceRef) -> str:
@@ -30,6 +39,66 @@ def _cite(reference: EvidenceRef) -> str:
         quote = quote[:57] + "..."
     flag = " [AMBIGUOUS]" if reference.is_ambiguous else ""
     return f'p{reference.page} {reference.char_start}-{reference.char_end} "{quote}"{flag}'
+
+
+def _parse_requirement(index: int, raw: str) -> RequirementSpec:
+    """Read one `kind:label` argument, or a bare `label` for kind `other`.
+
+    Split on the *first* colon, so `experience:3+ years backend` works and a label
+    that itself contains a colon keeps everything after the first one.
+    """
+    kind, separator, label = raw.partition(":")
+    if not separator:
+        kind, label = "other", raw
+
+    label = label.strip()
+    if not label:
+        raise ValueError(f"requirement {raw!r} has no label")
+
+    return RequirementSpec(id=f"cli-{index}", label=label, kind=kind.strip().casefold() or "other")
+
+
+def _print_stats(
+    stats: EvidenceStats, *, cost_usd: float | None, latency_ms: int, prefix: str = ""
+) -> None:
+    cost = "unknown" if cost_usd is None else f"${cost_usd:.6f}"
+    print(
+        f"\n{prefix}verified {stats.verified}/{stats.total_claims}"
+        f"  hallucination_rate {stats.hallucination_rate:.2%}"
+        f"  attempts {stats.attempts}"
+        f"  {latency_ms}ms"
+        f"  cost {cost}"
+    )
+    if stats.by_match_kind:
+        kinds = ", ".join(f"{kind}={count}" for kind, count in stats.by_match_kind.items())
+        print(f"match kinds: {kinds}")
+
+
+def _print_judgment_report(outcome: JudgmentOutcome, *, source: Path) -> None:
+    judgment = outcome.judgment
+    print(f"\n=== {source.name} ===")
+
+    for item in judgment.requirements:
+        # "NOT EVIDENCED", never "not met": the system cannot tell a candidate who
+        # lacks something from a resume that does not mention it.
+        mark = "MET" if item.verdict is Verdict.MET else "NOT EVIDENCED"
+        gate = "  (must have)" if item.must_have else ""
+        print(f"[{mark:^13}] {item.label}{gate}")
+        for reference in item.evidence:
+            print(f"{'':15}↳ {_cite(reference)}")
+
+    if judgment.dropped:
+        print(f"\nDropped — quote not found in the document ({len(judgment.dropped)})")
+        for dropped in judgment.dropped:
+            print(f"  ! {dropped.field}: {dropped.value!r} [{dropped.reason}]")
+            print(f"      claimed quote: {dropped.quote!r}")
+
+    _print_stats(
+        judgment.stats,
+        cost_usd=outcome.total_cost_usd,
+        latency_ms=outcome.total_latency_ms,
+        prefix=f"met {judgment.met_count}/{len(judgment.requirements)}  ",
+    )
 
 
 def _print_report(outcome: ExtractionOutcome, *, source: Path) -> None:
@@ -72,21 +141,16 @@ def _print_report(outcome: ExtractionOutcome, *, source: Path) -> None:
             print(f"  ! {dropped.field}: {dropped.value!r} [{dropped.reason}]")
             print(f"      claimed quote: {dropped.quote!r}")
 
-    stats = profile.stats
-    cost = "unknown" if outcome.total_cost_usd is None else f"${outcome.total_cost_usd:.6f}"
-    print(
-        f"\nverified {stats.verified}/{stats.total_claims}"
-        f"  hallucination_rate {stats.hallucination_rate:.2%}"
-        f"  attempts {stats.attempts}"
-        f"  {outcome.total_latency_ms}ms"
-        f"  cost {cost}"
+    _print_stats(
+        profile.stats, cost_usd=outcome.total_cost_usd, latency_ms=outcome.total_latency_ms
     )
-    if stats.by_match_kind:
-        kinds = ", ".join(f"{kind}={count}" for kind, count in stats.by_match_kind.items())
-        print(f"match kinds: {kinds}")
 
 
-async def _run(paths: list[Path], provider: LLMProvider | None) -> int:
+async def _run(
+    paths: list[Path],
+    provider: LLMProvider | None,
+    requirements: list[RequirementSpec],
+) -> int:
     settings = get_settings()
     if provider is not None:
         settings = settings.model_copy(update={"llm_provider": provider})
@@ -130,15 +194,27 @@ async def _run(paths: list[Path], provider: LLMProvider | None) -> int:
                 )
 
             try:
-                outcome = await extract_profile(
-                    document, extractor, max_attempts=settings.extraction_max_attempts
-                )
+                if requirements:
+                    judgment = await judge_requirements(
+                        document,
+                        requirements,
+                        extractor,
+                        max_attempts=settings.judgment_max_attempts,
+                    )
+                else:
+                    outcome = await extract_profile(
+                        document, extractor, max_attempts=settings.extraction_max_attempts
+                    )
             except LLMError as exc:
-                print(f"\n=== {path.name} ===\nextraction failed: {exc}", file=sys.stderr)
+                what = "judging" if requirements else "extraction"
+                print(f"\n=== {path.name} ===\n{what} failed: {exc}", file=sys.stderr)
                 exit_code = 1
                 continue
 
-            _print_report(outcome, source=path)
+            if requirements:
+                _print_judgment_report(judgment, source=path)
+            else:
+                _print_report(outcome, source=path)
     finally:
         await extractor.aclose()
 
@@ -146,7 +222,9 @@ async def _run(paths: list[Path], provider: LLMProvider | None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Extract a verified profile from a resume.")
+    parser = argparse.ArgumentParser(
+        description="Extract a verified profile from a resume, or judge it against requirements."
+    )
     parser.add_argument("paths", nargs="+", type=Path, help="Resume file(s) to process.")
     parser.add_argument(
         "--provider",
@@ -155,8 +233,27 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override LLM_PROVIDER for this run.",
     )
+    parser.add_argument(
+        "--requirement",
+        action="append",
+        default=[],
+        metavar="KIND:LABEL",
+        help=(
+            "Judge the resume against this requirement instead of extracting a "
+            "profile. Repeat for more. KIND is one of skill, experience, education, "
+            "language, other; a bare LABEL means other."
+        ),
+    )
     args = parser.parse_args(argv)
-    return asyncio.run(_run(args.paths, args.provider))
+
+    try:
+        requirements = [
+            _parse_requirement(index, raw) for index, raw in enumerate(args.requirement)
+        ]
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    return asyncio.run(_run(args.paths, args.provider, requirements))
 
 
 if __name__ == "__main__":

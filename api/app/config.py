@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     # How many times to re-ask the model when its evidence fails validation.
     extraction_max_attempts: int = Field(default=2, ge=1, le=5)
 
+    # The same, for judging a resume against a job's requirements. Separate from
+    # the above because the cost profiles differ: extraction runs once per resume,
+    # while screening runs once per resume *per job*, so this is the knob that
+    # multiplies.
+    judgment_max_attempts: int = Field(default=2, ge=1, le=5)
+
     # How many times a job may fail before the resume is dead-lettered. Counts
     # consecutive failures, so a success or a manual retry clears the budget.
     job_max_attempts: int = Field(default=3, ge=1, le=10)

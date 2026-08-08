@@ -47,6 +47,16 @@ class RejectReason(StrEnum):
     TOO_SHORT = "too_short"
     NOT_FOUND = "not_found"
 
+    UNKNOWN_REQUIREMENT = "unknown_requirement"
+    """The judge produces this one; `EvidenceResolver` never returns it.
+
+    It lives here anyway because `DroppedClaim.reason` is typed `RejectReason`, and
+    reusing `DroppedClaim` unchanged is what makes the hallucination rate cover
+    judging for free. A model that attaches quotes to a requirement number nobody
+    asked about has pointed at something that is not there, which is the same class
+    of fabrication as a quote that is not in the document — so it is dropped and
+    counted rather than discarded quietly (`app/pipeline/judge.py`)."""
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedSpan:

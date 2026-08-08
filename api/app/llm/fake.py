@@ -1,4 +1,4 @@
-"""A fixture-free fake extractor: real rule-based extraction over the real document.
+"""A fixture-free fake backend: real rule-based work over the real document.
 
 The important property is that every quote it emits is copied out of the document
 it was given. That makes it useful for far more than stubbing a return value —
@@ -6,9 +6,15 @@ the whole pipeline, evidence validation included, runs truthfully against any
 document with no API key and no spend. Tests assert on real behaviour instead of
 on a canned blob.
 
-It is deliberately dumb: sections by heading, roles by regex. It exists to exercise
-the plumbing, not to compete with a model. `FakeMode` lets a test ask for the
-failure shapes that matter — a fabricated quote, or an unreachable backend.
+It answers both of the schemas this system asks for: `RawExtraction` (a profile)
+and `RawJudgment` (which of a job's requirements the resume evidences). Judging had
+to be taught here rather than mocked per test, because `git clone && pytest -q`
+working with no servers and no API key is load-bearing — see `docs/HANDOFF.md` §2.
+
+It is deliberately dumb: sections by heading, roles by regex, requirements by
+substring. It exists to exercise the plumbing, not to compete with a model.
+`FakeMode` lets a test ask for the failure shapes that matter — a fabricated quote,
+or an unreachable backend.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from app.schemas.extraction import (
     RawSkill,
     Seniority,
 )
+from app.schemas.judgment import RawJudgment, RawRequirementMatch
 
 
 class FakeMode(StrEnum):
@@ -92,6 +99,26 @@ def _document_from_prompt(user: str) -> str:
     """
     match = _RESUME_BLOCK.search(user)
     return match.group("document") if match else user
+
+
+# "3. [skill] PostgreSQL" — the numbering `build_judgment_user_prompt` writes and
+# `RawRequirementMatch.requirement` refers back to.
+_REQUIREMENT_LINE = re.compile(r"^\s*(?P<number>\d+)\.\s*\[[^\]]*\]\s*(?P<label>.+?)\s*$")
+
+
+def _requirements_from_prompt(user: str) -> list[tuple[int, str]]:
+    """Read the numbered requirement list back out of a judging prompt.
+
+    Only the part *before* `<resume>` is scanned. A real resume can easily contain
+    a line that looks like "1. [something] ...", and treating one as a requirement
+    would have the fake answer about the document's own bullet points.
+    """
+    head = user.split("<resume>", 1)[0]
+    return [
+        (int(match.group("number")), match.group("label"))
+        for line in head.splitlines()
+        if (match := _REQUIREMENT_LINE.match(line)) is not None
+    ]
 
 
 def _classify_heading(line: str) -> str | None:
@@ -154,13 +181,19 @@ class FakeExtractor(StructuredExtractor):
         if self.mode is FakeMode.UNAVAILABLE:
             raise LLMUnavailableError("fake backend is configured as unavailable")
 
-        if schema is not RawExtraction:
+        if schema is not RawExtraction and schema is not RawJudgment:
             raise LLMResponseError(
-                f"{type(self).__name__} only produces RawExtraction, not {schema.__name__}"
+                f"{type(self).__name__} produces RawExtraction or RawJudgment, "
+                f"not {schema.__name__}"
             )
 
         started = time.perf_counter()
-        extraction = self._extract_from(_document_from_prompt(user))
+        document = _document_from_prompt(user)
+        value: RawExtraction | RawJudgment = (
+            self._extract_from(document)
+            if schema is RawExtraction
+            else self._judge(document, _requirements_from_prompt(user))
+        )
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         usage = LLMUsage(
@@ -172,7 +205,7 @@ class FakeExtractor(StructuredExtractor):
             cost_usd=0.0,
         )
         # The schema check above guarantees the cast is sound.
-        return StructuredResult(value=extraction, usage=usage, raw_text="")  # type: ignore[arg-type]
+        return StructuredResult(value=value, usage=usage, raw_text="")  # type: ignore[arg-type]
 
     def _extract_from(self, document: str) -> RawExtraction:
         sections = _sectionize(document)
@@ -234,3 +267,46 @@ class FakeExtractor(StructuredExtractor):
             experiences=experiences,
             education=education,
         )
+
+    def _judge(self, document: str, requirements: list[tuple[int, str]]) -> RawJudgment:
+        """Report the requirements whose label appears in the document.
+
+        **Quotes the whole line the label sits on, not the label.** A label like
+        "Go" is under `MIN_QUOTE_CHARS` and would be rejected as too short before it
+        ever reached a verdict; a line is real evidence, and it is still copied
+        character-for-character out of the document, which is the property that
+        makes this worth more than a canned response.
+
+        A requirement whose label is nowhere in the document is simply left out —
+        that omission is what the pipeline turns into `not_evidenced`. One quote per
+        requirement, deliberately: a test that needs a specific shape (several
+        quotes, a duplicate number, an unknown number) scripts it directly, the way
+        `tests/test_extract.py` scripts extractions the rule-based path cannot pose.
+        """
+        lines = [line.strip() for line in document.splitlines()]
+        matches: list[RawRequirementMatch] = []
+
+        for number, label in requirements:
+            needle = label.casefold()
+            quote = next((line for line in lines if line and needle in line.casefold()), None)
+            if quote is not None:
+                matches.append(RawRequirementMatch(requirement=number, quotes=[quote]))
+
+        if self.mode is FakeMode.HALLUCINATING and requirements:
+            # Attach the fabrication to a requirement the document does *not*
+            # evidence, wherever one exists. That is the sharper test: a made-up
+            # quote must not be able to manufacture a `met` verdict, and here it
+            # has nothing real beside it to hide behind.
+            evidenced = {match.requirement for match in matches}
+            target = next(
+                (number for number, _ in requirements if number not in evidenced),
+                requirements[-1][0],
+            )
+            for match in matches:
+                if match.requirement == target:
+                    match.quotes.append(_FABRICATED_QUOTE)
+                    break
+            else:
+                matches.append(RawRequirementMatch(requirement=target, quotes=[_FABRICATED_QUOTE]))
+
+        return RawJudgment(matches=matches)
