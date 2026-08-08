@@ -6,6 +6,87 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
+## 2026-08-08 (latest) — the whole stack runs in containers
+
+Driven by a course deliverable ("REST API + Docker & Docker Compose จัดการ
+container"), which turned out to want the one thing the project genuinely lacked:
+`docker-compose.yml` managed only postgres/redis/minio, while the API, the worker
+and the web client all ran on the host by hand — **and the repository had no
+Dockerfile at all**. That is M5's "containerize API + web", pulled forward.
+
+`docker compose up -d --build` on a fresh clone now brings up seven services and
+needs no Python, Node or Tesseract on the host.
+
+### The decisions inside it
+
+- **One image for the API and the worker, two commands.** `app/worker.py` is a thin
+  adapter over `app/jobs.py`; two images would let their dependencies drift apart
+  with nothing to catch it.
+- **Migrations are their own one-shot service**, gated on `postgres` being healthy,
+  with `api` and `worker` gated on it having *completed*. Running `alembic upgrade
+  head` from an entrypoint instead would have two replicas racing on the same
+  database.
+- **Tesseract with `tha`+`eng` is installed in the API image.** The `OCR_COMMAND`
+  full-path quirk (HANDOFF §8) exists because this machine's Tesseract is portable
+  and off PATH; inside the image it is just `tesseract`. Still `OCR_ENGINE=none` by
+  default — the rule was never "OCR is hard to install", it was "a scan must fail
+  loudly rather than depend on a hidden default".
+- **`.env` is read by compose on the host and passed in as environment; it never
+  enters an image.** It holds a real Gemini key.
+- **`NEXT_PUBLIC_API_BASE` is a build argument, not an environment variable.** Next
+  inlines `NEXT_PUBLIC_*` at build time, so setting it under `environment:` would do
+  exactly nothing. It also has to be an address a *browser* can reach —
+  `http://api:8000` resolves between services and fails in every browser.
+
+Also added **`POST /auth/change-password`**, the one genuinely missing auth feature.
+Deliberately *not* added: `GET /users` (letting one candidate enumerate others is a
+vulnerability, not a feature — RBAC/PDPA is M4), `POST /logout` (meaningless on
+stateless JWTs without a denylist, and an endpoint that returns 200 while revoking
+nothing is worse than none), and a username-availability check (an
+account-enumeration oracle, which `/auth/login`'s single error message exists to
+avoid).
+
+### Verified live, not only by tests
+
+Against the containers, with Postgres + Redis + the ARQ worker + **real Gemini**:
+
+- `/openapi.json` lists `/auth/change-password` — proof the container serves the
+  code just written, per the standing rule about zombie servers.
+- Full auth journey: register → login → me → change-password → the old password is
+  refused 401 → the new one logs in → a wrong current password is refused 403.
+- `resume_th.pdf`: upload answered `pending` in **14 ms**, worker finished in 7.9 s,
+  **10/10 verified, 0 dropped**, every match tier-1 exact, **10/10 spans slicing back
+  out of `document_text`**.
+- `resume_scanned.pdf`: `extracted` with **`pages_from_ocr=[1]`**, 7/7 verified, 7/7
+  spans exact — the Tesseract *in the image* read it, Thai included.
+- The worker log shows `worker started: provider=gemini storage=local ocr=tesseract`
+  and arq taking the job, so the work really left the request. No PII in the log:
+  ids, counts and durations only.
+- CORS preflight from `http://localhost:3000` returns the origin back.
+- The web bundle contains `localhost:8000` and **not** `http://api:8000`.
+
+Suite: **209 → 214 passing** (the five new `TestChangePassword` cases), 12 skipped,
+1 xfail still deliberate.
+
+### One defect found and fixed during the work
+
+**The worker inherited the API's healthcheck.** Same image, so `docker compose ps`
+would have reported the worker permanently unhealthy for probing an HTTP server it
+does not run — a false alarm that teaches people to ignore the one command that
+tells them the stack is broken. Fixed with `healthcheck: disable: true` on that
+service. Worth noting because it is invisible until you actually read `ps` output;
+`up -d` reports success either way.
+
+### Still open
+
+1. **M2 #6 — the two-column fix.** Unchanged: the strict xfail defines done, and the
+   bboxes are cleanly separable (left ends x≈154, right starts x=300).
+2. **M2 #7 — MinIO.** `build_storage` still raises. The container is up and now the
+   API runs beside it on the same network, so this got slightly easier.
+3. Everything in the previous entry's watch list still stands.
+
+---
+
 ## 2026-08-08 (later) — M2 #4 and #5, plus a repo bug that had been there all along
 
 Seven commits, **pushed and green on CI** (run `31212427540`). A scan and a `.docx`

@@ -57,9 +57,41 @@ plan with per-item status lives in [docs/PLAN.md](docs/PLAN.md).
 
 ---
 
-## Quick start
+## Quick start — everything in containers
 
-Requires Python 3.11+, Node 22+, and (optionally) Docker.
+Requires only Docker. No Python, Node or Tesseract on the host.
+
+```bash
+docker compose up -d --build
+```
+
+That builds two images and runs seven services: `postgres`, `redis`, `minio`,
+a one-shot `migrate`, the `api`, the `worker` and the `web` client.
+
+| | |
+|---|---|
+| API | <http://localhost:8000> — OpenAPI at `/docs` |
+| Web | <http://localhost:3000> |
+| MinIO console | <http://localhost:9001> (unused until M2 #7) |
+
+```bash
+docker compose ps          # api and web report healthy; migrate exits 0
+docker compose logs -f worker
+docker compose down        # add -v to discard the database and uploaded files
+```
+
+`api` and `worker` are **the same image with different commands** — `app/worker.py`
+is a thin adapter over `app/jobs.py`, and building them separately would let their
+dependencies drift apart unnoticed. Migrations run as their own service rather than
+in the API's entrypoint, so two replicas cannot race to apply them.
+
+Defaults need no API key: the stack comes up on the `fake` provider. Anything set
+in `.env` is picked up by compose (`LLM_PROVIDER=gemini`, `OCR_ENGINE=tesseract`,
+`GEMINI_API_KEY=…`) and passed to the containers as environment — **`.env` is never
+copied into an image**. Tesseract with `tha`+`eng` is installed in the API image, so
+OCR needs no path setting here, unlike on a host with a portable install.
+
+### Running it on the host instead
 
 ```bash
 cp .env.example .env          # defaults need no API key and no database server
@@ -69,29 +101,50 @@ uv venv --python 3.11
 uv pip install -e ".[dev]"
 alembic upgrade head          # SQLite by default; see .env for Postgres
 uvicorn app.main:app --reload
+arq app.worker.WorkerSettings # another terminal; only for QUEUE_BACKEND=arq
 
 cd ../web
 npm install
 npm run dev                   # http://localhost:3000
 ```
 
-The web app expects the API at `http://localhost:8000`; if it lives elsewhere,
-`cp web/.env.local.example web/.env.local` and set `NEXT_PUBLIC_API_BASE`.
+The web app expects the API at `http://localhost:8000`; if it lives elsewhere, set
+`NEXT_PUBLIC_API_BASE`. It is read at **build** time, so in Docker it is a build
+argument — and it must be an address a *browser* can reach, never the compose
+service name.
 
-For Postgres, Redis and MinIO instead of SQLite and the local filesystem — which
-is what this project develops against, and what it deploys on:
-
-```bash
-docker compose up -d                       # postgres (pgvector), redis, minio
-# swap DATABASE_URL to the Postgres line in .env and set QUEUE_BACKEND=arq, then:
-cd api
-alembic upgrade head
-arq app.worker.WorkerSettings              # in its own terminal, next to uvicorn
-```
-
-With `QUEUE_BACKEND=inline` (the default) there is no worker and no Redis: the
+With `QUEUE_BACKEND=inline` (the host default) there is no worker and no Redis: the
 upload request does the work itself. The API behaves the same either way — it
-answers `pending` and the client polls.
+answers `pending` and the client follows the progress stream.
+
+---
+
+## REST API
+
+Every route is authenticated with a bearer token except `/health` and the two
+credential endpoints. Full schema at `/docs`.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/auth/register` | Create an account; returns an access + refresh pair |
+| `POST` | `/auth/login` | Exchange credentials for a token pair |
+| `POST` | `/auth/refresh` | Rotate the pair; a refresh token is single-use |
+| `POST` | `/auth/change-password` | Prove the old password, set a new one |
+| `GET` | `/auth/me` | The signed-in account |
+| `POST` | `/resumes` | Upload a PDF or DOCX; answers `pending` and queues the work |
+| `GET` | `/resumes` | The caller's resumes |
+| `GET` | `/resumes/{id}` | Profile, evidence spans and the text they index into |
+| `GET` | `/resumes/{id}/events` | SSE progress stream until the status settles |
+| `POST` | `/resumes/{id}/retry` | Replay a `dead_lettered` or `failed` resume |
+| `GET` | `/health` | Liveness, and which provider is active |
+
+There is deliberately **no `/users` listing, no `/logout` and no username check.**
+Resumes are PII, so letting one account enumerate others is a vulnerability rather
+than a feature — RBAC and PDPA are M4. A `/logout` on stateless JWTs would need a
+refresh-token denylist to mean anything, and an endpoint that returns 200 without
+revoking anything is worse than not having one. Username checks are an
+account-enumeration oracle, which is exactly what `/auth/login`'s single error
+message exists to avoid.
 
 ### Try it without the web app
 
@@ -191,8 +244,10 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
 - **Ambiguous citations are flagged, not resolved.** A quote such as `Python` that
   appears in both a bullet and a skills list is reported as ambiguous rather than
   guessed at.
-- **Extraction runs inline in the request.** Fine for a fake or a fast model; M2
-  moves it to a worker.
+- **A password change does not revoke tokens already issued.** They keep working
+  until they expire, because revocation needs a refresh-token denylist that does not
+  exist yet — the same gap that is why there is no `/auth/logout`. Pinned by
+  `tests/test_api.py::TestChangePassword`.
 - **The access token is kept in `localStorage`,** which is XSS-readable. Acceptable
   for a two-origin dev setup; the production answer is an httpOnly cookie.
 

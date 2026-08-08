@@ -152,8 +152,30 @@ should review them before anyone treats the details as commitments.
   breakdown with citation highlighting, dropped-claims audit view.
 - Observability: structured logs shipped somewhere queryable, request metrics,
   cost dashboard from `llm_call_logs`.
-- Deploy: containerize API + web, run compose stack in production mode, httpOnly
-  cookie auth instead of localStorage.
+- [x] **Containerize API + web; compose runs the whole stack** (2026-08-08 — pulled
+  forward from M5 because a course deliverable required Docker Compose to manage the
+  containers). `api/Dockerfile` builds one image for both the API and the ARQ worker,
+  since `app/worker.py` is a thin adapter over `app/jobs.py` and separate images
+  would let their dependencies drift; `web/Dockerfile` uses Next's `standalone`
+  output so the runtime image carries no `node_modules`. Migrations run as their own
+  one-shot service rather than in an entrypoint, so replicas cannot race to apply
+  them. Tesseract with `tha`+`eng` is installed in the API image, which removes the
+  portable-install `OCR_COMMAND` quirk inside containers. Verified live against
+  Postgres + Redis + ARQ + real Gemini: `resume_th.pdf` 10/10 verified and
+  `resume_scanned.pdf` 7/7 with `pages_from_ocr=[1]`, every span slicing back out of
+  the stored text.
+- Still open: run the compose stack in production mode, and httpOnly cookie auth
+  instead of localStorage.
+
+## Auth — beyond M1
+
+- [x] **`POST /auth/change-password`** (2026-08-08). Proves the current password,
+  then issues a fresh pair. Tokens issued earlier keep working until they expire —
+  revoking them needs a refresh-token denylist, which is also the reason there is no
+  `/auth/logout`. The limitation is pinned by a characterization test in
+  `tests/test_api.py::TestChangePassword` rather than left to be discovered.
+- [ ] Refresh-token denylist, which would unlock a real `/auth/logout` and let a
+  password change revoke outstanding sessions. Belongs with M4's RBAC work.
 
 ## M6 — optional evaluation (draft, one-week timebox)
 

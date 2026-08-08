@@ -45,6 +45,7 @@ and MinIO (#7) are what remain.**
 | OCR through the whole stack (Postgres + ARQ + live Gemini) | `resume_scanned.pdf`, previously a permanent `failed`, streamed `pending` → `processing` → `extracted` in 5.7 s with `pages_from_ocr=[1]`; 7/7 verified, 0 dropped, every match tier-1 exact, all 7 spans slicing back out of the stored text, no NUL. Three of the skills were cited out of the **Thai** OCR line `ทักษะ: Python, FastAPI, PostgreSQL` (2026-08-08) |
 | OCR on a partial scan | `resume_mixed_scan.pdf` → `extracted` with `pages_from_ocr=[2]`: page 1 kept its text layer, page 2 came from the image, 5/5 verified and 5/5 spans exact (2026-08-08) |
 | Migration `0003` on Postgres | `upgrade head` → `downgrade -1` → `upgrade head`; `pages_from_ocr` lands as real `jsonb` and `alembic check` finds no drift (2026-08-08) |
+| **The whole stack in containers** | `docker compose up -d --build` from a clean daemon: seven services, `api` and `web` healthy, `migrate` exit 0. Against real Gemini — auth journey end to end (register → login → me → change-password → old password refused 401 → new one accepted → wrong current refused 403), `resume_th.pdf` 10/10 verified with 10/10 spans slicing back out of `document_text`, `resume_scanned.pdf` `extracted` with `pages_from_ocr=[1]` and 7/7 exact from the Tesseract *in the image*. Worker log shows arq taking the job; CORS preflight from :3000 passes; the web bundle carries `localhost:8000` and not `http://api:8000` (2026-08-08) |
 | **Browser: a scan, end to end** | uploading `resume_scanned.pdf` at :3002 against live Gemini shows the amber banner "Page 1 had no text layer and was read by OCR. Quotes from it match what was recognized, which may differ from what was printed.", `7/7 claims verified`, and the document pane rendering the recognized text — six `<mark>` highlights over it, including two inside the Thai line, with the ambiguous `Python` in amber and the rest emerald (2026-08-08) |
 
 ### Repository state
@@ -400,7 +401,7 @@ without an editable install at all.
 
 | Thing | State |
 |---|---|
-| Docker | **Installed and running.** `docker compose up -d` brings up `postgres` (pgvector/pg17), `redis` and `minio`. MinIO is up but unused until M2 #7. |
+| Docker | **Installed and running.** `docker compose up -d --build` now brings up the *whole system*: `postgres` (pgvector/pg17), `redis`, `minio`, a one-shot `migrate`, plus `api`, `worker` and `web` from two locally built images. MinIO is up but unused until M2 #7. Docker Desktop lives at `%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe` — a per-user install, *not* under `Program Files`. |
 | Database | **Postgres** in Docker (`.env` → `DATABASE_URL`), migrated and verified 2026-08-07. SQLite at `api/var/dev.db` is a commented fallback. The test suite uses its own in-memory SQLite. |
 | Test database | `hirelens_test`, created by hand. Only `tests/test_postgres.py` uses it, and it refuses to run against the dev database because it drops every table. |
 | Queue | **`arq`** (`.env` → `QUEUE_BACKEND`). Needs `arq app.worker.WorkerSettings` running. `inline` processes in-request with no Redis. |
@@ -475,8 +476,11 @@ the JSONB path is verified, Gemini has run live, and the queue is real.
 | 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay on the rendered page is *not* done: it needs bbox geometry, which `ParsedDocument` does not keep, plus an endpoint serving the original file. Do it with #6, which needs the same bbox extraction. |
 
 Nothing else is outstanding: the browser walkthrough was re-done on 2026-08-08 and
-covered the whole journey, including the retry path (§1). The next commit here
-should be M2 #5.
+covered the whole journey, including the retry path (§1).
+
+Since then the stack has been containerized (M5's "containerize API + web", pulled
+forward for a course deliverable) and `POST /auth/change-password` landed — both in
+`docs/NOTES.md`, newest entry. The next commit here should be **M2 #6**.
 
 The OCR banner was checked in a real browser too, once `CORS_ORIGINS` became a
 setting and unblocked running the dev server on a free port (§1).
