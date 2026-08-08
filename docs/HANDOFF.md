@@ -80,6 +80,8 @@ available.
 | **A judgment's pages come from the row, not a re-parse** | `resume_multipage.pdf` judged against a `ParsedDocument.from_stored` built from stored text + stored spans only: 2/2 met, cited on **pages 2 and 3**, every span slicing back out exactly. That is the screening path end to end, minus the row slice 3 adds (2026-08-08) |
 | Judging's three decisions, mutation-tested | Reverting each in turn — extraction's "fewest dropped" rule, trusting the model's requirement numbering, and letting a claimed match set the verdict — fails 1, 3 and 4 cases of `test_judge.py` respectively. The tests defend the decisions rather than describing them (2026-08-08) |
 | The CLI's old path is untouched | `python -m app.cli` over three fixtures, before and after `--requirement` was added: **identical**, 66 lines, timing masked (2026-08-08) |
+| The `EvidenceRecorder` extraction is inert | Extraction *and* judging output over four fixtures, before and after: byte-identical, captured by stashing `extract.py`/`judge.py` back to HEAD. The three judging mutations still fail 1/3/4 cases (2026-08-08) |
+| **`page_spans` written by the real worker, in the containers** | After rebuilding `api` and `worker`: `resume_multipage.pdf` → 3 spans for 3 pages; `resume_th.pdf` → 10/10 verified, 0 dropped against live Gemini, and the last span's `char_end` (382) equals `length(document_text)` exactly, so the spans cover the text with no drift. Read out of `psql`, not the API (2026-08-08) |
 
 ### Repository state
 
@@ -176,6 +178,9 @@ api/app/
     extract.py         orchestrates: ask → verify → re-ask → keep the cleanest result
     judge.py           M3: the same shape for requirements — the verdict is *derived*
                        from what resolved, never taken from the model
+    verification.py    the resolve-and-tally loop both of the above run. Its own
+                       module because it needs `evidence` *and* `schemas.profile`,
+                       and `schemas.profile` imports `evidence` — a cycle otherwise
     prompts.py         versioned prompts (EXTRACTION_PROMPT_VERSION, JUDGMENT_…)
   llm/
     base.py            StructuredExtractor interface, error taxonomy, usage/cost types
@@ -487,14 +492,6 @@ want the retry policy run the ARQ worker.
 - **Ambiguous citations are flagged, not resolved.** A quote like `Python` appearing
   in both a bullet and a skills list is reported ambiguous rather than guessed.
   A worthwhile refinement is to prefer the skills-section span for skill claims.
-- **`_reference` is duplicated between `extract.py` and `judge.py`** — the ~15 lines
-  that resolve a quote and record the outcome either way. A shared home would have to
-  import both `pipeline.evidence` and `schemas.profile`, and `schemas.profile` already
-  imports `evidence`, so it needs a new module rather than a function moved into an
-  existing one. Deliberately deferred: extracting it means editing `extract.py`, the
-  most load-bearing file after `evidence.py`, in the same milestone that already has
-  to pull `decide_retry` out of `jobs.py`. Worth doing when something wants it a third
-  time.
 - **Judging never sees `must_have` or `weight`, and that is the point.** They travel
   on `RequirementSpec` and come back on `RequirementJudgment` untouched, for ranking
   (slice 4) to read. Whether a requirement is evidenced is a question about the

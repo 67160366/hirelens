@@ -95,25 +95,68 @@ the habit the fixture lessons keep teaching.
   exactly. That is the screening path end to end, minus the row slice 3 adds.
 - The CLI's old path: three fixtures, before and after, **identical** output.
 
+### The cleanup pass at the end of the session
+
+Three things were fixed after slice 2 was pushed, each because it was tractable now
+rather than because it was urgent.
+
+**The running containers had drifted behind the code.** `alembic upgrade head` ran
+from the host, so the *database* had `page_spans` while the `api` and `worker`
+images were two hours old and their `Resume` model did not — meaning the worker
+would have written `NULL` into a column that exists. Nothing would have failed
+loudly; the spans would simply have been missing. Found by asking the container
+directly (`'page_spans' in Resume.__table__.c` → `False`) rather than by reasoning
+about it. **A migration applied from the host does not update a running container**,
+and this stack now has two places code can be stale.
+
+Fixed with `docker compose up -d --build api worker`, then verified by uploading
+through the real stack: `resume_multipage.pdf` got 3 spans for 3 pages, and
+`resume_th.pdf` came back 10/10 verified with the last span's `char_end` equal to
+`length(document_text)` exactly — read out of `psql`, and the throwaway accounts
+deleted afterwards.
+
+**`_reference` is no longer duplicated.** `pipeline/verification.py` holds
+`EvidenceRecorder`, used by both `extract.py` and `judge.py`, and it absorbed
+judging's `UNKNOWN_REQUIREMENT` path too. The reason it needed a *new module* rather
+than a moved function is the reason it was deferred: it wants `pipeline.evidence`
+and `schemas.profile`, and `schemas.profile` already imports `pipeline.evidence`.
+
+**One npm advisory closed.** `npm audit fix` fixes nanoid with a lockfile bump; 4
+high → 3. postcss and sharp both need `next@16`, a framework major, and were left.
+
+### A check that silently proved nothing
+
+The refactor was verified by diffing CLI output before and after — except the first
+attempt stashed three files, one of which was untracked, so `git stash` refused the
+whole thing and **both sides of the diff came from the new code**. It printed
+`IDENTICAL` and meant nothing.
+
+The tell was in the output the whole time: `No stash entries found` scrolled past
+above the result. This is the same failure as `git hash-object` and the Thai
+mojibake, in a new costume: *the instrument answered a different question than the
+one being asked.* Worth adding to the habit — when a check passes, confirm the check
+actually ran, not just that it printed success.
+
+Redone properly (stashing only the two tracked files, checking `git diff --stat`
+showed them reverted): extraction and judging output byte-identical over four
+fixtures, and the three judging mutations still fail 1/3/4 cases.
+
 ### Still open, in order
 
-1. **Push the two slice-2 commits.** Same lesson as the top of this entry.
-2. **Slice 3 — screening as a row on the worker.** `HANDOFF.md` §9 now lists four
-   things to know first, including two that are easy to get wrong: a judging call
-   must log `JUDGMENT_PROMPT_VERSION`, and `requirements_hash` should cover what the
-   judge actually saw (kind, label, detail, order) but *not* `must_have`/`weight`,
-   which are ranking's inputs.
-3. Slices 4–6: ranking, the thin UI, retrieval.
-4. The visibility timeout for a worker that dies mid-job (M5) is still the last §11
-   follow-up.
+1. **Slice 3 — screening as a row on the worker.** `HANDOFF.md` §9 lists four things
+   to know first, including two that are easy to get wrong: a judging call must log
+   `JUDGMENT_PROMPT_VERSION`, and `requirements_hash` should cover what the judge
+   actually saw (kind, label, detail, order) but *not* `must_have`/`weight`, which
+   are ranking's inputs.
+2. Slices 4–6: ranking, the thin UI, retrieval.
+3. The visibility timeout for a worker that dies mid-job (M5) is still the last §11
+   follow-up, and is the only open item that can strand a user's data with no way
+   back through the API.
+4. Next 15 → 16 for the remaining postcss and sharp advisories. A framework major;
+   belongs with the web work, not squeezed in.
 
 ### Worth knowing next time
 
-- **`_reference` is now duplicated** between `extract.py` and `judge.py`, ~15 lines.
-  Deferred on purpose (`HANDOFF.md` §7): a shared home needs a new module, because
-  `schemas.profile` already imports `pipeline.evidence`, and extracting it means
-  editing `extract.py` in the same milestone that must also pull `decide_retry` out
-  of `jobs.py`. Do it when something wants it a third time.
 - **The fake quotes the whole line a label sits on, not the label.** Real skills are
   short — "Go", "AWS", "SQL" — and `MIN_QUOTE_CHARS` is 4, so quoting the label would
   reject legitimate requirements before they ever reached a verdict.
@@ -131,6 +174,17 @@ the habit the fixture lessons keep teaching.
   like extraction everywhere except the one place it must not be, and copying
   `extract_profile`'s tiebreak would have produced a system that quietly discarded
   proven evidence. Twins are worth writing; twins are also worth diffing.
+- **Confirm the check ran, not just that it passed.** The stash that refused an
+  untracked path printed `IDENTICAL` while comparing the new code with itself. Every
+  previous instrument lesson here was about a tool answering the wrong question; this
+  one is about a tool not running at all and the harness reporting success anyway.
+  Cheap defence: make the check *fail* once on purpose before trusting it — the same
+  habit as building the adversarial fixture first.
+- **The stack now has two places code can go stale**, not one. A migration run from
+  the host updates the database while the containers keep their old models, and the
+  symptom is a column that exists and is never written. `docker compose up -d --build
+  api worker` after any model change, and ask the container what it thinks rather
+  than assuming.
 
 ---
 
