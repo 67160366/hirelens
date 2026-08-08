@@ -2,11 +2,11 @@ name: hirelens
 
 # The whole system, start to finish:
 #
-#   postgres ─healthy─┐
-#                     ├─> migrate ─completed─┬─> api    :8000
-#   redis ────healthy─┘                      └─> worker
-#                                                  │
-#                                                web  :3000
+#   postgres ─healthy──> migrate ─────completed─┐
+#   redis ────healthy───────────────────────────┼─> api    :8000
+#   minio ────healthy──> createbucket ─completed┘   worker
+#                                                     │
+#                                                   web  :3000
 #
 # `docker compose up -d --build` from a fresh clone is the only setup step. No
 # Python, Node or Tesseract needs to exist on the host.
@@ -46,8 +46,8 @@ services:
       timeout: 3s
       retries: 10
 
-  # Not used until M2 #7 swaps the local-filesystem storage backend for object
-  # storage. Started now so the compose file matches the target architecture.
+  # Object storage. `STORAGE_BACKEND=minio` in .env points the API and the worker
+  # here; `local` (the default) keeps writing to the uploads volume.
   minio:
     image: minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
@@ -64,6 +64,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # The bucket, created once by its own service for the same reason migrations get
+  # one: replicas creating it on startup would race, and `build_storage` refuses to
+  # create it itself so that a typo in MINIO_BUCKET fails loudly instead of quietly
+  # making a second, empty bucket.
+  createbucket:
+    image: minio/mc:latest
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 hirelens hirelens-dev-secret
+        mc mb --ignore-existing local/${MINIO_BUCKET:-hirelens-resumes}
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
 
   # Schema migrations run once, as their own service, before anything connects.
   # Doing it in the API's entrypoint instead would race: two replicas would both
@@ -104,7 +121,15 @@ services:
       # Absolute, because Settings.storage_path resolves a relative STORAGE_DIR
       # against a REPO_ROOT that is `/` inside this image. See api/Dockerfile.
       STORAGE_DIR: /data/uploads
-      STORAGE_BACKEND: local
+      # `local` writes to the uploads volume; `minio` uses the service below. Both
+      # are real deployments, so neither is hard-coded here.
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+
+      # Service name, not localhost — and not the :9000 the host publishes.
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: hirelens
+      MINIO_SECRET_KEY: hirelens-dev-secret
+      MINIO_BUCKET: ${MINIO_BUCKET:-hirelens-resumes}
 
       # The browser talks to the published port on the host, so that is the origin
       # the API must allow — not the compose service name.
@@ -131,6 +156,10 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      # Gated even when STORAGE_BACKEND=local: it costs a second, and it means
+      # flipping the variable never needs a different startup order.
+      createbucket:
+        condition: service_completed_successfully
 
   # Same image as the API, different command: app/worker.py is an adapter over
   # app/jobs.py, and building the two separately would let their dependencies
@@ -156,6 +185,10 @@ services:
       redis:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      # Gated even when STORAGE_BACKEND=local: it costs a second, and it means
+      # flipping the variable never needs a different startup order.
+      createbucket:
         condition: service_completed_successfully
 
   web:

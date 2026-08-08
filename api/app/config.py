@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     storage_backend: StorageBackend = StorageBackend.LOCAL
     storage_dir: Path = Path("var/uploads")
 
+    # Object storage, used only when STORAGE_BACKEND=minio. The defaults match the
+    # `minio` service in docker-compose.yml, so turning it on locally is one
+    # variable. The endpoint is a URL rather than a host because the scheme decides
+    # TLS, and getting that wrong silently is worse than a connection refused.
+    minio_endpoint: str = "http://localhost:9000"
+    minio_access_key: str = "hirelens"
+    minio_secret_key: str = "hirelens-dev-secret"
+    minio_bucket: str = "hirelens-resumes"
+    # S3 requires a region; MinIO ignores it. Named rather than hard-coded so the
+    # same adapter can point at a real S3 bucket.
+    minio_region: str = "us-east-1"
+
     # `inline` for the same reason the fake extractor is the default provider: a
     # fresh clone must run with no servers. Either way the client contract is the
     # same — upload returns a `pending` resume and the caller polls until the

@@ -21,6 +21,9 @@ dependencies = [
     "google-genai>=1.0",
     "arq>=0.28",
     "python-docx>=1.1",
+    # S3 API client for the MinIO storage backend. boto3 rather than the `minio`
+    # SDK so the same adapter points at a real S3 bucket without a second client.
+    "boto3>=1.35",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +35,8 @@ dev = [
     "reportlab>=4.2",
     "httpx>=0.28",
     "aiosqlite>=0.20",
+    # boto3 ships no inline types, and `mypy app` is strict.
+    "boto3-stubs[s3]>=1.35",
 ]
 
 [build-system]
