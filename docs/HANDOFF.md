@@ -29,12 +29,18 @@ OCR confidence question has an answer with numbers behind it.
 
 **M3 — the matching engine — is under way.** Its scope was reviewed with the owner
 on 2026-08-08 and is no longer a draft: the agreed shape, the four decisions behind
-it and the six slices are in `docs/PLAN.md`. **Slices 1–3 are done** — a job posting
+it and the six slices are in `docs/PLAN.md`. **Slices 1–4 are done** — a job posting
 and its requirements are first-class rows with CRUD behind them, a resume can be
-judged against those requirements with every match cited, and a screening is a row
-of its own produced on the background worker under the shared retry policy. The
+judged against those requirements with every match cited, a screening is a row
+of its own produced on the background worker under the shared retry policy, and
+those screenings are now ordered into a ranking. The
 system is end-to-end usable over HTTP for the first time this milestone. The rest,
-in order: ranking, a thin UI, retrieval.
+in order: a thin UI, retrieval.
+
+Slice 4 is the one slice that costs nothing to run: ranking is a pure function over
+rows that already exist, with **no model call, no new table and no migration**. That
+is deliberate and worth preserving — it is what lets a recruiter drag a weight and
+watch the list reorder without re-billing a single screening.
 
 The one idea to carry into the remaining slices, now shipped rather than planned:
 **the model is never asked for a verdict.** It is asked only for quotes showing a
@@ -48,7 +54,7 @@ available.
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 379 passed, 38 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans`, 32 for judging and 40 for screening. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `pytest -q` | 411 passed, 38 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans`, 32 for judging, 40 for screening and 32 for ranking. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -88,16 +94,24 @@ available.
 | **Screening, end to end in the containers** | `/openapi.json` lists all three screening routes first — the proof the container serves the code just written. Then, against Postgres + Redis + the ARQ worker + real Gemini: upload → `extracted`, create a job with five requirements, `POST` answered **202**, the **worker** took it (`arq` log, job id `screening:…:0`), `completed` in 4.1 s. **3/5 met, 0 dropped**, every citation slicing back out of the returned `document_text`. The Thai requirement `งาน Backend ที่เกี่ยวกับระบบชำระเงิน` matched the resume's own `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ PostgreSQL`; `Kubernetes` and `ภาษาญี่ปุ่น` came back `not_evidenced` with no evidence attached (2026-08-08) |
 | The staleness rule, watched rather than inferred | Asking again → **200**, `is_stale=false`, nothing queued. Changing a **weight** → still 200 and still not stale. Changing a **label** → `is_stale=true`, then **202** and a second worker dispatch under job id `screening:…:1`, after which `attempts=2` and the result is current again (2026-08-08) |
 | Judging calls are billed to the screening | In `psql`: 21 `extract-v1` rows all carrying `resume_id` and none carrying `screening_id`; 2 `judge-v1` rows all carrying `screening_id` and none carrying `resume_id`. The two prompt families stay separable in the cost table (2026-08-08) |
+| **Ranking, end to end in the containers** | `api` and `worker` rebuilt first, and `/openapi.json` lists `/jobs/{job_id}/ranking` plus all four ranking schemas. Then a job of 5 requirements (2 must-have, one Thai label round-tripping at 10 chars) over three resumes: `resume_en` and `resume_th` both 3/5 with the gate passed, `resume_multipage` 0/5 gated out and ranked last. The two that tie at 0.6000 are separated by the screening-id tie-break — the total order doing its job on real data (2026-08-08, on `fake` — see the note below) |
+| **A weight change is free, watched in `psql`** | Patching one requirement's weight 1.0 → 20.0 moved every score (0.6000 → 0.9167) while all three screenings stayed `is_stale=false` with `attempts=1` — and Postgres shows **exactly one `judge-v1` row per screening** after two ranking requests and the patch. Then changing that requirement's *label* moved all three into `excluded` with `reason=stale` and left `ranked` empty. A second account gets **404** (2026-08-08) |
+| The live run's provider | The judging behind that ranking ran on `fake`: the Gemini free tier's **daily** cap (20 requests for `gemini-3.6-flash`) was exhausted partway through, after `resume_en.pdf` had already completed against real Gemini at 3/5 met, 0 dropped. Ranking makes **no model call at all**, so the provider is not part of what this slice needed to prove — but nobody has yet watched a ranking built entirely from Gemini judgments (2026-08-08) |
 
 ### Repository state
 
 `main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything
-through M3 slice 2 is pushed and green on CI** (runs `31247527205` and
-`31248424123`, 2026-08-08): **339 passed, 26 skipped** on a runner with no
-Tesseract, no database, no MinIO and no API key — the same numbers as a local run,
-which is the opt-in test design doing its job — plus 9 vitest cases in `web/`. The
-only annotations on either run come from inside `actions/setup-node` itself (Node's
+through M3 slice 3 is pushed and green on CI** (run `31251558255`, 2026-08-08 —
+every step of both the `api` and `web` jobs, including `Verify migrations apply and
+reverse`, which is the one that caught migration `0006`). Earlier runs report
+**339 passed, 26 skipped** on a runner with no Tesseract, no database, no MinIO and
+no API key — the same numbers as a local run, which is the opt-in test design doing
+its job — plus 9 vitest cases in `web/`. The
+only annotations on any run come from inside `actions/setup-node` itself (Node's
 `punycode` and `url.parse` deprecations); nothing in this repo emits one.
+
+**Slice 4 (ranking) is committed but was not yet pushed when this was written** —
+check `git rev-list --count origin/main..main` rather than trusting that sentence.
 
 Check `git rev-list --count origin/main..main` before assuming that is still true.
 A batch of verified-but-unpushed commits is the easiest way for local and CI to
@@ -184,6 +198,8 @@ api/app/
     extract.py         orchestrates: ask → verify → re-ask → keep the cleanest result
     judge.py           M3: the same shape for requirements — the verdict is *derived*
                        from what resolved, never taken from the model
+    ranking.py         M3: judge's downstream twin — orders screenings with no model
+                       call at all. Weights come from the job, not the stored result
     verification.py    the resolve-and-tally loop both of the above run. Its own
                        module because it needs `evidence` *and* `schemas.profile`,
                        and `schemas.profile` imports `evidence` — a cycle otherwise
@@ -198,6 +214,8 @@ api/app/
     profile.py         what we store — offsets, pages, stats, dropped claims
     judgment.py        M3: both layers for judging. RequirementSpec is a plain DTO,
                        so judge.py stays ORM-free the way extract.py is
+    ranking.py         M3: a ranked entry carries its citations, and an excluded one
+                       carries why — nothing is dropped silently
   models/core.py       candidates, resumes, extracted_profiles, llm_call_logs
   models/matching.py   M3: jobs, the requirements they are screened by, and a
                        screening — one resume judged against one job
@@ -214,7 +232,8 @@ api/app/
                        jobs.py — postings and requirements; requirement routes are
                        nested so ownership is settled in one place
                        screenings.py — creation nested under /jobs, reads flat under
-                       /screenings; 202 when work was queued, 200 when it was not
+                       /screenings; 202 when work was queued, 200 when it was not.
+                       Also GET /jobs/{id}/ranking, which spends nothing
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
   app/page.tsx         auth + upload + live progress + result + retry
@@ -375,6 +394,28 @@ Worth reading once, because the request no longer does the work.
   a judging call off the resume would corrupt "what did extracting this document cost";
   leaving it unrecorded would make every cost figure quietly incomplete, which is the
   same class of failure as a stale price table.
+- **Ranking reads `must_have` and `weight` from the job, never from the stored
+  judgment** (M3 slice 4). `RequirementJudgment` persists both, frozen at judging
+  time — and `requirements_fingerprint` excludes both on purpose, so editing a weight
+  leaves the screening *current* while the stored JSON keeps the old number forever.
+  Reading them back out of `result` is the obvious implementation, passes every test
+  that does not specifically look for it, and silently makes weight edits do nothing.
+  The join is **by position, not by id**: the fingerprint excludes ids too, so a
+  current screening can carry ids the job no longer has, while `(kind, label, detail)`
+  and their order are exactly what it does cover — and `verify()` emits one judgment
+  per requirement in requirement order. A length mismatch is excluded as `malformed`
+  rather than joined against the wrong requirement. Mutation-tested: reading weights
+  from the stored result fails 5 cases of `test_ranking.py`.
+- **A stale screening is excluded from a ranking and reported, not re-run**
+  (M3 slice 4). Ranking a stale row beside fresh ones silently mixes answers to two
+  different questions; auto-re-running spends a model call nobody asked for and would
+  undo the whole point of keeping `must_have`/`weight` out of the fingerprint.
+  `POST /jobs/{id}/screenings` stays the one place a caller chooses to pay for a fresh
+  answer, and `excluded` carries the reason — the same instinct as `dropped`.
+- **Must-haves count toward the score as well as gating it** (M3 slice 4). Inside the
+  tier that passed the gate this is a constant and reorders nothing; inside the tier
+  that failed it is what separates "missing one gate" from "missing all of them", and
+  it keeps the denominator non-zero for a job made entirely of must-haves.
 - **A requirement is an input, not a claim, so it needs no evidence** (M3).
   Requirements are typed in through CRUD rather than decomposed out of a pasted job
   description by a model. Nothing here is a statement about a candidate, so the
@@ -647,6 +688,7 @@ the API and the worker, upload again. To see the dead-letter path: set
 | `test_judge.py` | Requirement-level judging: verdicts derived from what resolved, unknown/duplicate requirement numbers, the empty case, and the retry rule that differs from extraction's |
 | `test_judge_live.py` | Judging against a real model — semantic matching, and that the guardrail holds on output nobody scripted. **Opt-in**, needs `TEST_LIVE_LLM=1`, and gated on that flag rather than on a key because `.env` already has one |
 | `test_screening.py` | The fingerprint (what makes a result stale, and what must not), `decide_retry` on its own now that two job types share it, and the screening job: verdicts on a row, cost billed to the screening, failure and replay |
+| `test_ranking.py` | The must-have gate, the weighted score, and the two things easiest to get wrong: that weights come from the job rather than the stored judgment, and that the order is total so a list never reshuffles. Pure — no session, like `test_judge.py` — plus the route |
 | `test_llm.py` / `test_gemini.py` | The provider seam; Gemini's contract via mocks |
 | `test_api.py` | Auth, upload gates, reading a profile back |
 | `test_resume_service.py` | The duplicate-upload race, blob cleanup, PII-safe logging |
@@ -678,29 +720,27 @@ free.
 | 1 | Jobs and requirements as rows, with CRUD | **done** — `models/matching.py`, `api/routes/jobs.py`, migration `0004`, `tests/test_jobs.py` |
 | 2 | Requirement-level judging | **done** — `pipeline/judge.py` + `schemas/judgment.py`, `page_spans` + migration `0005`, `fake.py` teaching, `--requirement` on the CLI, `tests/test_judge.py` |
 | 3 | Screening as a row, on the background worker | **done** — `models/matching.py:Screening`, `services/screening_service.py`, `run_screening_job`, `api/routes/screenings.py`, migration `0006`, `tests/test_screening.py` |
-| 4 | Ranking across candidates | next — a pure function, no model; must-haves gate, citations are the rationale |
-| 5 | A thin web UI | job authoring, verdicts, citation highlighting through the existing `DocumentPane` |
+| 4 | Ranking across candidates | **done** — `pipeline/ranking.py` + `schemas/ranking.py`, `GET /jobs/{id}/ranking`, no migration, `tests/test_ranking.py` |
+| 5 | A thin web UI | next — job authoring, verdicts, citation highlighting through the existing `DocumentPane` |
 | 6 | Retrieval — the pre-filter | `Retriever` seam; lexical default, pgvector opt-in |
 
-**Four things to know before starting slice 4 (ranking):**
+**Four things to know before starting slice 5 (the thin UI):**
 
-1. **The inputs are already on the row and already correct.** A `Screening` carries
-   `requirements_met` / `requirements_total` as real columns, and its `result` JSON
-   holds every `RequirementJudgment` with `must_have`, `weight` and `verdict`.
-   Ranking needs nothing from the model and nothing re-judged — it is a pure function
-   over rows that exist.
-2. **`must_have` and `weight` have been carried, untouched, since slice 2 precisely
-   for this.** Judging never consults them; `requirements_fingerprint` deliberately
-   excludes them so changing a weight does not re-bill a screening. That means
-   changing a weight **must** change a ranking while leaving screenings current —
-   the ranking is what has to recompute, and it is free.
-3. **A stale screening is not a ranking input.** `Screening.is_stale` already answers
-   whether a result still addresses the current requirements. Ranking a stale row
-   beside fresh ones would silently mix two questions; decide explicitly whether to
-   exclude, re-run, or mark it in the output.
-4. **Deterministic tie-breaks, and the rationale is the citation list, not the
-   score.** A list that reshuffles between identical runs is unusable, and a number
-   nobody can check is what this project exists not to produce.
+1. **The data is all served already.** `GET /jobs/{id}/ranking` returns each entry
+   with its `RequirementJudgment`s — verdicts *and* citation spans — so a list view
+   needs no second request per candidate. `GET /screenings/{id}` adds
+   `document_text`, which is what `DocumentPane` highlights against.
+2. **This slice absorbs the browser check that has slipped three times.** Two-column
+   and MinIO are verified at the HTTP level and in the containers, but no human has
+   watched either render. `PLAN.md` says the walkthrough is part of slice 5, not a
+   follow-up to it.
+3. **A ranking is cheap; a screening is not.** The UI may re-fetch a ranking freely
+   on every weight edit — it costs one query. It must not offer anything that quietly
+   loops over `POST /jobs/{id}/screenings`, which bills a model call per resume
+   whenever a *label* changed.
+4. **Show `excluded`, do not hide it.** A stale screening drops out of the ranked
+   list on purpose. A UI that silently omits it recreates exactly the confusion the
+   `excluded` list exists to prevent — say "needs re-screening" and offer the button.
 
 M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 

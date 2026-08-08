@@ -19,6 +19,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +30,8 @@ from app.models import Job, LLMCallLog, Resume, Screening, ScreeningStatus
 from app.pipeline.judge import JudgmentOutcome, judge_requirements, requirements_fingerprint
 from app.pipeline.parse import ParsedDocument
 from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
-from app.schemas.judgment import RequirementSpec
+from app.pipeline.ranking import ScreeningView
+from app.schemas.judgment import Judgment, RequirementSpec
 
 if TYPE_CHECKING:
     # Import-time only, for the same reason `resume_service` does it: `app.queue`
@@ -67,6 +69,42 @@ def requirement_specs(job: Job) -> list[RequirementSpec]:
         )
         for item in sorted(job.requirements, key=lambda item: (item.position, item.created_at))
     ]
+
+
+def screening_view(screening: Screening) -> ScreeningView:
+    """A screening as `pipeline/ranking.py` sees it.
+
+    The second seam of the same kind as `requirement_specs`: rows go in, plain value
+    objects come out, and ranking never learns a database exists.
+    """
+    return ScreeningView(
+        id=str(screening.id),
+        resume_id=str(screening.resume_id),
+        status=str(screening.status),
+        completed=screening.status is ScreeningStatus.COMPLETED,
+        requirements_hash=screening.requirements_hash,
+        prompt_version=screening.prompt_version,
+        judgment=_stored_judgment(screening),
+    )
+
+
+def _stored_judgment(screening: Screening) -> Judgment | None:
+    """The stored result rebuilt, or `None` when there is no usable one.
+
+    Anything `_record_result` wrote validates. Answering `None` instead of raising
+    keeps one unreadable row from failing a whole ranking request — `rank_screenings`
+    reports it as `malformed`, which is the honest outcome for a row nobody can
+    interpret.
+    """
+    if screening.result is None:
+        return None
+    try:
+        return Judgment.model_validate(screening.result)
+    except ValidationError:
+        # No document text in a validation error for this shape, but log the id
+        # only regardless — the rule is the same everywhere in this package.
+        logger.warning("screening %s: stored result did not validate", screening.id)
+        return None
 
 
 async def find_screening(

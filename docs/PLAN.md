@@ -284,10 +284,30 @@ not mention it".
   `POST /screenings/{id}/retry` — 404 not 403 throughout. Migration `0006` round-trips
   on Postgres with no drift. Pinned by `tests/test_screening.py` (40 cases; suite
   339 → 379), and verified live through the containers against real Gemini.
-- [ ] 4. **Ranking across candidates** — a pure function, no model. Must-haves are a
-  hard gate; within a tier, weighted share of requirements met; deterministic
-  tie-breaks so a list never reshuffles. The rationale returned is the citation
-  list, not the score.
+- [x] 4. **Ranking across candidates** (2026-08-08). `app/pipeline/ranking.py` +
+  `app/schemas/ranking.py`, judging's downstream twin: a pure function, **no model
+  call, no new table, no migration**. Must-haves are a hard gate, within a tier it is
+  the weighted share of requirements met, and the order ends on the screening id so a
+  list never reshuffles between identical runs. Each entry carries its
+  `RequirementJudgment`s — verdicts with citations — because the rationale is the
+  evidence, not the number. `GET /jobs/{job_id}/ranking` on the existing
+  `screenings.py`; `list_screenings` keeps its contract as the raw list.
+  Two decisions inside it:
+  **`must_have` and `weight` are read from the current `JobRequirement` rows, never
+  from the stored `result`.** The judgment froze both at judging time, and the
+  fingerprint excludes both on purpose — so editing a weight leaves the screening
+  current while the stored JSON keeps the old number forever. Reading them back out of
+  `result` is the obvious implementation and it silently makes weight edits do
+  nothing. The join is **by position, not by id**, because the fingerprint excludes ids
+  too; a length mismatch is excluded as `malformed` rather than joined against the
+  wrong requirement.
+  **A stale screening is excluded and reported, not re-run.** Ranking never spends a
+  model call the caller did not ask for, and never mixes answers to two questions;
+  `POST /jobs/{id}/screenings` stays the place a caller chooses to pay.
+  Pinned by `tests/test_ranking.py` (32 cases; suite 379 → 411), and the three
+  decisions were each confirmed load-bearing by mutation: reading weights from the
+  stored result fails 5 cases, treating `must_have` as a heavy weight fails 3, and
+  dropping the id tie-break fails 2.
 - [ ] 5. **A thin web UI** — job authoring, a screening's verdicts, and citation
   highlighting through the existing `DocumentPane`. The browser walkthrough is part
   of this slice, not a follow-up.

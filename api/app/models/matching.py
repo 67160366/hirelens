@@ -115,7 +115,12 @@ class JobRequirement(UUIDPrimaryKey, Timestamps, Base):
     elsewhere."""
 
     weight: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
-    """Relative importance among the requirements that are not gates."""
+    """Relative importance when ranking, over *all* requirements including gates.
+
+    Counting a must-have's weight changes no order inside the tier that passed the
+    gate — everyone there met it — but it is what separates "missing one gate" from
+    "missing every gate" among those that failed, and it keeps the denominator
+    non-zero for a job made entirely of must-haves (`app/pipeline/ranking.py`)."""
 
     job: Mapped[Job] = relationship(back_populates="requirements")
 

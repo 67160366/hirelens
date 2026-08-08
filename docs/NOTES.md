@@ -6,7 +6,122 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-08 (latest) — screening lands, and M3 is usable over HTTP
+## 2026-08-08 (latest) — ranking lands, and it costs nothing to run
+
+Slice 4. Screenings are now ordered into a ranking, which is the point the milestone
+stops producing one verdict at a time and starts answering the question the product
+is actually for: *who should I look at first?*
+
+Suite **379 → 411**. No migration, no new table, no model call — the whole slice is a
+pure function over rows that already existed.
+
+### The trap that would have shipped quietly
+
+`RequirementJudgment` stores `must_have` and `weight` alongside each verdict, frozen
+at judging time. Reading them back out of `Screening.result` is the obvious
+implementation — the data is right there, one `model_validate` away.
+
+It is also wrong, and wrong in the way this project fears most: **it fails silently.**
+`requirements_fingerprint` deliberately excludes `must_have` and `weight`, so editing
+a weight leaves every screening `is_stale=false` — correctly, because no verdict
+changed. But the stored JSON keeps the old number forever. A ranking built from it
+would respond to a weight edit by doing absolutely nothing, with no error, no stale
+flag and no way to tell from the outside.
+
+So ranking reads both from the current `JobRequirement` rows. Which raises the join
+question, and the obvious answer is wrong too: `requirement_id` is not reliable,
+because the fingerprint excludes ids on purpose ("deleting a requirement and typing
+the identical one back asks the same question"), so a *current* screening can carry
+ids the job no longer has. What the fingerprint does cover is `(kind, label, detail)`
+**and their order** — and `verify()` emits exactly one judgment per requirement in
+requirement order. **The join is by position.** A length mismatch is excluded as
+`malformed` rather than joined against the wrong requirement.
+
+Both of those are one-line decisions with no visible symptom when they are wrong,
+which is exactly the class HANDOFF §5 exists to record.
+
+### The three decisions, each confirmed load-bearing
+
+All 32 tests passed on the first run, so — following the habit from two sessions ago
+— each decision was reverted and the real suite re-run:
+
+| Mutation | Cases that fail |
+|---|---|
+| Read `must_have`/`weight` from the stored `result` | **5** |
+| Treat `must_have` as a ×100 weight instead of a gate | **3** |
+| Drop the trailing `screening_id` tie-break | **2** |
+
+The third one is the interesting one, because it started at **1**. The determinism
+test that *should* have caught it — "input order does not change the result" — used
+three candidates with three distinct scores, so there was nothing to be stable about
+and any sort at all passed it. Python's sort being stable meant the test could never
+have failed. Rewritten with two candidates deliberately tied, it now catches the
+mutation. **A test that cannot fail is worse than no test, because it is counted.**
+
+### Verified by running it
+
+Rebuilt `api` and `worker` first, confirmed `/openapi.json` lists the route and all
+four schemas, then against the containers: a job of five requirements (two must-have,
+one Thai label round-tripping at 10 chars) over three resumes.
+
+- `resume_en` and `resume_th` both 3/5 with the gate passed; `resume_multipage` 0/5,
+  gated out, ranked last. The two that **tie at 0.6000** are separated by the
+  screening-id tie-break — the total order doing its job on real data rather than in
+  a fixture.
+- Weight 1.0 → 20.0 on one requirement: every score moved (0.6000 → 0.9167), all
+  three screenings stayed `is_stale=false` with `attempts=1`, and **`psql` shows
+  exactly one `judge-v1` row per screening** after two ranking requests plus the
+  patch. The recompute really was free, checked in the store rather than inferred
+  from the API.
+- Changing that requirement's **label** instead: all three into `excluded` with
+  `reason=stale`, `ranked` empty. A second account gets 404.
+
+### The Gemini daily quota ran out mid-run
+
+Worth recording because the failure looks like a bug and is not. The first live run
+dead-lettered two screenings on `429 RESOURCE_EXHAUSTED`; the obvious reading is the
+per-minute cap (5/min), so the script was rewritten to pace itself and replay dead
+letters. It failed again — and the quota id in the second error was different:
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, **20 per day**. Pacing cannot fix
+a daily cap.
+
+The run was finished on `LLM_PROVIDER=fake` as a command-line override, which is
+adequate *for this slice specifically* — ranking makes no model call at all, so the
+provider is not part of what it needed to prove — and `resume_en.pdf` had already
+completed against real Gemini at 3/5 met, 0 dropped before the quota went. But nobody
+has yet watched a ranking built entirely from Gemini judgments, and that is written
+into HANDOFF §1 rather than left implied.
+
+**Read the quota id, not just the 429.** Two different limits share one status code
+and only one of them is worth waiting out.
+
+### Worth knowing next time
+
+- **`GET /resumes/{id}` returns `ProfileOut`, not `ResumeOut`** — the status lives at
+  `body["resume"]["status"]`. Cost one failed script run.
+- The throwaway accounts were deleted afterwards (five of them, cascading to zero
+  jobs and zero screenings left), and the stack is back on `provider=gemini` matching
+  `.env`, confirmed in the worker log rather than assumed.
+
+### Advice for the owner
+
+- **The dangerous bugs here are the ones with no symptom.** Both of this slice's real
+  decisions — weights from the job, join by position — produce a system that looks
+  completely healthy when they are wrong: correct-looking numbers, no errors, no stale
+  flags. The defence that worked was asking "what would I see if this were wrong?"
+  and, when the answer was "nothing", writing the test that makes it visible.
+- **Check that your test could fail, not just that it passes.** The tie-break test was
+  green for a mutation it was written to catch. Green is not evidence until you have
+  seen it go red once — this is the fourth session in a row that lesson has paid, in a
+  fourth costume.
+- **Cheap things should stay cheap.** Ranking costs one query, and keeping
+  `must_have`/`weight` out of the fingerprint is what protects that. If a future
+  change starts re-judging on a weight edit "for consistency", the whole reason this
+  slice is instant has been traded away for nothing.
+
+---
+
+## 2026-08-08 — screening lands, and M3 is usable over HTTP
 
 Slice 3. A screening is now a row produced on the background worker, which is the
 point at which the milestone stops being two disconnected halves: before this, jobs

@@ -29,6 +29,8 @@ from app.api.deps import CandidateDep, QueueDep, SessionDep
 from app.models import Candidate, Job, Resume, Screening, ScreeningStatus
 from app.pipeline.judge import requirements_fingerprint
 from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
+from app.pipeline.ranking import rank_screenings
+from app.schemas.ranking import Ranking
 from app.services import screening_service
 
 router = APIRouter(tags=["screenings"])
@@ -177,7 +179,12 @@ async def create_screening(
 async def list_screenings(
     job_id: uuid.UUID, candidate: CandidateDep, session: SessionDep
 ) -> list[ScreeningOut]:
-    """Every screening for one job. The list ranking will later sort (slice 4)."""
+    """Every screening for one job, newest first.
+
+    Deliberately *not* the ranked view: this is the raw list, including the ones
+    still running and the ones that failed. `GET /jobs/{job_id}/ranking` is the
+    ordered answer.
+    """
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
     fingerprint = _fingerprint(job)
 
@@ -187,6 +194,32 @@ async def list_screenings(
     return [
         ScreeningOut.of(screening, requirements_hash=fingerprint) for screening in result.scalars()
     ]
+
+
+@router.get("/jobs/{job_id}/ranking", response_model=Ranking)
+async def get_ranking(job_id: uuid.UUID, candidate: CandidateDep, session: SessionDep) -> Ranking:
+    """Order this job's candidates by what their citations prove.
+
+    Computed on read and costs nothing: no model call, no stored ranking, no
+    migration. That is what lets a recruiter adjust a weight and see the list
+    reorder immediately while every screening stays current — `must_have` and
+    `weight` are excluded from the requirements fingerprint precisely so that
+    editing one cannot re-bill a screening (`pipeline/judge.requirements_fingerprint`).
+
+    Screenings that cannot take part come back in `excluded` with the reason,
+    rather than being hidden or silently re-run.
+    """
+    job = await _owned_job(session, job_id=job_id, candidate=candidate)
+    requirements = screening_service.requirement_specs(job)
+
+    result = await session.execute(select(Screening).where(Screening.job_id == job.id))
+
+    return rank_screenings(
+        [screening_service.screening_view(screening) for screening in result.scalars()],
+        requirements,
+        requirements_hash=requirements_fingerprint(requirements),
+        prompt_version=JUDGMENT_PROMPT_VERSION,
+    )
 
 
 @router.post("/screenings/{screening_id}/retry", response_model=ScreeningOut)
