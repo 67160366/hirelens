@@ -2,11 +2,11 @@
 
 Written 2026-07-30 at the end of M1, rewritten 2026-08-07 after the Postgres
 cutover, again 2026-08-08 when M2 completed, and updated the same day when M3's
-scope was agreed and its first slice landed. Updated 2026-08-12 when M3 slice 5
-put a face on the matching engine and closed the last two M2 checks. Read this
-first when picking the project back up — then `CLAUDE.md` for the rules and
-commands, and `docs/PLAN.md` for per-item milestone status. Short dated session
-notes and owner advice live in `docs/NOTES.md`.
+scope was agreed and its first slice landed. Updated 2026-08-12 when slice 5 put a
+face on the matching engine and closed the last two M2 checks, and again when
+slice 6 closed **M3**. Read this first when picking the project back up — then
+`CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
+status. Short dated session notes and owner advice live in `docs/NOTES.md`.
 
 ---
 
@@ -28,19 +28,29 @@ Three long-standing items came off the watch list with it: the CI actions are of
 Node 20, there is finally a PDF in the fixtures that is broken on purpose, and the
 OCR confidence question has an answer with numbers behind it.
 
-**M3 — the matching engine — is under way.** Its scope was reviewed with the owner
-on 2026-08-08 and is no longer a draft: the agreed shape, the four decisions behind
-it and the six slices are in `docs/PLAN.md`. **Slices 1–5 are done** — a job posting
-and its requirements are first-class rows with CRUD behind them, a resume can be
-judged against those requirements with every match cited, a screening is a row
-of its own produced on the background worker under the shared retry policy, those
-screenings are ordered into a ranking, and there is now a UI a person can drive
-without `curl`. **Only retrieval is left.**
+**M3 — the matching engine — is complete** (2026-08-12). Its scope was reviewed with
+the owner on 2026-08-08 rather than reconstructed, and all six slices shipped against
+the agreed shape: a job posting and its requirements are first-class rows with CRUD
+behind them, a resume is judged against those requirements with every match cited, a
+screening is a row of its own produced on the background worker under the shared retry
+policy, screenings are ordered into a ranking, there is a UI a person can drive without
+`curl`, and retrieval says which resumes are worth paying to judge.
 
-Slice 5 cost **no API change and no migration**, which is the clearest sign the
-earlier slices served the right data: `GET /jobs/{id}/ranking` already returned
-verdicts *with* their citations, so the list view needs no second request per
-candidate and the detail route is called only for `document_text`.
+**Three of the six slices cost no model call and no migration at all** — ranking,
+the UI, and retrieval. That is the clearest sign the early slices stored the right
+things: `GET /jobs/{id}/ranking` already returned verdicts *with* their citations, so
+the UI needed no new endpoint, and retrieval scores text the database already held.
+
+The idea that made the guardrail generalize, now shipped rather than planned:
+**the model is never asked for a verdict.** It is asked only for quotes showing a
+requirement is met, and the application derives `met` (a quote resolved) or
+`not_evidenced` (none did) from what `EvidenceResolver` could locate — so judging
+inherits the guardrail, the `dropped` list and the hallucination rate without any of
+them being re-implemented. §5 says why `not_met` is deliberately not available.
+
+**Retrieval is deliberately outside that guarantee, and cannot weaken it.** It orders
+a list and produces no claim about anyone; delete the module and every verdict in the
+system is unchanged. That is what makes it safe for it to be approximate.
 
 Slice 4 is the one slice that costs nothing to run: ranking is a pure function over
 rows that already exist, with **no model call, no new table and no migration**. That
@@ -108,6 +118,9 @@ available.
 | **Free vs billed, watched in the UI and in `psql`** | Editing a **weight** shows "Free — reorders the ranking without re-judging anyone" *before* saving; scores moved 16.7%/83.3% → 80.0%/20.0% instantly with every screening still `completed`. Editing a **label** warns that screenings go stale, then all three move into an amber "Not in the ranking (3)" section whose button reads "Screen again — **1 model call**". **Restoring the label brought all three straight back** — the fingerprint is content-based, not a timestamp. After the entire session `psql` shows **exactly one `judge-v1` row per screening, `attempts=1`** (2026-08-12) |
 | **Two columns, rendered** | `resume_two_column.pdf` in `DocumentPane`: `CONTACT → nadia.w@example.com → Chiang Mai` and `SKILLS → Go, Kubernetes → Terraform, gRPC` read through **before** `EXPERIENCE`, rather than interleaving left and right. The M2 #6 fix seen by a human for the first time (2026-08-12) |
 | **MinIO, rendered** | `STORAGE_BACKEND=minio docker compose up -d api worker` (an env var on the command line, so there is nothing to restore), then `resume_multipage.pdf` uploaded **through the browser**: `extracted`, 3 pages, the document pane rendering all three. `mc ls` shows the object; the same key is **absent** from `/data/uploads`; the worker logged `storage=minio`, and the stack was put back to `storage=local` afterwards (2026-08-12) |
+| **Retrieval, live in the containers** | `api` rebuilt first, `/openapi.json` lists `/jobs/{job_id}/candidates` and `CandidateSuggestion`, and the startup log reads `retrieval=lexical`. Then, over three extracted resumes and a job whose only terms are a **Thai** requirement and `PostgreSQL`: `resume_th.pdf` ranks first at 1.0749 with the Thai label among its `matched` terms — the n-gram tokenizer finding a term buried in an unbroken run — `resume_en.pdf` second at 0.7313, and `resume_two_column.pdf` **scores 0.0 and is still listed** (2026-08-12) |
+| The description really is not matched on | That same `resume_two_column.pdf` contains *every word* of the job's description (`Kubernetes Terraform gRPC`) and still scored **0.0**. Had the description steered retrieval it would have ranked first, so this is the decision being watched rather than asserted (2026-08-12) |
+| Retrieval bills nothing | `psql` after the run: **0** `judge-v1` rows for that job, and the only calls against the account are the `extract-v1` ones its uploads needed. The ordering cost one query (2026-08-12) |
 
 ### Repository state
 
@@ -209,6 +222,10 @@ api/app/
                        from what resolved, never taken from the model
     ranking.py         M3: judge's downstream twin — orders screenings with no model
                        call at all. Weights come from the job, not the stored result
+    retrieval.py       M3: the pre-filter — which resumes are worth *paying* to judge.
+                       A hint, never a gate: it returns every document, ordered, and
+                       produces no claim, so it cannot weaken the guardrail. Thai is
+                       tokenized by character n-gram because it has no word spaces
     verification.py    the resolve-and-tally loop both of the above run. Its own
                        module because it needs `evidence` *and* `schemas.profile`,
                        and `schemas.profile` imports `evidence` — a cycle otherwise
@@ -242,7 +259,8 @@ api/app/
                        nested so ownership is settled in one place
                        screenings.py — creation nested under /jobs, reads flat under
                        /screenings; 202 when work was queued, 200 when it was not.
-                       Also GET /jobs/{id}/ranking, which spends nothing
+                       Also GET /jobs/{id}/ranking and GET /jobs/{id}/candidates,
+                       neither of which spends anything
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
   app/page.tsx         auth + upload + live progress + result + retry
@@ -441,6 +459,31 @@ Worth reading once, because the request no longer does the work.
   tier that passed the gate this is a constant and reorders nothing; inside the tier
   that failed it is what separates "missing one gate" from "missing all of them", and
   it keeps the denominator non-zero for a job made entirely of must-haves.
+- **Retrieval is a hint, never a gate** (M3 slice 6). `Retriever.retrieve` scores every
+  document it is given and returns all of them ordered; it never drops the tail. A
+  retriever that filtered would remove a person from consideration with no way to see
+  it happened — the same failure as a UI that hides `excluded` screenings, and worse,
+  because it happens before anyone has looked. Choosing a cut-off is the caller's
+  decision, made in the open. Mutation-tested: filtering zero scorers fails 9 cases.
+- **Thai is tokenized by character n-gram, Latin by word** (M3 slice 6). Not a
+  preference — a measurement. `resume_th.pdf` contains the unbroken 31-character run
+  `ดูแลระบบกระทบยอดการชำระเงินด้วย`, and the real terms `ชำระเงิน` and `วิศวกรรม` sit
+  inside it, where a whitespace tokenizer finds **neither**. The same probe showed how
+  a test could hide it: `ทักษะ` happens to be followed by a colon, so it *is* a
+  standalone token and a naive implementation looks correct on it. That is the
+  two-column fixture with no header in a new costume, and it is why the Thai test cases
+  use terms buried mid-run. 3 is the usual n-gram length for Thai: 2 collides across
+  unrelated words, 4 starts missing short ones.
+- **Retrieval matches requirement labels, never `job.description`** (M3 slice 6). The
+  description is stored for context and audit and is explicitly not what anyone is
+  judged against; letting it steer retrieval would reintroduce free-text scoring
+  through the back door, on the one input nobody decomposed on purpose. Watched live
+  rather than asserted: a resume containing every word of a job's description still
+  scored 0.0.
+- **`RETRIEVAL_BACKEND=pgvector` raises on purpose**, exactly as `LLM_PROVIDER=anthropic`
+  does. Embeddings are a paid call, so the adapter lands only together with a price
+  table and a live verification run in `docs/llm-providers.md` — a stale price silently
+  corrupts every cost figure, and a backend nobody has run is worse than an honest error.
 - **A requirement is an input, not a claim, so it needs no evidence** (M3).
   Requirements are typed in through CRUD rather than decomposed out of a pasted job
   description by a model. Nothing here is a statement about a candidate, so the
@@ -600,6 +643,15 @@ want the retry policy run the ARQ worker.
   (slice 4) to read. Whether a requirement is evidenced is a question about the
   document; how much it matters is a question about the job. A judge that consulted
   the weight would be scoring, which is the thing this milestone refuses to become.
+- **Lexical retrieval scores every document in memory, on every request.** No index,
+  nothing to keep in sync, and it works on SQLite — which is why the suite still needs
+  no server. It is linear in total document length per request, so it is the right
+  trade at one recruiter's pile of resumes and the wrong one at thousands per job.
+  That is what the `Retriever` seam is for, and `PgVectorRetriever` is where it goes.
+- **Retrieval has no quality measurement, on purpose.** Nothing here says the order it
+  produces is *good* — only that it is deterministic, explainable and free. Judging
+  ranking quality against a BM25/embedding baseline needs a labelled gold set and is
+  M6 with a one-week timebox (§scope discipline in §10). Do not quietly promote it.
 - **A resume stuck at `processing` is never reaped.** If a worker dies mid-job
   nothing sweeps the row back to `pending`; the job that redelivers it will skip it
   as already claimed. A visibility timeout on `last_attempt_at` would fix it and
@@ -720,6 +772,7 @@ the API and the worker, upload again. To see the dead-letter path: set
 | `test_worker.py` | Upload enqueues; the job runs; the arq adapter |
 | `test_retry.py` | Error classification, backoff, dead-lettering, replay |
 | `test_events.py` | The progress stream: ownership, the frame sequence, the cap, keep-alives |
+| `test_retrieval.py` | Tokenizing text with no word spaces, the ordering, and the property most easily lost: that retrieval is a hint and returns every document rather than filtering. The Thai cases use terms buried mid-run *on purpose* — a term with a space beside it passes against a tokenizer that is wrong for Thai |
 | `test_postgres.py` | JSONB, Thai round-trip, JSON queries. **Opt-in**, needs `TEST_DATABASE_URL` |
 | `test_config.py` | Settings validation, including the JWT-secret refusal |
 
@@ -755,24 +808,27 @@ free.
 | 3 | Screening as a row, on the background worker | **done** — `models/matching.py:Screening`, `services/screening_service.py`, `run_screening_job`, `api/routes/screenings.py`, migration `0006`, `tests/test_screening.py` |
 | 4 | Ranking across candidates | **done** — `pipeline/ranking.py` + `schemas/ranking.py`, `GET /jobs/{id}/ranking`, no migration, `tests/test_ranking.py` |
 | 5 | A thin web UI | **done** — `web/app/jobs/`, `lib/auth.ts`, `lib/screening.ts`, `components/{RankingTable,JudgmentView,RequirementEditor,RequirementFields,AuthPanel}.tsx`; **no API change, no migration**; `lib/screening.test.ts` |
-| 6 | Retrieval — the pre-filter | next — `Retriever` seam; lexical default, pgvector opt-in |
+| 6 | Retrieval — the pre-filter | **done** — `pipeline/retrieval.py`, `GET /jobs/{id}/candidates`, `RETRIEVAL_BACKEND`; no model call, no migration; `tests/test_retrieval.py` |
 
-**Four things to know before starting slice 6 (retrieval):**
+**M3 is closed. Four things to know before starting M4:**
 
-1. **It decides who is worth paying to judge, not what a screening sees.** The
-   guardrail is downstream of it and unchanged: a retrieved resume is still judged by
-   quotes that must resolve. Retrieval that filtered *evidence* would be the wrong
-   change.
-2. **The seam is shaped like `Storage` and `OCREngine`, and the default must need no
-   server.** `LexicalRetriever` runs on in-memory SQLite so `git clone && pytest -q`
-   keeps working; `PgVectorRetriever` is opt-in, gated like `tests/test_postgres.py`.
-3. **pgvector lands only with a price table and a live verification run** recorded in
-   `docs/llm-providers.md` — embeddings are a paid call, and the stale-price rule in
-   `CLAUDE.md` applies to them exactly as it does to a judging model.
-4. **The UI now spends money in exactly one place.** `/jobs/[id]`'s per-resume Screen
-   button is the only thing that bills a call. If retrieval adds a "screen the top N"
-   affordance, it has to name the count the way that button does — the 202/200 split
-   exists so a caller can always tell whether it just spent anything.
+1. **`docs/PLAN.md`'s M4–M6 are still a draft** reconstructed from the README. M3's
+   scope review on 2026-08-08 is the reason that milestone went cleanly — four
+   questions settled with the owner before any code. Do that again before building.
+2. **The visibility timeout is now the oldest open item**, and the only one that can
+   strand a user's data with no way back through the API: a worker that dies mid-job
+   leaves a resume at `processing`, where redelivery skips it, `POST /retry` answers
+   409 and re-upload dedupes. §7 and §11 both point at it, and M5 is where it sits.
+3. **The one actor is still `Candidate`.** M3's rule is "you may screen a resume you
+   own against a job you own", enforced in `_owned_job` / `_owned_resume` with 404
+   rather than 403 throughout. M4's RBAC widens *who* without changing the tables —
+   and `GET /jobs/{id}/candidates` joins resume filenames client-side on the
+   assumption that every screened resume belongs to the caller, which is exactly the
+   assumption RBAC breaks.
+4. **Retrieval is the only part of the system that is allowed to be approximate**,
+   because it makes no claim about anyone. Anything M4 adds that *does* make a claim —
+   a state transition, a shortlist decision — needs the same treatment as a verdict:
+   derived from something checkable, or not asserted.
 
 M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 

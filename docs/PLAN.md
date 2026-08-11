@@ -15,7 +15,7 @@ of them the same way before treating the details as commitments.
 |---|---|---|
 | M1 | Parse (PDF, offsets, Thai), extract, verify evidence, retry, auth, upload API, web UI | ✅ done (2026-07-30) |
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
-| M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | 🔨 in progress — slices 1–5 done, **only retrieval left** (2026-08-12) |
+| M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | ✅ done (2026-08-12) |
 | M4 | Application state machine, idempotency, race conditions, RBAC, PDPA | draft |
 | M5 | Full recruiter UI, observability, deploy | draft |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
@@ -347,11 +347,40 @@ not mention it".
   still with no React testing library and no DOM), and each of the three decisions was
   confirmed load-bearing by mutation. Verified in a browser against the containers and
   real Gemini, which also closed the two-column and MinIO renders left over from M2.
-- [ ] 6. **Retrieval, the pre-filter** — a `Retriever` seam shaped like `Storage`
-  and `OCREngine`. `LexicalRetriever` is the default and runs everywhere;
-  `PgVectorRetriever` is opt-in and lands only with a price table and a live
-  verification run in `docs/llm-providers.md`. It decides *which resumes are worth
-  paying to judge*, not what evidence a screening sees.
+- [x] 6. **Retrieval, the pre-filter** (2026-08-12). `app/pipeline/retrieval.py` — a
+  `Retriever` seam shaped like `Storage` and `OCREngine`, with `LexicalRetriever` as
+  the no-server default and `GET /jobs/{job_id}/candidates` serving it. **No model
+  call, no new table, no migration**, like ranking. `PgVectorRetriever` raises exactly
+  as `LLM_PROVIDER=anthropic` does: embeddings are a paid call, so it lands only with a
+  price table in the adapter and a live verification run in `docs/llm-providers.md`.
+  Four decisions inside it:
+  **Thai is tokenized by character n-gram, Latin by word — measured, not assumed.**
+  `resume_th.pdf` contains the unbroken 31-character run
+  `ดูแลระบบกระทบยอดการชำระเงินด้วย`, and the real terms `ชำระเงิน` and `วิศวกรรม` sit
+  inside it where a whitespace tokenizer finds **neither**. The same measurement showed
+  why a test could hide this: `ทักษะ` happens to be followed by a colon, so it *is* a
+  standalone token and a naive tokenizer looks correct on it — the two-column fixture
+  with no header, in a new costume. The Thai test cases use terms buried mid-run.
+  **It is a hint, never a gate.** `retrieve` scores every document and returns all of
+  them, ordered; it never drops the tail. A retriever that filtered would remove a
+  person from consideration with no way to see it happened — the failure `excluded`
+  exists to prevent one layer down. The cut-off is the caller's, made in the open.
+  **`job.description` is not matched on.** It is stored for context and audit and is
+  deliberately not what anyone is judged against; letting it steer retrieval would
+  reintroduce free-text scoring on the one input nobody decomposed on purpose.
+  **The order ends on the resume id**, so a list never reshuffles between identical
+  runs — the lesson `test_ranking.py` paid for.
+  Pinned by `tests/test_retrieval.py` (28 cases; suite 411 → 439), and each decision
+  was confirmed load-bearing by mutation: 5, 9, 1 and 2 cases fail respectively.
+  Verified live in the containers: a Thai requirement put `resume_th.pdf` first, the
+  resume containing every word of the *description* still scored 0.0, and `psql` shows
+  **zero** judging calls for the job.
+
+**M3 is complete** (2026-08-12). A job posting and its requirements are rows with CRUD,
+a resume is judged against them with every match cited, a screening is a row produced on
+the worker under the shared retry policy, screenings are ordered into a ranking, there is
+a UI a person can drive, and retrieval says where to spend the next model call. Three of
+the six slices cost no model call and no migration at all.
 
 ## M4 — backend depth (draft)
 

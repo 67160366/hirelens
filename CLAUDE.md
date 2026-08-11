@@ -2,7 +2,9 @@
 
 HireLens — resume screening where every claim the system makes cites the exact text
 it came from. FastAPI (`api/`) + Next.js (`web/`). Thai and English resumes.
-Current milestone: **M3** (M2 closed 2026-08-08) — the authoritative per-item
+Current milestone: **M4** (M3 closed 2026-08-12) — and M4's scope in `docs/PLAN.md`
+is still a **draft** reconstructed from the README, so review it with the owner
+before building to it, the way M3's was. The authoritative per-item
 status is the table in `docs/PLAN.md`. Orientation for a new session: this file, then `docs/HANDOFF.md` §3
 (reading order), then `docs/PLAN.md`.
 
@@ -109,6 +111,12 @@ Three files carry the weight: `api/app/pipeline/evidence.py` locates quotes and
 rejects what it cannot find, `api/app/llm/fake.py` is load-bearing test
 infrastructure rather than a stub, and `api/app/jobs.py` holds the background work
 and the whole retry policy. Annotated tree of everything else: `docs/HANDOFF.md` §4.
+
+**`api/app/pipeline/retrieval.py` is the one module allowed to be approximate**, and
+only because it makes no claim about anyone: it orders resumes by how worth judging
+they look, and deleting it would change no verdict. It returns *every* document,
+ordered — a retriever that filtered would drop a person before anyone looked. Do not
+let its score reach a verdict, and do not let it start filtering.
 
 Environment quirks: dev runs on Postgres + Redis from `docker compose up -d` +
 local storage (`var/uploads`); SQLite (`api/var/dev.db`) is a commented fallback

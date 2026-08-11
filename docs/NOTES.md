@@ -6,7 +6,139 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-12 (latest) — M3 gets a face, and three checks that nearly lied
+## 2026-08-12 (latest) — retrieval lands, and M3 is closed
+
+Slice 6, the last of the milestone. Screening costs a model call per resume, so
+something has to say where to spend it first. `GET /jobs/{id}/candidates` orders the
+caller's resumes by term overlap with the job's requirements — **no model call, no new
+table, no migration**, like ranking before it.
+
+Suite **411 → 439**.
+
+### The measurement that decided the design
+
+Thai has no spaces between words. That is not a detail to handle later; it is the
+whole design, and it was measured before a line was written:
+
+```
+resume_th.pdf — longest unbroken Thai run: 31 chars
+    ดูแลระบบกระทบยอดการชำระเงินด้วย
+    'ชำระเงิน'   whitespace-token=False   substring=True
+    'วิศวกรรม'   whitespace-token=False   substring=True
+    'ทักษะ'      whitespace-token=True    substring=True
+```
+
+Two real terms are in the document and a whitespace tokenizer finds **neither**. So
+Latin runs become words and Thai runs become overlapping 3-character n-grams.
+
+The third line is the important one. `ทักษะ` happens to be followed by a colon, so it
+*is* a standalone token — meaning a test written with that term alone passes against a
+tokenizer that is wrong for Thai. **That is the two-column fixture with no header, in
+a new costume**, and it is the fourth time this project has been offered a fixture that
+proves nothing. The Thai test cases deliberately use terms buried mid-run.
+
+### The property worth protecting
+
+**Retrieval is a hint, never a gate.** `retrieve` scores every document and returns all
+of them ordered; it never drops the tail.
+
+A filtering retriever is tempting — it is what "pre-filter" sounds like — and it is the
+same failure as a UI that hides `excluded` screenings, only worse: a person disappears
+before anyone has looked, and nothing records that they were there. Choosing a cut-off
+is the caller's decision, made in the open.
+
+The related guarantee: retrieval makes **no claim about anyone**. Delete the module and
+every verdict in the system is unchanged. That is precisely what makes it safe for it
+to be approximate, and it is why it needs no evidence resolution.
+
+### Four decisions, each confirmed load-bearing
+
+| Mutation | Cases that fail |
+|---|---|
+| Tokenize Thai by whitespace | **5** |
+| Filter out zero scorers (hint → gate) | **9** |
+| Drop the resume-id tie-break | **2** |
+| Let `job.description` steer retrieval | **1** |
+
+The second one fails through the HTTP route as well as the function, which is the
+useful part: the property is defended where a caller would actually notice it.
+
+### Verified in the containers
+
+`api` rebuilt first, `/openapi.json` lists the route, startup log reads
+`retrieval=lexical`. Then, over three extracted resumes against a job whose only terms
+are a Thai requirement and `PostgreSQL`:
+
+```
+resume_th.pdf          score=1.0749   matched=[งาน Backend ที่เกี่ยวกับระบบชำระเงิน, PostgreSQL]
+resume_en.pdf          score=0.7313   matched=[งาน Backend ที่เกี่ยวกับระบบชำระเงิน, PostgreSQL]
+resume_two_column.pdf  score=0.0      matched=[]
+```
+
+Two things land at once there. The Thai requirement really did match a term buried in
+an unbroken run — the n-gram tokenizer doing its job on real data rather than in a
+fixture. And `resume_two_column.pdf` contains **every word of that job's description**
+(`Kubernetes Terraform gRPC`) and still scored 0.0: had the description steered
+retrieval it would have ranked first. The decision was watched, not asserted.
+
+`psql` afterwards: **zero** judging calls for the job. The ordering cost one query.
+
+### M3, in one table
+
+| Slice | Model call? | Migration? |
+|---|---|---|
+| 1 Jobs and requirements | no | `0004` |
+| 2 Requirement-level judging | **yes** | `0005` |
+| 3 Screening on the worker | **yes** | `0006` |
+| 4 Ranking | no | no |
+| 5 Thin web UI | no | no |
+| 6 Retrieval | no | no |
+
+**Half the milestone spends nothing at run time**, and the last three slices needed no
+schema change at all. That is not luck: slices 1–3 stored `document_text`, `page_spans`
+and the full `Judgment`, so everything after them was a pure function over rows that
+already existed.
+
+### Still open, in order
+
+1. **M4 — backend depth.** Its `PLAN.md` entry is still a draft reconstructed from the
+   README. M3's scope review with the owner is the reason that milestone went cleanly;
+   do it again before writing code. HANDOFF §9 lists four things to know first.
+2. **The visibility timeout** (M5) is now the oldest open item and still **the only one
+   that can strand a user's data with no way back through the API**.
+3. Next 15 → 16 for the postcss and sharp advisories. A framework major.
+4. M6's evaluation stays out of the critical path with its one-week timebox. Nothing in
+   this slice measures whether the retrieval *order* is good — only that it is
+   deterministic, explainable and free. Do not let that gap quietly promote M6.
+
+### Worth knowing next time
+
+- **`GET /jobs/{id}/candidates` joins filenames client-side**, on the assumption that
+  every screened resume belongs to the caller. True in M3, and exactly the assumption
+  M4's RBAC breaks.
+- Lexical scoring is in-memory and linear in total document length per request. Right
+  at one recruiter's pile, wrong at thousands per job — which is what the seam is for.
+- The throwaway account was deleted, and the stack is left rebuilt from current code
+  with `retrieval=lexical` in the startup log.
+
+### Advice for the owner
+
+- **Measure the thing you are about to build on — again.** Every slice where this was
+  done produced a design that survived, and this one is the clearest: five minutes with
+  a probe script turned "tokenize the text" from a one-liner into the decision the whole
+  module is organised around. The alternative was an implementation that looked correct,
+  demoed correctly on `ทักษะ`, and silently failed on Thai phrases.
+- **Name what a component is *not* allowed to do.** Retrieval is the first part of this
+  system permitted to be approximate, and the only reason that is safe is that it makes
+  no claim. Writing that down is what stops a future change from quietly letting it
+  filter, or letting its score reach a verdict.
+- **Ask what a passing test proves, not whether it passes.** `ทักษะ` would have gone
+  green against the wrong tokenizer. Four sessions running, the fixture — not the code —
+  has been the thing that was wrong.
+
+---
+
+## 2026-08-12 — M3 gets a face, and three checks that nearly lied
 
 Slice 5. The matching engine had been fully usable over HTTP since slice 3 and
 completely invisible: `web/` was still M1's single upload page. It now has `/jobs` and
