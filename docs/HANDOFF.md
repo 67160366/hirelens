@@ -29,13 +29,17 @@ OCR confidence question has an answer with numbers behind it.
 
 **M3 — the matching engine — is under way.** Its scope was reviewed with the owner
 on 2026-08-08 and is no longer a draft: the agreed shape, the four decisions behind
-it and the six slices are in `docs/PLAN.md`. **Slices 1–4 are done** — a job posting
+it and the six slices are in `docs/PLAN.md`. **Slices 1–5 are done** — a job posting
 and its requirements are first-class rows with CRUD behind them, a resume can be
 judged against those requirements with every match cited, a screening is a row
-of its own produced on the background worker under the shared retry policy, and
-those screenings are now ordered into a ranking. The
-system is end-to-end usable over HTTP for the first time this milestone. The rest,
-in order: a thin UI, retrieval.
+of its own produced on the background worker under the shared retry policy, those
+screenings are ordered into a ranking, and there is now a UI a person can drive
+without `curl`. **Only retrieval is left.**
+
+Slice 5 cost **no API change and no migration**, which is the clearest sign the
+earlier slices served the right data: `GET /jobs/{id}/ranking` already returned
+verdicts *with* their citations, so the list view needs no second request per
+candidate and the detail route is called only for `document_text`.
 
 Slice 4 is the one slice that costs nothing to run: ranking is a pure function over
 rows that already exist, with **no model call, no new table and no migration**. That
@@ -96,24 +100,28 @@ available.
 | Judging calls are billed to the screening | In `psql`: 21 `extract-v1` rows all carrying `resume_id` and none carrying `screening_id`; 2 `judge-v1` rows all carrying `screening_id` and none carrying `resume_id`. The two prompt families stay separable in the cost table (2026-08-08) |
 | **Ranking, end to end in the containers** | `api` and `worker` rebuilt first, and `/openapi.json` lists `/jobs/{job_id}/ranking` plus all four ranking schemas. Then a job of 5 requirements (2 must-have, one Thai label round-tripping at 10 chars) over three resumes: `resume_en` and `resume_th` both 3/5 with the gate passed, `resume_multipage` 0/5 gated out and ranked last. The two that tie at 0.6000 are separated by the screening-id tie-break — the total order doing its job on real data (2026-08-08, on `fake` — see the note below) |
 | **A weight change is free, watched in `psql`** | Patching one requirement's weight 1.0 → 20.0 moved every score (0.6000 → 0.9167) while all three screenings stayed `is_stale=false` with `attempts=1` — and Postgres shows **exactly one `judge-v1` row per screening** after two ranking requests and the patch. Then changing that requirement's *label* moved all three into `excluded` with `reason=stale` and left `ranked` empty. A second account gets **404** (2026-08-08) |
-| The live run's provider | The judging behind that ranking ran on `fake`: the Gemini free tier's **daily** cap (20 requests for `gemini-3.6-flash`) was exhausted partway through, after `resume_en.pdf` had already completed against real Gemini at 3/5 met, 0 dropped. Ranking makes **no model call at all**, so the provider is not part of what this slice needed to prove — but nobody has yet watched a ranking built entirely from Gemini judgments (2026-08-08) |
+| The live run's provider | The judging behind that ranking ran on `fake`: the Gemini free tier's **daily** cap (20 requests for `gemini-3.6-flash`) was exhausted partway through, after `resume_en.pdf` had already completed against real Gemini at 3/5 met, 0 dropped. Ranking makes **no model call at all**, so the provider is not part of what this slice needed to prove — but nobody has yet watched a ranking built entirely from Gemini judgments (2026-08-08). **Closed 2026-08-12**: all six `judge-v1` rows are `gemini`/`gemini-3.6-flash`, read out of `psql` |
+| **A ranking built entirely from Gemini judgments** | 3 resumes uploaded and `extracted` (12/12, 10/10, 7/7 claims verified, 0 dropped), a job of 5 requirements, 3 screenings each answered **202** and completed on the ARQ worker. `resume_th` and `resume_en` 4/5 met, `resume_two_column` 1/5. Every `judge-v1` row `provider=gemini` — the gap the previous entry recorded (2026-08-12) |
+| **The whole M3 journey in a browser** | At :3000 against the containers and live Gemini: `/jobs` lists and authors, `/jobs/[id]` renders the requirement editor with a Thai label intact, the ranking table, and — on clicking a row — verdicts beside the document. The Thai requirement `งาน Backend ที่เกี่ยวกับระบบชำระเงิน` shows `Met` citing the resume's own `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ PostgreSQL`, and clicking that citation highlights exactly that line among 4 cited spans. `Kubernetes` reads "No citable evidence" with "That is not the same as the candidate lacking it" — the `not_met` refusal reaching the screen (2026-08-12) |
+| **The must-have gate, visible** | With `Kubernetes` weighted 20, `resume_two_column` scores **83.3% — the highest on the page — and still ranks #3**, marked `0/2 — gate not passed`, below two candidates scoring 16.7%. A gate rather than a heavy weight, watched rather than inferred from a test (2026-08-12) |
+| **Free vs billed, watched in the UI and in `psql`** | Editing a **weight** shows "Free — reorders the ranking without re-judging anyone" *before* saving; scores moved 16.7%/83.3% → 80.0%/20.0% instantly with every screening still `completed`. Editing a **label** warns that screenings go stale, then all three move into an amber "Not in the ranking (3)" section whose button reads "Screen again — **1 model call**". **Restoring the label brought all three straight back** — the fingerprint is content-based, not a timestamp. After the entire session `psql` shows **exactly one `judge-v1` row per screening, `attempts=1`** (2026-08-12) |
+| **Two columns, rendered** | `resume_two_column.pdf` in `DocumentPane`: `CONTACT → nadia.w@example.com → Chiang Mai` and `SKILLS → Go, Kubernetes → Terraform, gRPC` read through **before** `EXPERIENCE`, rather than interleaving left and right. The M2 #6 fix seen by a human for the first time (2026-08-12) |
+| **MinIO, rendered** | `STORAGE_BACKEND=minio docker compose up -d api worker` (an env var on the command line, so there is nothing to restore), then `resume_multipage.pdf` uploaded **through the browser**: `extracted`, 3 pages, the document pane rendering all three. `mc ls` shows the object; the same key is **absent** from `/data/uploads`; the worker logged `storage=minio`, and the stack was put back to `storage=local` afterwards (2026-08-12) |
 
 ### Repository state
 
 `main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything
-through M3 slice 3 is pushed and green on CI** (run `31251558255`, 2026-08-08 —
-every step of both the `api` and `web` jobs, including `Verify migrations apply and
-reverse`, which is the one that caught migration `0006`). Earlier runs report
-**339 passed, 26 skipped** on a runner with no Tesseract, no database, no MinIO and
-no API key — the same numbers as a local run, which is the opt-in test design doing
-its job — plus 9 vitest cases in `web/`. The
-only annotations on any run come from inside `actions/setup-node` itself (Node's
-`punycode` and `url.parse` deprecations); nothing in this repo emits one.
+through M3 slice 4 is pushed and green on CI** (run `31520096469`, 2026-08-12 —
+both the `api` and `web` jobs, including `Verify migrations apply and reverse`, the
+step that caught migration `0006`). That run reports **411 passed, 38 skipped** on a
+runner with no Tesseract, no database, no MinIO and no API key — the same numbers as
+a local run, which is the opt-in test design doing its job — plus the vitest cases in
+`web/`, now **28** (9 before slice 5). It carries **no annotations at all**, which is
+new: earlier green runs still emitted Node deprecations from inside
+`actions/setup-node`. Read them anyway — §1's `setup-uv` story is why.
 
-**Slice 4 (ranking) is committed but was not yet pushed when this was written** —
+**Slice 5 (the thin UI) is committed but was not yet pushed when this was written** —
 check `git rev-list --count origin/main..main` rather than trusting that sentence.
-
-Check `git rev-list --count origin/main..main` before assuming that is still true.
 A batch of verified-but-unpushed commits is the easiest way for local and CI to
 drift apart — slice 1 sat in the working tree, uncommitted, for a whole session —
 and CI is the only thing that tests a clean machine with no `.env`, no Docker and
@@ -237,9 +245,25 @@ api/app/
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
   app/page.tsx         auth + upload + live progress + result + retry
-  lib/api.ts           typed client; `waitForProfile` streams, then falls back to polling
+  app/jobs/page.tsx    M3: job list, and authoring a job with its requirements in one call
+  app/jobs/[id]/page.tsx  M3: the slice-5 screen — requirement editor, screening,
+                       ranking, and one candidate's verdicts beside the document
+  lib/api.ts           typed client; `waitForProfile` streams, then falls back to polling.
+                       `createScreening` returns `queued` because 202-vs-200 is a
+                       design decision the UI has to be able to report
+  lib/auth.ts          M3: the session, shared by every route — token storage and the
+                       refresh-once-on-401 wrapper, lifted out of `page.tsx`
+  lib/screening.ts     M3: the pure judgment logic the ranking screen runs on. Its own
+                       module so `npm test` needs no DOM, the same instinct as the
+                       Python suite needing no server
   components/Evidence.tsx, ProfileView.tsx, DocumentPane.tsx (citation highlighting)
+  components/RankingTable.tsx, JudgmentView.tsx, RequirementEditor.tsx,
+                       RequirementFields.tsx, AuthPanel.tsx
 ```
+
+`DocumentPane` takes `references: EvidenceRef[]`, **not** a profile. That change is
+what lets a screening's citations highlight through the component M1 wrote for
+extraction claims — the offsets index into the same `document_text` either way.
 
 ### How one upload flows through the system
 
@@ -698,6 +722,14 @@ the API and the worker, upload again. To see the dead-letter path: set
 | `test_postgres.py` | JSONB, Thai round-trip, JSON queries. **Opt-in**, needs `TEST_DATABASE_URL` |
 | `test_config.py` | Settings validation, including the JWT-secret refusal |
 
+And in `web/`, run by `npm test` (vitest, **no DOM and no React testing library** —
+keeping that true is the same property as the Python suite needing no server):
+
+| File | What it pins |
+|---|---|
+| `lib/api.test.ts` | The SSE frame parser across chunk boundaries, including a Thai character split in half — plus `createScreening` mapping **202 → queued** and **200 → already answered**, the one status code on this client that carries meaning |
+| `lib/screening.test.ts` | That an unevidenced requirement contributes **no** highlight even if a payload carried spans, which fields make a screening stale (and that `weight`/`must_have` do not), and that the unevidenced wording never claims a candidate lacks anything |
+
 ---
 
 ## 9. Next steps
@@ -721,26 +753,25 @@ free.
 | 2 | Requirement-level judging | **done** — `pipeline/judge.py` + `schemas/judgment.py`, `page_spans` + migration `0005`, `fake.py` teaching, `--requirement` on the CLI, `tests/test_judge.py` |
 | 3 | Screening as a row, on the background worker | **done** — `models/matching.py:Screening`, `services/screening_service.py`, `run_screening_job`, `api/routes/screenings.py`, migration `0006`, `tests/test_screening.py` |
 | 4 | Ranking across candidates | **done** — `pipeline/ranking.py` + `schemas/ranking.py`, `GET /jobs/{id}/ranking`, no migration, `tests/test_ranking.py` |
-| 5 | A thin web UI | next — job authoring, verdicts, citation highlighting through the existing `DocumentPane` |
-| 6 | Retrieval — the pre-filter | `Retriever` seam; lexical default, pgvector opt-in |
+| 5 | A thin web UI | **done** — `web/app/jobs/`, `lib/auth.ts`, `lib/screening.ts`, `components/{RankingTable,JudgmentView,RequirementEditor,RequirementFields,AuthPanel}.tsx`; **no API change, no migration**; `lib/screening.test.ts` |
+| 6 | Retrieval — the pre-filter | next — `Retriever` seam; lexical default, pgvector opt-in |
 
-**Four things to know before starting slice 5 (the thin UI):**
+**Four things to know before starting slice 6 (retrieval):**
 
-1. **The data is all served already.** `GET /jobs/{id}/ranking` returns each entry
-   with its `RequirementJudgment`s — verdicts *and* citation spans — so a list view
-   needs no second request per candidate. `GET /screenings/{id}` adds
-   `document_text`, which is what `DocumentPane` highlights against.
-2. **This slice absorbs the browser check that has slipped three times.** Two-column
-   and MinIO are verified at the HTTP level and in the containers, but no human has
-   watched either render. `PLAN.md` says the walkthrough is part of slice 5, not a
-   follow-up to it.
-3. **A ranking is cheap; a screening is not.** The UI may re-fetch a ranking freely
-   on every weight edit — it costs one query. It must not offer anything that quietly
-   loops over `POST /jobs/{id}/screenings`, which bills a model call per resume
-   whenever a *label* changed.
-4. **Show `excluded`, do not hide it.** A stale screening drops out of the ranked
-   list on purpose. A UI that silently omits it recreates exactly the confusion the
-   `excluded` list exists to prevent — say "needs re-screening" and offer the button.
+1. **It decides who is worth paying to judge, not what a screening sees.** The
+   guardrail is downstream of it and unchanged: a retrieved resume is still judged by
+   quotes that must resolve. Retrieval that filtered *evidence* would be the wrong
+   change.
+2. **The seam is shaped like `Storage` and `OCREngine`, and the default must need no
+   server.** `LexicalRetriever` runs on in-memory SQLite so `git clone && pytest -q`
+   keeps working; `PgVectorRetriever` is opt-in, gated like `tests/test_postgres.py`.
+3. **pgvector lands only with a price table and a live verification run** recorded in
+   `docs/llm-providers.md` — embeddings are a paid call, and the stale-price rule in
+   `CLAUDE.md` applies to them exactly as it does to a judging model.
+4. **The UI now spends money in exactly one place.** `/jobs/[id]`'s per-resume Screen
+   button is the only thing that bills a call. If retrieval adds a "screen the top N"
+   affordance, it has to name the count the way that button does — the 202/200 split
+   exists so a caller can always tell whether it just spent anything.
 
 M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 
@@ -765,10 +796,12 @@ deliverable) and `POST /auth/change-password` shipped.
 
 **Still true, and still worth not renegotiating:**
 
-- **The browser has not seen the two-column or MinIO work.** Both are verified at
-  the HTTP level and in the containers, but no one has watched a two-column resume
-  render in `DocumentPane`. Still the cheapest outstanding check, and M3 slice 5 is
-  the natural moment to fold it in.
+- ~~**The browser has not seen the two-column or MinIO work.**~~ **Closed 2026-08-12**
+  with slice 5, which is why `PLAN.md` put the walkthrough *inside* the slice rather
+  than after it. A two-column resume reads CONTACT/SKILLS through before EXPERIENCE in
+  `DocumentPane`, and a MinIO upload renders identically with the object in the bucket
+  and absent from the uploads volume. It had slipped three sessions as a follow-up and
+  took twenty minutes as a deliverable.
 - **M4–M6 in `docs/PLAN.md` are still a draft** reconstructed from the README. M3 is
   not any more — review each of the others the same way before building to it.
 - **The scope lines hold**: the baseline-ranking evaluation stays in M6 with its
@@ -817,14 +850,32 @@ also tracks the status of every item above.
   `name="ck_<table>_<rule>"` gets wrapped a second time and `alembic check` reports
   drift against the model forever. `fk`, `pk` and `uq` names are safe spelled out —
   their conventions never reference the given name.
-- **When a check says something surprising, suspect the instrument first.** Three
+- **When a check says something surprising, suspect the instrument first.** Five
   tools have now each told a confident lie here: `git hash-object` reported
   CRLF-corrupted PDFs as intact because it normalizes while hashing, a
   `WHERE kind = 'language'` query returned nothing because SQLAlchemy stores enum
-  *names*, and PowerShell 5.1 rendered stored Thai as mojibake because it decodes a
-  JSON body as Latin-1 when the server names no charset. In each case the data was
-  fine and the question was wrong. Go to the store that cannot lie — `psql`, and
-  byte counts rather than eyeballs.
+  *names*, PowerShell 5.1 rendered stored Thai as mojibake because it decodes a
+  JSON body as Latin-1 when the server names no charset, and (2026-08-12) two more
+  from one script. In each case the data was fine and the question was wrong. Go to
+  the store that cannot lie — `psql`, and byte counts rather than eyeballs.
+- **A `.ps1` without a BOM is read in the ANSI codepage, so Thai in a script literal
+  is corrupted before it is ever sent** (2026-08-12). A live check "verified" a Thai
+  requirement round-trip against text the script itself had already broken —
+  `octet_length` in `psql` said 90 chars / 240 bytes where 36 / 90 belonged. This is
+  worse than the mojibake above, which was only a display problem: here the wrong
+  bytes really were stored. **Keep non-ASCII payloads in a `.json` file and send its
+  bytes**, and check the length in the database rather than reading the console.
+- **In PowerShell, assigning an `if` *expression* unrolls an array.**
+  `$x = if (…) { $bytes } else { … }` sends the result through the pipeline, which
+  re-collects a `byte[]` as `Object[]`; `Invoke-WebRequest` then posts that array's
+  `ToString()` — the decimal bytes — and the server reports a JSON error at position 4
+  because it parsed `123`, the `{`. Cast: `[byte[]]$x`. And do not name the temporary
+  `$raw` inside a function with a `[switch]$Raw` parameter — PowerShell variable names
+  are case-insensitive, so it silently overwrites the switch.
+- **A function that both writes output and returns a value returns both.** PowerShell
+  puts everything on the pipeline, so `$result = Show-Ranking "caption"` captures the
+  printed lines too and nothing appears on screen. It cost one confusing run where the
+  most important output of the check was simply missing.
 - **Before believing a live run, prove you are testing what you built.** Three things
   have each caused a wrong conclusion here: a zombie server on the old port serving
   old code, a *second* ARQ worker left running from an earlier session quietly taking

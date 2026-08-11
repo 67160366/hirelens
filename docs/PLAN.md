@@ -160,6 +160,13 @@ should review them before anyone treats the details as commitments.
   The true pdf.js overlay needs bbox geometry. #6 now extracts that geometry per
   page, so the remaining work is an endpoint serving the original file and a pdf.js
   canvas — it is a frontend slice now, not a parser one. Left for M5's recruiter UI.
+  *(M3 slice 5 generalized this component from `ExtractedProfile` to `EvidenceRef[]`,
+  so it now highlights judgment citations too. The pdf.js overlay is still M5's.)*
+
+**Both M2 renders nobody had watched are now closed** (2026-08-12, with M3 slice 5):
+a two-column resume reads CONTACT/SKILLS through before EXPERIENCE in `DocumentPane`
+rather than interleaving, and an upload under `STORAGE_BACKEND=minio` renders the same
+page with the object in the bucket and **absent** from the uploads volume.
 
 ## M2 follow-ups — the open questions M2 left behind (2026-08-08)
 
@@ -308,9 +315,36 @@ not mention it".
   decisions were each confirmed load-bearing by mutation: reading weights from the
   stored result fails 5 cases, treating `must_have` as a heavy weight fails 3, and
   dropping the id tie-break fails 2.
-- [ ] 5. **A thin web UI** — job authoring, a screening's verdicts, and citation
-  highlighting through the existing `DocumentPane`. The browser walkthrough is part
-  of this slice, not a follow-up.
+- [x] 5. **A thin web UI** (2026-08-12). `web/app/jobs/page.tsx` authors a job with its
+  requirements in one call; `web/app/jobs/[id]/page.tsx` edits them, screens resumes,
+  shows the ranking and drills into one candidate's verdicts beside the document.
+  **No API change and no migration** — `GET /jobs/{id}/ranking` already returned
+  verdicts *with* citations, so a list view needs no second request per candidate.
+  `DocumentPane` stopped taking an `ExtractedProfile` and takes `EvidenceRef[]`, which
+  is the whole reason a judgment's citations highlight through the same component that
+  M1's profile citations do.
+  Three decisions inside it:
+  **verdicts are rendered from the ranking entry, never from `GET /screenings/{id}`.**
+  That route returns the stored `Judgment` verbatim, with `must_have` and `weight`
+  frozen at judging time; ranking re-keys both against the job's current requirements.
+  Reading them from the detail route is the obvious implementation and makes weight
+  edits do nothing, silently — the same trap slice 4 documented on the server, in a new
+  costume. The detail route is called for `document_text` and nothing else.
+  **The cost of an edit is shown before it is made.** `must_have`/`weight` say "Free —
+  reorders the ranking without re-judging anyone"; `kind`/`label`/`detail` say the
+  screenings become stale. Edits stage behind a Save button so the warning arrives
+  before the write, and nothing on the page ever loops `POST /jobs/{id}/screenings`.
+  **`collectJudgmentEvidence` filters on the verdict rather than flattening.** The
+  server sends no evidence for `not_evidenced`, so on the contract the two agree — but
+  this side did not build that JSON, and the rule it must keep is that nothing is
+  highlighted unless it produced a verdict. Written that way *because* the flattening
+  version made its own test unable to fail.
+  Screenings have no progress stream, so a queued one is followed by polling
+  `GET /jobs/{id}/screenings` — one request for all of them, not one per row.
+  Pinned by `web/lib/screening.test.ts` + new cases in `api.test.ts` (vitest 9 → 28,
+  still with no React testing library and no DOM), and each of the three decisions was
+  confirmed load-bearing by mutation. Verified in a browser against the containers and
+  real Gemini, which also closed the two-column and MinIO renders left over from M2.
 - [ ] 6. **Retrieval, the pre-filter** — a `Retriever` seam shaped like `Storage`
   and `OCREngine`. `LexicalRetriever` is the default and runs everywhere;
   `PgVectorRetriever` is opt-in and lands only with a price table and a live

@@ -6,7 +6,168 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-08 (latest) — ranking lands, and it costs nothing to run
+## 2026-08-12 (latest) — M3 gets a face, and three checks that nearly lied
+
+Slice 5. The matching engine had been fully usable over HTTP since slice 3 and
+completely invisible: `web/` was still M1's single upload page. It now has `/jobs` and
+`/jobs/[id]`, and M3 has only retrieval left.
+
+Vitest **9 → 28**. Python suite unchanged at 411 — **no API change and no migration**,
+which is the useful thing to notice about this slice.
+
+### The data was already right, which is why this was cheap
+
+`GET /jobs/{id}/ranking` already returned each entry's `RequirementJudgment`s —
+verdicts *with* citation spans. So the list view needs no second request per
+candidate, and `GET /screenings/{id}` is called only for `document_text`. Slice 4
+wrote that into HANDOFF §9 as a thing to know before starting, and it was correct.
+
+The one real refactor: `DocumentPane` took an `ExtractedProfile` and collected its own
+spans, so it could not highlight a judgment. It takes `references: EvidenceRef[]` now.
+That is the whole change, and it is why M1's citation highlighting works unmodified
+for screenings — the offsets index into the same `document_text` either way.
+
+### The trap, wearing slice 4's costume
+
+`GET /screenings/{id}` returns the stored `Judgment` **verbatim**, with `must_have`
+and `weight` frozen at judging time. Ranking re-keys both against the job's *current*
+requirements. So rendering the verdict panel from the detail route — the obvious
+choice, since that request is being made anyway for the document text — would make
+weight edits appear to do nothing. No error, no stale flag, correct-looking numbers.
+
+That is precisely the trap slice 4 documented on the server, one layer up. Writing it
+down last time is what made it visible this time; the panel renders from the ranking
+entry, and the detail route supplies `document_text` and nothing else.
+
+### The test that could not fail, caught this time before shipping
+
+All 28 tests passed on the first run, so — the habit — each decision was reverted and
+the suite re-run:
+
+| Mutation | Cases that fail |
+|---|---|
+| Flatten evidence without reading the verdict | **1** |
+| Treat `weight`/`must_have` as fields the judge saw | **1** |
+| Collapse 202 and 200 into `response.ok` | **1** |
+
+The first one only fails **because the function was rewritten**. As originally
+written, `collectJudgmentEvidence` was `flatMap(r => r.evidence)`, and the test
+"a `not_evidenced` requirement contributes nothing" passed because the *fixture* had
+an empty list. It asserted a property of the test data, not of the code — green
+forever, catching nothing. It now filters on the verdict, and the test feeds it a
+contradictory judgment carrying spans.
+
+Worth stating plainly: the fix was to the **code**, not the test. Asking "could this
+fail?" produced a better invariant — nothing is highlighted unless it produced a
+verdict, checkable locally instead of assumed of the server.
+
+### The UI's one job: say what things cost
+
+A ranking is one query; a screening is a model call per resume. So:
+
+- editing `weight` or `must_have` shows **"Free — reorders the ranking without
+  re-judging anyone"**, in green, *before* saving
+- editing `kind`, `label` or `detail` warns the screenings go stale
+- edits stage behind a Save button, so the warning arrives before the write
+- excluded screenings get an amber section, and the button reads **"Screen again —
+  1 model call"**
+- nothing anywhere loops `POST /jobs/{id}/screenings`
+
+Screenings have no progress stream (only resumes do), so a queued one is followed by
+polling `GET /jobs/{id}/screenings` — one request covering all of them.
+
+### Verified in a browser, finally
+
+The walkthrough had slipped three sessions as a follow-up. As a deliverable it took
+twenty minutes, against the containers and live Gemini:
+
+- The Thai requirement `งาน Backend ที่เกี่ยวกับระบบชำระเงิน` shows `Met`, citing the
+  resume's own differently-worded `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ PostgreSQL`.
+  Clicking the citation highlights exactly that line among 4 cited spans.
+- `Kubernetes` reads "No citable evidence" — "That is not the same as the candidate
+  lacking it." The `not_met` refusal, on screen.
+- **The gate, visible:** with `Kubernetes` weighted 20, `resume_two_column` scores
+  **83.3%, the highest on the page, and still ranks #3** below two candidates at
+  16.7%. A gate, not a heavy weight — watched instead of inferred from a test.
+- Weight edit → scores moved instantly, screenings stayed `completed`. Label edit →
+  all three into "Not in the ranking (3)". **Restoring the label brought them back**,
+  because the fingerprint is content-based rather than a timestamp.
+- Afterwards, `psql`: **one `judge-v1` row per screening, `attempts=1`.** The whole
+  session spent nothing.
+
+**Both M2 renders nobody had watched are closed too.** `resume_two_column.pdf` reads
+CONTACT/SKILLS through before EXPERIENCE rather than interleaving. And under
+`STORAGE_BACKEND=minio`, an upload through the browser rendered normally with the
+object in the bucket and **absent** from `/data/uploads`.
+
+And the ranking ran entirely on real Gemini — all six `judge-v1` rows are
+`provider=gemini`, which is the gap the last entry left open.
+
+### Three instruments that lied, all in one script
+
+The live-check script was wrong three times before it was right, and the first one
+would have shipped as a passing result.
+
+**1. A BOM-less `.ps1` is read in the ANSI codepage.** cp874 here, so the Thai literal
+in the job payload was mangled *before it was sent*. The check printed a Thai
+round-trip and `psql` said **90 chars / 240 bytes** where 36 / 90 belonged. This is
+worse than the 2026-08-08 mojibake, which was only display: here the wrong bytes were
+genuinely stored. Fix: keep the payload in a `.json` file and post its bytes.
+
+**2. Assigning an `if` expression unrolls an array.**
+`$x = if (…) { $bytes } else { … }` sends the result through the pipeline, which
+re-collects `byte[]` as `Object[]`; `Invoke-WebRequest` posts its `ToString()` and the
+server reports a JSON error at position 4 — it had parsed `123`, the `{`. My first
+diagnosis blamed splatting and was wrong; a two-line probe showed splatting is fine.
+Cast `[byte[]]`. (And do not name the temporary `$raw` in a function with a
+`[switch]$Raw` parameter — PowerShell is case-insensitive and silently ate the switch.)
+
+**3. A function that writes output *and* returns a value returns both.** So
+`$before = Show-Ranking "as judged"` captured the printed table into the variable and
+the most important output of the check simply never appeared.
+
+### Still open, in order
+
+1. **Slice 6 — retrieval**, the last of M3. HANDOFF §9 now lists four things to know
+   first, the sharpest being that retrieval decides *who is worth paying to judge* and
+   must not touch what evidence a screening sees.
+2. **The visibility timeout** for a worker that dies mid-job (M5). Still the last §11
+   follow-up and still **the only open item that can strand a user's data with no way
+   back through the API**.
+3. Next 15 → 16 for the remaining postcss and sharp advisories. A framework major.
+4. M4–M6 in `PLAN.md` are still a draft reconstructed from the README. M3's scope
+   review paid for itself; do the same before building to any of them.
+
+### Worth knowing next time
+
+- **`GET /resumes` is how the ranking table gets filenames.** Ranking carries
+  `resume_id` only, and in M3 every screened resume belongs to the caller, so one
+  request and a client-side join covers it. That stops being true when M4's RBAC lets
+  a recruiter screen someone else's resume.
+- A resume that is not `extracted` cannot be screened — the worker raises
+  `NotScreenable` and the retry policy treats it as permanent. The UI says so instead
+  of offering a button that can only fail.
+- The throwaway account and its two jobs were deleted afterwards, and the stack was
+  put back to `storage=local` matching `.env`, confirmed in the worker log.
+
+### Advice for the owner
+
+- **Write the trap down and you will recognise it in a new costume.** Slice 4's
+  "read weights from the job, not the stored result" was recorded in HANDOFF §5 purely
+  as a server decision. That paragraph is the only reason the same mistake was obvious
+  one layer up, where the tempting shortcut was different but the silent failure was
+  identical. Documentation earned its keep here in a way a test could not have.
+- **When a test cannot fail, fix the code rather than the test.** The instinct is to
+  write a cleverer assertion. The better question is why the property is not guaranteed
+  where it is used — and the answer produced a genuinely stronger invariant.
+- **A check that produces a *plausible* result is more dangerous than one that
+  errors.** The Thai script bug printed a confident round-trip. Every one of this
+  project's instrument lessons has this shape, and the defence is the same each time:
+  go to the store that cannot lie, and compare bytes rather than eyeballs.
+
+---
+
+## 2026-08-08 — ranking lands, and it costs nothing to run
 
 Slice 4. Screenings are now ordered into a ranking, which is the point the milestone
 stops producing one verdict at a time and starts answering the question the product
