@@ -2,10 +2,11 @@
 
 Written 2026-07-30 at the end of M1, rewritten 2026-08-07 after the Postgres
 cutover, again 2026-08-08 when M2 completed, and updated the same day when M3's
-scope was agreed and its first slice landed. Read this first when picking the
-project back up — then `CLAUDE.md` for the rules and commands, and `docs/PLAN.md`
-for per-item milestone status. Short dated session notes and owner advice live in
-`docs/NOTES.md`.
+scope was agreed and its first slice landed. Updated 2026-08-12 when M3 slice 5
+put a face on the matching engine and closed the last two M2 checks. Read this
+first when picking the project back up — then `CLAUDE.md` for the rules and
+commands, and `docs/PLAN.md` for per-item milestone status. Short dated session
+notes and owner advice live in `docs/NOTES.md`.
 
 ---
 

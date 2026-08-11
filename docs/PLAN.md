@@ -5,15 +5,17 @@ agent — can see where the project is and what comes next. Update the status
 column and checklists as work lands; refresh `docs/HANDOFF.md` when a milestone
 completes.
 
-M1–M2 reflect decisions already made and verified. **M3–M6 are a draft**
-reconstructed from the README milestone table and HANDOFF scope notes — the owner
-should review them before anyone treats the details as commitments.
+M1–M2 reflect decisions already made and verified, and so does **M3** — its scope
+was reviewed with the owner on 2026-08-08, so the four decisions and six slices
+below are commitments rather than a reconstruction. **M4–M6 are still a draft**
+reconstructed from the README milestone table and HANDOFF scope notes — review each
+of them the same way before treating the details as commitments.
 
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | Parse (PDF, offsets, Thai), extract, verify evidence, retry, auth, upload API, web UI | ✅ done (2026-07-30) |
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
-| M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | 🔨 in progress (scope agreed 2026-08-08) |
+| M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | 🔨 in progress — slices 1–5 done, **only retrieval left** (2026-08-12) |
 | M4 | Application state machine, idempotency, race conditions, RBAC, PDPA | draft |
 | M5 | Full recruiter UI, observability, deploy | draft |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
