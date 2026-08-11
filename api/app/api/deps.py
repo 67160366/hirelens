@@ -13,6 +13,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.llm.base import StructuredExtractor
 from app.models import Candidate
+from app.pipeline.retrieval import Retriever
 from app.queue import JobQueue
 from app.security import TOKEN_TYPE_ACCESS, AuthError, decode_token
 from app.storage import Storage
@@ -42,6 +43,12 @@ def get_queue(request: Request) -> JobQueue:
     return request.app.state.queue  # type: ignore[no-any-return]
 
 
+def get_retriever(request: Request) -> Retriever:
+    """The retrieval backend built once at startup, so an unimplemented one is
+    refused there rather than on the first request that needs it."""
+    return request.app.state.retriever  # type: ignore[no-any-return]
+
+
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     """The sessionmaker held on app state, for code that outlives its request.
 
@@ -57,6 +64,7 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
 StorageDep = Annotated[Storage, Depends(get_storage)]
 ExtractorDep = Annotated[StructuredExtractor, Depends(get_extractor)]
 QueueDep = Annotated[JobQueue, Depends(get_queue)]
+RetrieverDep = Annotated[Retriever, Depends(get_retriever)]
 SessionFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
 
 

@@ -16,6 +16,7 @@ from app.jobs import JobContext
 from app.llm.registry import build_extractor
 from app.logging_config import configure_logging
 from app.pipeline.ocr import build_ocr_engine
+from app.pipeline.retrieval import build_retriever
 from app.queue import build_queue
 from app.storage import build_storage
 
@@ -33,6 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Probes the binary and its language packs, so a misconfigured OCR setup fails
     # here rather than once per uploaded scan.
     app.state.ocr = build_ocr_engine(settings)
+    # Same reasoning: an unimplemented retrieval backend is refused at startup
+    # rather than on the first request that happens to need it.
+    app.state.retriever = build_retriever(settings)
     # Held on state because the progress stream needs to open its own sessions:
     # its generator runs after FastAPI has closed the request's session.
     app.state.sessionmaker = get_sessionmaker()
@@ -49,11 +53,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
     )
     logger.info(
-        "started: provider=%s storage=%s queue=%s ocr=%s",
+        "started: provider=%s storage=%s queue=%s ocr=%s retrieval=%s",
         settings.llm_provider,
         settings.storage_backend,
         settings.queue_backend,
         settings.ocr_engine,
+        settings.retrieval_backend,
     )
     try:
         yield

@@ -50,6 +50,16 @@ class OCREngineName(StrEnum):
     """Shell out to Tesseract. Needs the binary and its language packs installed."""
 
 
+class RetrievalBackend(StrEnum):
+    LEXICAL = "lexical"
+    """Term overlap in pure Python over stored text. Needs no server, so it is the
+    default and the one the test suite runs on."""
+
+    PGVECTOR = "pgvector"
+    """Embedding similarity in Postgres. Opt-in, and currently raises: it lands only
+    with a price table and a live verification run, like a paid LLM adapter."""
+
+
 DEFAULT_JWT_SECRET = "change-me-before-deploying"
 
 
@@ -153,6 +163,12 @@ class Settings(BaseSettings):
     # readable, and a wrongly refused scan is a message the user can act on while a
     # wrongly accepted one is a confident, fully cited profile of the wrong text.
     ocr_min_confidence: float = Field(default=75.0, ge=0, le=100)
+
+    # Which resumes are worth paying to judge. Lexical by default because it needs
+    # no server and no embedding provider, so the suite and a fresh clone are
+    # unchanged — the same reasoning as `fake` and `OCR_ENGINE=none`. It only
+    # orders a list; it never decides what evidence a screening sees.
+    retrieval_backend: RetrievalBackend = RetrievalBackend.LEXICAL
 
     # How many times to re-ask the model when its evidence fails validation.
     extraction_max_attempts: int = Field(default=2, ge=1, le=5)

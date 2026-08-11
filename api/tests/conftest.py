@@ -23,6 +23,7 @@ from app.jobs import JobContext
 from app.llm.fake import FakeExtractor, FakeMode
 from app.main import create_app
 from app.models import Base
+from app.pipeline.retrieval import build_retriever
 from app.queue import InlineQueue, JobQueue
 from app.storage import LocalStorage
 
@@ -104,6 +105,9 @@ async def client(
     app.state.storage = storage
     app.state.extractor = extractor
     app.state.queue = queue
+    # Lexical, which is the default and needs no server — retrieval must not become
+    # a reason the suite wants one.
+    app.state.retriever = build_retriever(settings)
     # The progress stream opens its own sessions, so it needs the factory rather
     # than the `get_session` override below.
     app.state.sessionmaker = sessionmaker_for_tests

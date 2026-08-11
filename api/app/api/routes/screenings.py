@@ -25,11 +25,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CandidateDep, QueueDep, SessionDep
+from app.api.deps import CandidateDep, QueueDep, RetrieverDep, SessionDep
 from app.models import Candidate, Job, Resume, Screening, ScreeningStatus
 from app.pipeline.judge import requirements_fingerprint
 from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
 from app.pipeline.ranking import rank_screenings
+from app.pipeline.retrieval import RetrievableDocument
 from app.schemas.ranking import Ranking
 from app.services import screening_service
 
@@ -87,6 +88,27 @@ class ScreeningOut(BaseModel):
         )
 
 
+class CandidateSuggestion(BaseModel):
+    """One resume's place in the "who is worth judging first" order."""
+
+    resume_id: str
+    filename: str
+
+    score: float
+    """Relative to the other entries in this response and meaningless on its own.
+    Deliberately **not** comparable with a `RankedEntry.score`, which is a weighted
+    share of requirements *proved* rather than a guess at relevance."""
+
+    matched: list[str]
+    """Which of the job's requirement labels were found in the document. Carried
+    because a bare relevance number is the kind of figure this project refuses to
+    produce — and because it is what makes a surprising order checkable."""
+
+    already_screened: bool
+    """So a client can offer the unscreened ones first without a second request.
+    Not a filter: a screened resume still appears, in its place."""
+
+
 class ScreeningDetail(BaseModel):
     screening: ScreeningOut
     judgment: dict[str, Any] | None
@@ -138,6 +160,22 @@ async def _owned_screening(
 
 def _fingerprint(job: Job) -> str:
     return requirements_fingerprint(screening_service.requirement_specs(job))
+
+
+def _retrieval_terms(job: Job) -> list[str]:
+    """What a job is matched on: its requirement labels, and their details.
+
+    Deliberately not `job.description`. The description is stored for context and
+    audit and is explicitly not what anyone is judged against (docs/HANDOFF.md §5);
+    letting it steer retrieval would quietly reintroduce free-text matching through
+    the back door, on the one input nobody decomposed on purpose.
+    """
+    terms: list[str] = []
+    for requirement in sorted(job.requirements, key=lambda item: item.position):
+        terms.append(requirement.label)
+        if requirement.detail:
+            terms.append(requirement.detail)
+    return terms
 
 
 @router.post("/jobs/{job_id}/screenings", response_model=ScreeningOut)
@@ -220,6 +258,67 @@ async def get_ranking(job_id: uuid.UUID, candidate: CandidateDep, session: Sessi
         requirements_hash=requirements_fingerprint(requirements),
         prompt_version=JUDGMENT_PROMPT_VERSION,
     )
+
+
+@router.get("/jobs/{job_id}/candidates", response_model=list[CandidateSuggestion])
+async def suggest_candidates(
+    job_id: uuid.UUID,
+    candidate: CandidateDep,
+    session: SessionDep,
+    retriever: RetrieverDep,
+) -> list[CandidateSuggestion]:
+    """Order the caller's resumes by how worth screening they look.
+
+    A screening costs one model call per resume, so this exists to say where to
+    spend it first. It spends nothing itself: term overlap over `document_text` the
+    database already holds, with no model call and no index.
+
+    **Every screenable resume comes back, ordered — nothing is filtered out.** A
+    retriever that dropped its tail would remove a person from consideration with no
+    way to see that it happened, which is the failure `excluded` exists to prevent
+    one layer down. The cut-off is the caller's, made in the open.
+
+    The score answers "does this document look worth reading", which is *not* the
+    question `GET /jobs/{job_id}/ranking` answers. Retrieval never sees a verdict and
+    never affects one.
+    """
+    job = await _owned_job(session, job_id=job_id, candidate=candidate)
+
+    result = await session.execute(
+        select(Resume).where(
+            Resume.candidate_id == candidate.id,
+            # A resume with no stored text cannot be screened — `run_screening_job`
+            # raises `NotScreenable` — so offering it here would only promise work
+            # that must fail.
+            Resume.document_text.is_not(None),
+        )
+    )
+    resumes = list(result.scalars())
+
+    documents = [
+        RetrievableDocument(resume_id=str(resume.id), text=resume.document_text or "")
+        for resume in resumes
+    ]
+    hits = retriever.retrieve(_retrieval_terms(job), documents)
+
+    by_id = {str(resume.id): resume for resume in resumes}
+    screened = {
+        str(row.resume_id)
+        for row in (
+            await session.execute(select(Screening).where(Screening.job_id == job.id))
+        ).scalars()
+    }
+
+    return [
+        CandidateSuggestion(
+            resume_id=hit.resume_id,
+            filename=by_id[hit.resume_id].filename,
+            score=round(hit.score, 4),
+            matched=hit.matched,
+            already_screened=hit.resume_id in screened,
+        )
+        for hit in hits
+    ]
 
 
 @router.post("/screenings/{screening_id}/retry", response_model=ScreeningOut)
