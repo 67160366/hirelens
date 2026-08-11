@@ -8,7 +8,8 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 export type MatchKind = "exact" | "whitespace_collapsed" | "whitespace_stripped";
-export type RejectReason = "empty" | "too_short" | "not_found";
+/** `unknown_requirement` is judging's: a quote aimed at a requirement that does not exist. */
+export type RejectReason = "empty" | "too_short" | "not_found" | "unknown_requirement";
 export type ResumeStatus =
   | "pending"
   | "processing"
@@ -106,6 +107,145 @@ export interface TokenPair {
   token_type: string;
 }
 
+/* -------------------------------------------------------------------------- */
+/* M3: jobs, screenings and ranking                                            */
+/* -------------------------------------------------------------------------- */
+
+export type RequirementKind = "skill" | "experience" | "education" | "language" | "other";
+
+/** Mirrors `RequirementOut` in `api/app/api/routes/jobs.py`. */
+export interface Requirement {
+  id: string;
+  position: number;
+  kind: RequirementKind;
+  label: string;
+  detail: string | null;
+  /** A hard gate in ranking, not a heavy weight: missing one ranks below everyone who has them all. */
+  must_have: boolean;
+  weight: number;
+}
+
+export interface Job {
+  id: string;
+  title: string;
+  description: string | null;
+  requirements: Requirement[];
+}
+
+/** The whole job in one call, which is how a posting is usually authored. */
+export interface JobInput {
+  title: string;
+  description?: string | null;
+  requirements?: RequirementInput[];
+}
+
+export interface RequirementInput {
+  kind: RequirementKind;
+  label: string;
+  detail?: string | null;
+  must_have: boolean;
+  weight: number;
+}
+
+/** Every field optional: unset means "leave alone", and `detail: null` clears it. */
+export type RequirementPatch = Partial<RequirementInput>;
+
+/** `api/app/api/routes/jobs.py` — the whole requirement list travels in one prompt. */
+export const MAX_REQUIREMENTS_PER_JOB = 30;
+
+/**
+ * There is no `not_met`, on purpose.
+ *
+ * Absence cannot be quoted — you cannot cite text that is not in a document — so
+ * "not met" would be the one unverifiable assertion this project exists to refuse.
+ * `not_evidenced` is also the honest label: the system cannot tell "the candidate
+ * lacks it" from "the resume does not mention it". See docs/HANDOFF.md §5.
+ */
+export type Verdict = "met" | "not_evidenced";
+
+export interface RequirementJudgment {
+  requirement_id: string;
+  label: string;
+  must_have: boolean;
+  weight: number;
+  verdict: Verdict;
+  /** Empty exactly when the verdict is `not_evidenced` — the verdict is derived from this. */
+  evidence: EvidenceRef[];
+}
+
+export type ScreeningStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "dead_lettered";
+
+/** Mirrors `ScreeningOut` in `api/app/api/routes/screenings.py`. */
+export interface Screening {
+  id: string;
+  job_id: string;
+  resume_id: string;
+  status: ScreeningStatus;
+  failure_reason: string | null;
+  attempts: number;
+  can_retry: boolean;
+
+  requirements_met: number;
+  requirements_total: number;
+  claims_verified: number;
+  claims_dropped: number;
+  hallucination_rate: number;
+
+  /**
+   * The requirements or the judging prompt changed after this ran, so it answers a
+   * question nobody is asking any more. Reported rather than silently re-run,
+   * because re-running costs a model call.
+   */
+  is_stale: boolean;
+}
+
+export interface ScreeningDetail {
+  screening: Screening;
+  /**
+   * The stored `Judgment` verbatim, with `must_have` and `weight` **frozen at
+   * judging time**. Ranking re-keys both against the job's current requirements, so
+   * render verdicts from a `RankedEntry` and use this route for `document_text`.
+   */
+  judgment: { requirements?: RequirementJudgment[]; dropped?: DroppedClaim[] } | null;
+  document_text: string | null;
+}
+
+export type ExclusionReason = "stale" | "not_completed" | "malformed";
+
+export interface ExcludedEntry {
+  screening_id: string;
+  resume_id: string;
+  status: string;
+  reason: ExclusionReason;
+}
+
+export interface RankedEntry {
+  rank: number;
+  screening_id: string;
+  resume_id: string;
+  /** Every `must_have` requirement is met. A gate, not a score contribution. */
+  gate_passed: boolean;
+  /** Weighted share of requirements met, in [0, 1]. Orders *within* a tier only. */
+  score: number;
+  must_haves_met: number;
+  must_haves_total: number;
+  requirements_met: number;
+  requirements_total: number;
+  /** The rationale, not a promise: every requirement with its verdict and citations. */
+  requirements: RequirementJudgment[];
+}
+
+export interface Ranking {
+  ranked: RankedEntry[];
+  /** Nothing is dropped silently — a screening that could not be ranked says why. */
+  excluded: ExcludedEntry[];
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -139,6 +279,15 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
   return (await send(path, init, token)).json() as Promise<T>;
 }
 
+/** A JSON request body, which every write on this API except the upload takes. */
+function json(method: string, payload: unknown): RequestInit {
+  return {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  };
+}
+
 /** FastAPI returns `detail` as either a string or a list of validation errors. */
 async function readError(response: Response): Promise<string> {
   try {
@@ -166,8 +315,20 @@ export function isSettled(status: ResumeStatus): boolean {
   return status !== "pending" && status !== "processing";
 }
 
-const POLL_INTERVAL_MS = 700;
-const POLL_TIMEOUT_MS = 120_000;
+/**
+ * The same question for a screening, which has its own status vocabulary.
+ *
+ * `Screening` and `Resume` deliberately do not share an enum — a screening is never
+ * `parsed` or `extracted`. What they share is the retry policy, and that is shared
+ * as a function on the server rather than by making two tables wear one vocabulary
+ * (docs/HANDOFF.md §5).
+ */
+export function isScreeningSettled(status: ScreeningStatus): boolean {
+  return status !== "pending" && status !== "processing";
+}
+
+export const POLL_INTERVAL_MS = 700;
+export const POLL_TIMEOUT_MS = 120_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -221,25 +382,13 @@ export async function* readFrames(body: ReadableStream<Uint8Array>) {
 
 export const api = {
   register: (email: string, password: string) =>
-    request<TokenPair>("/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    }),
+    request<TokenPair>("/auth/register", json("POST", { email, password })),
 
   login: (email: string, password: string) =>
-    request<TokenPair>("/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    }),
+    request<TokenPair>("/auth/login", json("POST", { email, password })),
 
   refresh: (refreshToken: string) =>
-    request<TokenPair>("/auth/refresh", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    }),
+    request<TokenPair>("/auth/refresh", json("POST", { refresh_token: refreshToken })),
 
   uploadResume: (file: File, token: string) => {
     const form = new FormData();
@@ -254,6 +403,100 @@ export const api = {
     request<Resume>(`/resumes/${id}/retry`, { method: "POST" }, token),
 
   getProfile: (id: string, token: string) => request<ProfileResponse>(`/resumes/${id}`, {}, token),
+
+  /* ---------------------------------------------------------------------- */
+  /* Jobs and their requirements                                             */
+  /* ---------------------------------------------------------------------- */
+
+  listJobs: (token: string) => request<Job[]>("/jobs", {}, token),
+
+  getJob: (id: string, token: string) => request<Job>(`/jobs/${id}`, {}, token),
+
+  /** Title, description and the whole requirement list in one call. */
+  createJob: (payload: JobInput, token: string) =>
+    request<Job>("/jobs", json("POST", payload), token),
+
+  deleteJob: async (id: string, token: string): Promise<void> => {
+    await send(`/jobs/${id}`, { method: "DELETE" }, token);
+  },
+
+  addRequirement: (jobId: string, payload: RequirementInput, token: string) =>
+    request<Requirement>(`/jobs/${jobId}/requirements`, json("POST", payload), token),
+
+  /**
+   * Change one requirement.
+   *
+   * Which fields moved decides what it costs: `must_have` and `weight` are excluded
+   * from the screening fingerprint, so editing them reorders the ranking for free.
+   * `kind`, `label` and `detail` are what the judge was shown, so editing one makes
+   * every existing screening stale. `staleningFields` names the difference.
+   */
+  updateRequirement: (
+    jobId: string,
+    requirementId: string,
+    patch: RequirementPatch,
+    token: string,
+  ) =>
+    request<Requirement>(
+      `/jobs/${jobId}/requirements/${requirementId}`,
+      json("PATCH", patch),
+      token,
+    ),
+
+  deleteRequirement: async (
+    jobId: string,
+    requirementId: string,
+    token: string,
+  ): Promise<void> => {
+    await send(`/jobs/${jobId}/requirements/${requirementId}`, { method: "DELETE" }, token);
+  },
+
+  /* ---------------------------------------------------------------------- */
+  /* Screenings and the ranking they feed                                    */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Screen one resume against one job.
+   *
+   * Answers **202** when it queued work — one model call, billed — and **200** when
+   * the stored result already answers the question. That distinction is the whole
+   * reason this does not go through `request`: a caller has to be able to tell the
+   * user whether it just spent anything.
+   */
+  async createScreening(
+    jobId: string,
+    resumeId: string,
+    token: string,
+  ): Promise<{ screening: Screening; queued: boolean }> {
+    const response = await send(
+      `/jobs/${jobId}/screenings`,
+      json("POST", { resume_id: resumeId }),
+      token,
+    );
+    return {
+      screening: (await response.json()) as Screening,
+      queued: response.status === 202,
+    };
+  },
+
+  /** The raw list, including the ones still running and the ones that failed. */
+  listScreenings: (jobId: string, token: string) =>
+    request<Screening[]>(`/jobs/${jobId}/screenings`, {}, token),
+
+  getScreening: (id: string, token: string) =>
+    request<ScreeningDetail>(`/screenings/${id}`, {}, token),
+
+  retryScreening: (id: string, token: string) =>
+    request<Screening>(`/screenings/${id}/retry`, { method: "POST" }, token),
+
+  /**
+   * The ordered answer, computed on read.
+   *
+   * Costs one query and no model call, which is what lets a weight edit reorder the
+   * list immediately while every screening stays current. Re-fetch it freely.
+   */
+  getRanking: (jobId: string, token: string) =>
+    request<Ranking>(`/jobs/${jobId}/ranking`, {}, token),
 
   /**
    * Follow a resume over the progress stream until it reaches a resting state.

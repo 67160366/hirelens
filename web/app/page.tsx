@@ -1,18 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useState } from "react";
 
-import { DocumentPane, EvidenceSelectionProvider } from "@/components/DocumentPane";
+import { AuthPanel } from "@/components/AuthPanel";
+import {
+  DocumentPane,
+  EvidenceSelectionProvider,
+  collectEvidence,
+} from "@/components/DocumentPane";
 import { ProfileView } from "@/components/ProfileView";
-import { ApiError, api, type ProfileResponse, type Resume, type TokenPair } from "@/lib/api";
-
-// M1 keeps the tokens in localStorage, which is readable by any script on
-// the page. Acceptable while the API and web app are separate dev origins; the
-// production answer is an httpOnly, SameSite cookie issued by the API.
-const TOKEN_KEY = "hirelens.access_token";
-const REFRESH_KEY = "hirelens.refresh_token";
-
-type Mode = "login" | "register";
+import { api, type ProfileResponse, type Resume } from "@/lib/api";
+import { errorMessage, useAuth } from "@/lib/auth";
 
 /**
  * What is happening to the resume right now, in the user's terms.
@@ -28,79 +27,8 @@ function progressMessage(resume: Resume | null): string {
   return "Queued — waiting for a worker…";
 }
 
-function AuthPanel({ onAuthenticated }: { onAuthenticated: (tokens: TokenPair) => void }) {
-  const [mode, setMode] = useState<Mode>("register");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      const tokens = mode === "register" ? await api.register(email, password) : await api.login(email, password);
-      onAuthenticated(tokens);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Something went wrong");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form
-      onSubmit={submit}
-      className="mx-auto w-full max-w-sm space-y-3 rounded-lg border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900"
-    >
-      <h2 className="text-sm font-semibold">
-        {mode === "register" ? "Create an account" : "Sign in"}
-      </h2>
-      <input
-        type="email"
-        required
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-        placeholder="you@example.com"
-        autoComplete="email"
-        className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
-      />
-      <input
-        type="password"
-        required
-        minLength={8}
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-        placeholder="At least 8 characters"
-        autoComplete={mode === "register" ? "new-password" : "current-password"}
-        className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
-      />
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      <button
-        type="submit"
-        disabled={busy}
-        className="w-full rounded-md bg-stone-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900"
-      >
-        {busy ? "Working…" : mode === "register" ? "Create account" : "Sign in"}
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          setMode(mode === "register" ? "login" : "register");
-          setError(null);
-        }}
-        className="w-full text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
-      >
-        {mode === "register" ? "I already have an account" : "I need an account"}
-      </button>
-    </form>
-  );
-}
-
 export default function Home() {
-  const [token, setToken] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
+  const { token, ready, authenticate, signOut, authorized } = useAuth();
   const [result, setResult] = useState<ProfileResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -108,57 +36,18 @@ export default function Home() {
   // message is written from.
   const [progress, setProgress] = useState<Resume | null>(null);
 
-  useEffect(() => {
-    setToken(localStorage.getItem(TOKEN_KEY));
-    setReady(true);
-  }, []);
-
-  const authenticate = useCallback((tokens: TokenPair) => {
-    localStorage.setItem(TOKEN_KEY, tokens.access_token);
-    localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
-    setToken(tokens.access_token);
-  }, []);
-
-  const signOut = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-    setToken(null);
-    setResult(null);
-  }, []);
-
-  /** Trade the refresh token for a new pair; null means the session is over. */
-  const tryRefresh = useCallback(async (): Promise<string | null> => {
-    const stored = localStorage.getItem(REFRESH_KEY);
-    if (!stored) return null;
-    try {
-      const tokens = await api.refresh(stored);
-      localStorage.setItem(TOKEN_KEY, tokens.access_token);
-      localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
-      setToken(tokens.access_token);
-      return tokens.access_token;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  async function uploadOnce(file: File, accessToken: string): Promise<ProfileResponse> {
-    // Upload only stores the file and queues the work, so the result has to be
-    // waited for rather than read straight out of the response.
-    const resume = await api.uploadResume(file, accessToken);
-    setProgress(resume);
-    return api.waitForProfile(resume.id, accessToken, setProgress);
-  }
-
   /** Replay a resume the worker gave up on, and wait for the new run. */
   async function retry() {
-    if (!token || !result) return;
+    if (!result) return;
     setError(null);
     setBusy(true);
     try {
-      setProgress(await api.retryResume(result.resume.id, token));
-      setResult(await api.waitForProfile(result.resume.id, token, setProgress));
+      await authorized(async (accessToken) => {
+        setProgress(await api.retryResume(result.resume.id, accessToken));
+        setResult(await api.waitForProfile(result.resume.id, accessToken, setProgress));
+      });
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not retry");
+      setError(errorMessage(caught, "Could not retry"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -166,31 +55,21 @@ export default function Home() {
   }
 
   async function upload(file: File) {
-    if (!token) return;
     setError(null);
     setBusy(true);
     setResult(null);
     setProgress(null);
     try {
-      setResult(await uploadOnce(file, token));
+      // Upload only stores the file and queues the work, so the result has to be
+      // waited for rather than read straight out of the response.
+      const uploaded = await authorized(async (accessToken) => {
+        const resume = await api.uploadResume(file, accessToken);
+        setProgress(resume);
+        return api.waitForProfile(resume.id, accessToken, setProgress);
+      });
+      setResult(uploaded);
     } catch (caught) {
-      if (caught instanceof ApiError && caught.status === 401) {
-        // The access token expires long before the refresh token does: trade
-        // the refresh token for a fresh pair and retry once before giving up.
-        const fresh = await tryRefresh();
-        if (fresh) {
-          try {
-            setResult(await uploadOnce(file, fresh));
-          } catch (retried) {
-            setError(retried instanceof ApiError ? retried.message : "Upload failed");
-          }
-        } else {
-          signOut();
-          setError("Your session expired. Sign in again.");
-        }
-      } else {
-        setError(caught instanceof ApiError ? caught.message : "Upload failed");
-      }
+      setError(errorMessage(caught, "Upload failed"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -230,21 +109,32 @@ export default function Home() {
                 className="mt-2 block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white dark:file:bg-stone-100 dark:file:text-stone-900"
               />
             </label>
-            <button
-              type="button"
-              onClick={signOut}
-              className="self-start text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
-            >
-              Sign out
-            </button>
+            <div className="flex flex-col items-end gap-2 self-start">
+              <Link
+                href="/jobs"
+                className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
+              >
+                Jobs and ranking →
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  // Drop the result with the session: signing back in as someone
+                  // else must not find the previous account's resume still on screen.
+                  setResult(null);
+                  signOut();
+                }}
+                className="text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
 
           {/* Live, because the API streams every state change rather than making
               the page ask. A retry waiting out its backoff says so here. */}
           {busy && (
-            <p className="text-sm text-stone-500 dark:text-stone-400">
-              {progressMessage(progress)}
-            </p>
+            <p className="text-sm text-stone-500 dark:text-stone-400">{progressMessage(progress)}</p>
           )}
           {/* A resume the worker gave up on after retrying is kept rather than
               discarded, so it can be run again once the cause is fixed. */}
@@ -276,7 +166,10 @@ export default function Home() {
               <EvidenceSelectionProvider>
                 <div className="grid items-start gap-5 lg:grid-cols-2">
                   <ProfileView resume={result.resume} profile={result.profile} />
-                  <DocumentPane text={result.document_text} profile={result.profile} />
+                  <DocumentPane
+                    text={result.document_text}
+                    references={result.profile ? collectEvidence(result.profile) : []}
+                  />
                 </div>
               </EvidenceSelectionProvider>
             ) : (

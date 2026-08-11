@@ -9,8 +9,9 @@ import type { EvidenceRef, ExtractedProfile } from "@/lib/api";
  *
  * This is the evidence rule (see docs/HANDOFF.md §2) made visible: a claim is
  * only shown at all because its quote was located in this exact text, so the
- * profile and the document can be put side by side and the link between them
- * pointed at directly.
+ * claims and the document can be put side by side and the link between them
+ * pointed at directly. It takes a plain list of spans rather than a profile,
+ * because a screening's verdicts cite the same text in the same way.
  *
  * Offsets index into `document_text` as returned by the API — the verbatim
  * string the backend stored, never a re-parse. Re-parsing could shift every
@@ -55,8 +56,12 @@ export function useEvidenceSelection(): Selection | null {
  * Dropped claims are deliberately absent: their quote was not found in the
  * document, so there is no span to highlight. Including them would present an
  * unverified claim as sourced, which is the one thing this project must not do.
+ *
+ * Exported because the pane no longer collects its own spans: a judgment's
+ * citations point into the same text and highlight the same way, so the pane takes
+ * a plain list and the caller says where it came from.
  */
-function collectEvidence(profile: ExtractedProfile): EvidenceRef[] {
+export function collectEvidence(profile: ExtractedProfile): EvidenceRef[] {
   const references: EvidenceRef[] = [];
   const add = (reference: EvidenceRef | null | undefined) => {
     if (reference) references.push(reference);
@@ -124,18 +129,11 @@ function highlightClass(reference: EvidenceRef, isActive: boolean): string {
     : "bg-emerald-100/80 text-inherit dark:bg-emerald-500/15";
 }
 
-export function DocumentPane({
-  text,
-  profile,
-}: {
-  text: string;
-  profile: ExtractedProfile | null;
-}) {
+export function DocumentPane({ text, references }: { text: string; references: EvidenceRef[] }) {
   const selection = useEvidenceSelection();
   const activeKey = selection?.activeKey ?? null;
   const marks = useRef(new Map<string, HTMLElement>());
 
-  const references = useMemo(() => (profile ? collectEvidence(profile) : []), [profile]);
   const segments = useMemo(() => buildSegments(text, references), [text, references]);
 
   useEffect(() => {

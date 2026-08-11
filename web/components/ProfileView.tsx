@@ -5,6 +5,10 @@ const REJECT_LABEL: Record<RejectReason, string> = {
   not_found: "no matching text in the document",
   too_short: "quote too short to identify a source",
   empty: "no quote supplied",
+  // Judging's, and unreachable from an extraction: pointing at a requirement that
+  // does not exist is the same class of claim as quoting text that is not there,
+  // so it lands in the same `dropped` list and the same hallucination rate.
+  unknown_requirement: "aimed at a requirement that does not exist",
 };
 
 function StatsBar({ profile }: { profile: ExtractedProfile }) {

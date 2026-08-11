@@ -8,9 +8,9 @@
  * finished, which is indistinguishable from a slow worker.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readFrames } from "./api";
+import { api, readFrames } from "./api";
 
 /** A body that hands back exactly the chunks given, as the network would. */
 function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
@@ -107,5 +107,44 @@ describe("readFrames", () => {
     const frames = [];
     for await (const frame of readFrames(stream)) frames.push(frame);
     expect(frames).toEqual([{ event: "status", data: '{"name":"สมชาย"}' }]);
+  });
+});
+
+/**
+ * The other place a status code carries meaning rather than just success.
+ *
+ * `POST /jobs/{id}/screenings` answers **202** when it queued a model call and
+ * **200** when the stored result already answers the question. Every other call on
+ * this client throws away the status, so this one has to be pinned: collapse the
+ * two and the UI silently stops being able to tell anyone when it spent money.
+ */
+describe("createScreening", () => {
+  function respondWith(status: number) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ id: "s1", status: "pending" }), { status })),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports 202 as work that was queued and billed", async () => {
+    respondWith(202);
+    const { queued } = await api.createScreening("job-1", "resume-1", "token");
+    expect(queued).toBe(true);
+  });
+
+  it("reports 200 as an answer that already existed", async () => {
+    respondWith(200);
+    const { queued } = await api.createScreening("job-1", "resume-1", "token");
+    expect(queued).toBe(false);
+  });
+
+  it("returns the screening either way", async () => {
+    respondWith(200);
+    const { screening } = await api.createScreening("job-1", "resume-1", "token");
+    expect(screening.id).toBe("s1");
   });
 });
