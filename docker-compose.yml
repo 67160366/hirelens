@@ -118,6 +118,13 @@ services:
       # the worker would sit idle and the retry policy would never run.
       QUEUE_BACKEND: arq
 
+      # How long a row may sit at `processing` before the worker holding it is
+      # presumed dead and it is reclaimed. Exposed because it is the one job
+      # setting whose right value depends on the deployment: it has to cover the
+      # slowest whole job here — a long scan through OCR and a slow provider —
+      # since the claim is written once and never heartbeats.
+      JOB_VISIBILITY_TIMEOUT_SECONDS: ${JOB_VISIBILITY_TIMEOUT_SECONDS:-900}
+
       # Absolute, because Settings.storage_path resolves a relative STORAGE_DIR
       # against a REPO_ROOT that is `/` inside this image. See api/Dockerfile.
       STORAGE_DIR: /data/uploads

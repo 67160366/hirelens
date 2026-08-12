@@ -111,6 +111,12 @@ system is unchanged. That is what makes it safe for it to be approximate.
 | **Retrieval, live in the containers** | `api` rebuilt first, `/openapi.json` lists `/jobs/{job_id}/candidates` and `CandidateSuggestion`, and the startup log reads `retrieval=lexical`. Then, over three extracted resumes and a job whose only terms are a **Thai** requirement and `PostgreSQL`: `resume_th.pdf` ranks first at 1.0749 with the Thai label among its `matched` terms — the n-gram tokenizer finding a term buried in an unbroken run — `resume_en.pdf` second at 0.7313, and `resume_two_column.pdf` **scores 0.0 and is still listed** (2026-08-12) |
 | The description really is not matched on | That same `resume_two_column.pdf` contains *every word* of the job's description (`Kubernetes Terraform gRPC`) and still scored **0.0**. Had the description steered retrieval it would have ranked first, so this is the decision being watched rather than asserted (2026-08-12) |
 | Retrieval bills nothing | `psql` after the run: **0** `judge-v1` rows for that job, and the only calls against the account are the `extract-v1` ones its uploads needed. The ordering cost one query (2026-08-12) |
+| **A worker killed mid-job, end to end** | `api` and `worker` rebuilt first, and the *container* asked what it holds (`cron_jobs` → `cron:reclaim`, `can_retry` a 2-arg predicate) — slice 1 adds no route, so `/openapi.json` proves nothing here. Then `docker compose kill worker` the instant the row read `processing`: `psql` shows `PROCESSING attempts=1 failed_attempts=0` and **no** `failure_reason` — the job never got to fail. `can_retry=false`, `POST /retry` → **409** (2026-08-12) |
+| The `can_retry` boundary, measured not assumed | Ageing that row's `last_attempt_at` by hand against a 30 s timeout: **29 s → `can_retry=false`, 409; 31 s → `true`, 200.** Read from Postgres, where `last_attempt_at` is `timestamptz` — the dialect the SQLite naive-datetime test cannot cover (2026-08-12) |
+| **The reaper, in the worker log** | `cron:reclaim` fires at startup and on the minute. On the stalled row: `stalled at processing, reclaiming` → `attempt 1 failed (WorkerVanished), retrying in 5s` → `queued as job resume:…:1` → `reclaimed 1 row(s) stalled beyond 30s`. The reclaim goes through `decide_retry`, watched rather than inferred (2026-08-12) |
+| The budget guard, proven by an unplanned provider outage | Gemini answered **503 UNAVAILABLE** on the requeued job, so the row failed twice more at 5 s and 10 s and **dead-lettered after 3 attempts — of which the reclaim was attempt 1**. That is exactly the property a plain status reset would lose: it would have looped forever instead. Nobody scripted this; the provider obliged (2026-08-12) |
+| The replay, and the citations after all of it | `POST /retry` on that dead letter → 200 → `extracted` on **attempt 4** once Gemini recovered: **10/10 verified, 0 dropped, 10/10 spans slicing back out of `document_text`, all tier-1 exact, no NUL** (2026-08-12) |
+| **A screening reclaimed the same way** | Created with the worker stopped, so it queued without spending anything, then stranded at `processing` with a 120 s-old claim: `can_retry=true`. Starting the worker reclaimed it and it **completed 2/2 met** on attempt 2. `psql` afterwards: 1 `extract-v1` carrying `resume_id`, 1 `judge-v1` carrying `screening_id`, neither crossed — the M3 cost split survives the reaper (2026-08-12) |
 
 ### Repository state
 
@@ -988,7 +994,17 @@ also tracks the status of every item above.
   the job (2026-08-08 — the giveaway was the old wording in `failure_reason`), and a
   dev server on a port the API's CORS list did not allow. Check the route exists
   (`curl /openapi.json | grep <new-field>`) and that nothing else is polling the
-  queue.
+  queue. **When a change adds no route, `/openapi.json` proves nothing** — ask the
+  container what it holds instead (`docker compose exec worker python -c "…"`), the
+  way the stale-model check did in 2026-08-08's cleanup pass.
+- **An env var on a `docker compose up` command line does not survive the next `up`
+  that omits it** (2026-08-12). `JOB_VISIBILITY_TIMEOUT_SECONDS=30 docker compose up -d
+  api worker` set the timeout to 30 s; a later plain `docker compose up -d worker`
+  recreated the container and re-resolved `${JOB_VISIBILITY_TIMEOUT_SECONDS:-900}` back
+  to **900**, and the reaper then correctly did nothing for forty seconds while it
+  looked broken. The 2026-08-08 note calls a command-line override convenient because
+  "there is nothing to restore"; the other half of that is there is nothing to *keep*.
+  Ask the container for the value before reading the result, not after it surprises you.
 - **Test data is synthetic and must stay that way.** No real person's resume goes in
   this repo. Regenerate fixtures with `python api/tests/fixtures/generate.py`
   (needs a Thai-capable font locally; the generated PDFs are committed so CI does

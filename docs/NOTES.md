@@ -101,25 +101,87 @@ was handled at the point of comparison. The suite runs on SQLite and production 
 not, so this is the class of thing that ships green and fails on Postgres or the
 reverse. A test pins it.
 
+### Verified by killing a worker, not only by tests
+
+Docker came up later in the session, so slice 1 was watched end to end against
+Postgres + Redis + the ARQ worker + real Gemini. `api` and `worker` rebuilt first —
+and since this slice adds **no route**, `/openapi.json` proves nothing, so the
+containers were asked directly what they hold (`cron_jobs` → `cron:reclaim`,
+`can_retry` a two-argument predicate).
+
+```
+docker compose kill worker   the instant the row read `processing`
+psql   PROCESSING | attempts=1 | failed_attempts=0 | failure_reason IS NULL
+       can_retry=false     POST /retry -> 409
+```
+
+The job never got to fail — that is the whole point of the slice, and it is what the
+null `failure_reason` says. Then the timeout boundary, measured rather than assumed by
+ageing the claim by hand against a 30 s setting: **29 s → 409, 31 s → 200**, read on
+Postgres where `last_attempt_at` is `timestamptz` (the dialect the SQLite naive-datetime
+test cannot reach).
+
+And the sweep, in the worker's own log:
+
+```
+stalled at processing, reclaiming
+attempt 1 failed (WorkerVanished), retrying in 5s
+queued as job resume:...:1
+reclaimed 1 row(s) stalled beyond 30s: 1 resume(s), 0 screening(s)
+```
+
+**Then Gemini went down mid-check, and proved the decision for free.** A 503
+UNAVAILABLE on the requeued job meant two more failures at 5 s and 10 s, and the row
+**dead-lettered after 3 attempts — of which the reclaim was attempt 1**. That is
+exactly what a plain status reset would have lost: it would have looped forever.
+Nobody scripted it; the provider obliged. `POST /retry` then reached `extracted` on
+attempt 4 once Gemini recovered — 10/10 verified, 0 dropped, 10/10 spans slicing back
+out, all tier-1 exact.
+
+The screening half too: created with the worker stopped so it queued without spending
+anything, stranded with a 120 s-old claim, then **completed 2/2 met** after the reaper
+moved it. `psql` afterwards shows 1 `extract-v1` on the resume and 1 `judge-v1` on the
+screening, neither crossed — M3's cost split survives the reaper.
+
+### A fourth instrument lie, and this one looked like a bug in the code
+
+The reaper sat there doing nothing for forty seconds while the row was plainly stale.
+The cron was firing and succeeding; `find_stalled`, run by hand inside the API
+container, found the row immediately.
+
+The cause: `JOB_VISIBILITY_TIMEOUT_SECONDS=30 docker compose up -d api worker` had set
+the timeout, and a later plain `docker compose up -d worker` **recreated the container
+and re-resolved `${JOB_VISIBILITY_TIMEOUT_SECONDS:-900}` back to the default.** The
+worker was correctly declining to reap a claim 200 seconds into a 900-second timeout.
+
+The 2026-08-08 entry recommends a command-line override precisely because "there is
+nothing to restore". The other half of that, learned here: **there is nothing to keep
+either**, and a later partial `up` silently reverts it. One `docker compose exec worker
+python -c 'print(get_settings()...)'` answered it in seconds — the same move that caught
+the stale `page_spans` model in an earlier session.
+
 ### Still open, in order
 
 1. **Slice 2 — RBAC**, migration `0007`. Two things to keep straight: a wrong *role*
    for a route is **403**, not *your* resource stays **404**, and the migration
    backfills `RECRUITER` from `jobs.owner_id` rather than guessing a default.
-2. **Slice 1 has not been watched live.** Docker Desktop was down for this whole
-   session, so `kill the worker mid-job → watch the reaper` is a check nobody has run.
-   Every other gate is green, and this project's own record says that is not the same
-   thing.
-3. Slices 3–5: the application state machine, PDPA, a thin UI.
+2. Slices 3–5: the application state machine, PDPA, a thin UI.
 4. Next 15 → 16 for the postcss and sharp advisories, **now 3 high**. An isolated
    commit, not tangled into a slice.
 5. M6's evaluation stays out of the critical path.
 
 ### Worth knowing next time
 
+- **`JOB_VISIBILITY_TIMEOUT_SECONDS` is passed through `docker-compose.yml`** and
+  documented in `.env.example`. It is the one job setting whose right value is
+  deployment-specific — it has to cover the slowest *whole* job, since the claim is
+  written once and never heartbeats.
 - **`ResumeOut.of` and `ScreeningOut.of` take `Settings` now**, because `can_retry` is
   time-dependent: a stalled `processing` row becomes retryable and the timeout says
   when. Five call sites, all threaded through the existing `SettingsDep`.
+- The throwaway account was deleted afterwards (cascading its job and screening away),
+  and the worker was put back on `.env`'s 900 s, confirmed by asking the container
+  rather than assuming.
 - `JobContext` gained a `queue`, under a `TYPE_CHECKING` import. The reaper is the only
   job that puts work *back* on the queue, and `app.queue` imports `app.jobs`.
 - arq's `cron()` takes cron fields, not an interval, so the sweep is `second=0` —
@@ -142,6 +204,13 @@ reverse. A test pins it.
   Worth noticing what the fix was: not a cleverer test, but splitting a function so
   the property had somewhere to be checked. When a test cannot fail, the code usually
   has the wrong seams.
+- **The live run is still where the interesting things happen, five slices running.**
+  Every gate was green before Docker came up, and the run still produced three things
+  no test gave: the measured 29 s/31 s boundary on the dialect that actually runs in
+  production, a provider outage that demonstrated the budget guard for free, and a
+  forty-second stretch where the code looked broken and the *instrument* was wrong.
+  The last one is the fourth of its kind here and the first that impersonated a bug
+  rather than a pass.
 
 ---
 

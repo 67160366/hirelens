@@ -449,6 +449,12 @@ match the pattern already in the codebase.
   to back proves nothing, since the second one's candidate query already excludes a row
   the first moved to `pending`, so the guard under the lock never ran. The fix was to
   the *code's shape*: the guard is its own function now and the test drives it.
+  Verified live in the containers against real Gemini by killing a worker mid-job: the
+  row stranded with a null `failure_reason`, `can_retry` flipped at **exactly** 30 s
+  (29 s → 409, 31 s → 200, on Postgres), the sweep reclaimed it, and a Gemini 503 that
+  arrived unplanned proved the budget guard by dead-lettering at 3 attempts rather than
+  looping. A screening was reclaimed the same way and completed 2/2. `JOB_VISIBILITY_TIMEOUT_SECONDS`
+  is passed through `docker-compose.yml` and documented in `.env.example`.
 - [ ] 2. **RBAC: a role on the one actor** (migration `0007`). Wrong role for a route
   is **403**; not your resource stays **404**, unchanged from M3. The migration
   backfills `RECRUITER` from `jobs.owner_id` rather than guessing a default —
