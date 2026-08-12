@@ -6,12 +6,13 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-12 (latest) — M4 is scoped, and the oldest open item is closed
+## 2026-08-12 (latest) — M4 is scoped, and four of its five slices land
 
-Three commits. The first fixes documentation that had gone wrong, the second records
-the scope review M4 was gated on, and the third ships slice 1.
+Nine commits. The first fixes documentation that had gone wrong, the second records
+the scope review M4 was gated on, and the rest ship slices 1 to 4 — the visibility
+timeout, RBAC, the application state machine, and PDPA.
 
-Suite **439 → 452**. No migration in any of it.
+Suite **439 → 529**, vitest **28 → 30**, four migrations, all pushed and green.
 
 ### The docs were lying about the docs
 
@@ -160,12 +161,59 @@ either**, and a later partial `up` silently reverts it. One `docker compose exec
 python -c 'print(get_settings()...)'` answered it in seconds — the same move that caught
 the stale `page_spans` model in an earlier session.
 
+### Slices 2, 3 and 4, in the same session
+
+RBAC, the application state machine and PDPA all landed after the reaper. Suite
+**439 → 529**, vitest **28 → 30**, four migrations, everything pushed and green
+(CI `31590471473`, **0 annotations**).
+
+**Slice 2 — a role on the one actor.** The rule worth not losing: a wrong *role* for
+a route is **403**, not *your* resource stays **404**. Merging them is a one-line
+change with no visible symptom that undoes M3's whole ownership story, so
+`test_rbac.py` asserts the codes rather than just that a request was refused.
+Migration `0007` backfills `RECRUITER` from `jobs.owner_id` rather than guessing —
+and its one wart is written down: a downgrade discards the only record of a role, so
+re-running it demotes a recruiter who has not posted anything. Watched on Postgres.
+
+**Slice 3 — an application state you can account for.** `state` is a projection of an
+append-only event log, never a fact. Two rules fall out rather than being bolted on:
+a shortlist is reachable only from `screened` and records the screening it rests on,
+and a rejection carries a reason. `screening`/`screened` are set by the worker from
+the `Screening` row; the system never gets an opinion about a person.
+
+**Slice 4 — consent, export, erasure.** Erasure deletes the stored files *before* the
+rows and abandons everything if one refuses, because the other order leaves an object
+in the bucket that nothing points at — undiscoverable and therefore unerasable, which
+is the actual PDPA failure. Export is a subject-access request rather than a dump of
+everything you can see: a recruiter may read an applicant's resume and it is still
+not theirs to export.
+
+### Four bugs, and three of them were invisible to a green suite
+
+| Found by | What it was |
+|---|---|
+| Reading a live audit log | **Every recruiter decision was logged as the system's.** `Actor` derived the account id from the mover, and the job owner's id is not on the application. The test asserted `actor_role` — correct — and not `actor_id` |
+| A test failing for the wrong reason | **The event log came back shuffled.** SQLite's `CURRENT_TIMESTAMP` has one-second granularity, so a journey taking milliseconds writes every event with the same time and the tiebreak fell through to a *random UUID* |
+| A test failing for the wrong reason | **SQLite was ignoring every `ON DELETE` clause.** It does not enforce foreign keys unless asked, so `CASCADE` and `SET NULL` were inert there and live on Postgres — and the whole suite runs on SQLite |
+| The suite, immediately | A lazy `job.requirements` in the export — `MissingGreenlet`, M3 slice 1's bug in a fourth costume |
+
+The middle two are the same shape and worth stating together: **a property that is
+enforced in production and unenforced in the test environment is worse than one that
+is enforced nowhere**, because the suite reports success. That is the NUL-in-SQLite
+lesson from §11 with two new faces, and the defence both times was writing the test
+that needed the behaviour rather than the test that described the code.
+
+The first one is a different lesson. `actor_role` was set correctly and `actor_id`
+was null, so the assertion that existed passed while the log was useless. **Assert
+*who*, not what kind.**
+
 ### Still open, in order
 
-1. **Slice 2 — RBAC**, migration `0007`. Two things to keep straight: a wrong *role*
-   for a route is **403**, not *your* resource stays **404**, and the migration
-   backfills `RECRUITER` from `jobs.owner_id` rather than guessing a default.
-2. Slices 3–5: the application state machine, PDPA, a thin UI.
+1. **Slice 5 — a thin UI** for the application journey, and the plan marks it
+   cuttable. M4's backend is complete and green without it; the argument for doing it
+   is M3's, that two M2 features shipped without a human ever seeing them rendered.
+2. `next@16` for the 3 high advisories. An isolated commit, not tangled into a slice.
+3. Refresh `HANDOFF.md` §1–§3 when M4 closes, the way M3's close did.
 4. Next 15 → 16 for the postcss and sharp advisories, **now 3 high**. An isolated
    commit, not tangled into a slice.
 5. M6's evaluation stays out of the critical path.
@@ -210,7 +258,14 @@ the stale `page_spans` model in an earlier session.
   production, a provider outage that demonstrated the budget guard for free, and a
   forty-second stretch where the code looked broken and the *instrument* was wrong.
   The last one is the fourth of its kind here and the first that impersonated a bug
-  rather than a pass.
+  rather than a pass. Slice 3 then added a fifth: an audit log that read `by system`
+  where a recruiter's name belonged, which no assertion in the suite was looking at.
+- **Ask what the test environment cannot enforce.** Two of this session's four bugs
+  were properties that Postgres holds and SQLite silently does not — timestamp
+  precision and foreign keys — and the suite runs only on SQLite. "It passes locally"
+  and "it is correct" diverge exactly there, and the gap is invisible in both
+  directions. Worth a standing question before trusting any test of a *database*
+  behaviour: would this pass if the behaviour were absent?
 
 ---
 
