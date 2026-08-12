@@ -6,7 +6,146 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-12 (latest) — retrieval lands, and M3 is closed
+## 2026-08-12 (latest) — M4 is scoped, and the oldest open item is closed
+
+Three commits. The first fixes documentation that had gone wrong, the second records
+the scope review M4 was gated on, and the third ships slice 1.
+
+Suite **439 → 452**. No migration in any of it.
+
+### The docs were lying about the docs
+
+Picking the project up meant reading `HANDOFF.md` first, and four things in §1 were
+false — two of them in the paragraph that exists to tell you what to trust:
+
+- the `pytest -q` row said **411**; it is 439, and retrieval's 28 cases were missing
+  from the breakdown
+- "everything through M3 slice 4 is pushed" and "slice 5 is committed but not yet
+  pushed". `git rev-list --count origin/main..main` answers **0**, and CI is green on
+  the tip. The sentence right underneath — *check that count rather than trusting this
+  paragraph* — was correct, and the paragraph was not. That sentence stays.
+- the "the model is never asked for a verdict" paragraph appeared **twice**, the
+  second copy left over from mid-M3, and it carried a contradiction with it: one
+  paragraph said slice 4 was the only free slice, another said three of six were
+
+The README was still announcing M1. Worth the twenty minutes on its own, but the
+sharper point is that **a handoff which is wrong about its own repository state is
+worse than no handoff** — every one of those errors would have been believed.
+
+### The four calls, settled before any code
+
+`PLAN.md`'s M4 was a draft reconstructed from the README, and both it and HANDOFF §9
+said to review it with the owner first, because that is why M3 went cleanly.
+
+| Question | Decision |
+|---|---|
+| Is an `Application` a row? | **Yes, a first-class one.** The system has no notion of who applied to what — a screening is `(job × resume)` the job's owner pushes through — so "applied → screened → shortlisted" means nothing until applying does |
+| RBAC shape | **A `role` column on `Candidate`**, which is the promise HANDOFF §5 already made |
+| PDPA depth | **Delete and export first**, consent as a flag at upload. A retention scheduler is new infrastructure and is out |
+| The visibility timeout | **Out of M5, into slice 1** |
+
+And the idea that carries the guardrail into the milestone, which HANDOFF §9 had
+asked for by name: **an application's state is never asserted, it is derived from an
+append-only log of transitions.** Two rules fall out rather than being bolted on —
+you may not shortlist someone who has not been screened, and a rejection carries a
+reason.
+
+### Slice 1: the failure that never gets to fail
+
+Everything in the retry policy handles a job that *fails*. A worker that simply stops
+— power loss, OOM, `docker kill` — never gets there. The claim is committed, and then
+nothing, and every road out was closed: redelivery skips the row, `POST /retry`
+answered 409, re-upload deduplicates onto it.
+
+The decision that mattered: **reuse `decide_retry` rather than reset the status.** A
+reclaim counts against `failed_attempts`, so a document that kills its worker every
+time dead-letters instead of looping reap → requeue → die. **A reaper that resets is
+the obvious implementation and it introduces an infinite loop**, silently, on exactly
+the documents most likely to trigger it.
+
+The generous 900 s default is the other half of the trade: the claim writes
+`last_attempt_at` once and never heartbeats, so the timeout has to cover a whole job.
+Reaping a worker that is merely slow is wasteful but safe — the loser's `_claim` sees
+`extracted` and skips.
+
+### A test that could not fail, caught by the habit rather than by luck
+
+All 32 tests passed first run, so — the standing habit — each decision was reverted
+and the suite re-run:
+
+| Mutation | Cases that fail |
+|---|---|
+| Reclaim as a plain status reset | **3** |
+| A missing `last_attempt_at` is not stalled | **1** |
+| No UTC normalisation of a naive timestamp | **7** |
+| **Drop the re-check under the lock** | **0** ← |
+
+The last one is the interesting one. "Two sweeps in a row only reclaim once" passed
+against a version with **no guard at all** — because the second sweep's *candidate
+query* already excludes a row the first moved to `pending`. The guard under the lock
+never executed. Green forever, catching nothing.
+
+**The fix was to the code, not the assertion**, which is the third session running
+that has been the right answer. Listing candidates and reclaiming one are separate
+functions now — which they should always have been, since `_record_failure` commits
+and drops the locks the list took — and the test drives `reclaim_resume` directly with
+a row that stopped qualifying. Three variants of removing the guard now fail 1, 2 and
+3 cases.
+
+### An instrument that would have lied, spotted before it did
+
+SQLite's `DATETIME` storage format **has no timezone field**, so `last_attempt_at`
+reads back naive there while `utcnow()` is aware. Comparing them raises `TypeError`
+rather than answering wrongly — which is the merciful version — but only because it
+was handled at the point of comparison. The suite runs on SQLite and production does
+not, so this is the class of thing that ships green and fails on Postgres or the
+reverse. A test pins it.
+
+### Still open, in order
+
+1. **Slice 2 — RBAC**, migration `0007`. Two things to keep straight: a wrong *role*
+   for a route is **403**, not *your* resource stays **404**, and the migration
+   backfills `RECRUITER` from `jobs.owner_id` rather than guessing a default.
+2. **Slice 1 has not been watched live.** Docker Desktop was down for this whole
+   session, so `kill the worker mid-job → watch the reaper` is a check nobody has run.
+   Every other gate is green, and this project's own record says that is not the same
+   thing.
+3. Slices 3–5: the application state machine, PDPA, a thin UI.
+4. Next 15 → 16 for the postcss and sharp advisories, **now 3 high**. An isolated
+   commit, not tangled into a slice.
+5. M6's evaluation stays out of the critical path.
+
+### Worth knowing next time
+
+- **`ResumeOut.of` and `ScreeningOut.of` take `Settings` now**, because `can_retry` is
+  time-dependent: a stalled `processing` row becomes retryable and the timeout says
+  when. Five call sites, all threaded through the existing `SettingsDep`.
+- `JobContext` gained a `queue`, under a `TYPE_CHECKING` import. The reaper is the only
+  job that puts work *back* on the queue, and `app.queue` imports `app.jobs`.
+- arq's `cron()` takes cron fields, not an interval, so the sweep is `second=0` —
+  once a minute. An interval knob would have been false precision beside a 900 s
+  timeout, and the setting was removed again after being written.
+
+### Advice for the owner
+
+- **Distrust the handoff's claims about the handoff.** Four §1 statements were stale,
+  including "slice 5 is not pushed" — and the *instruction to verify that one* was
+  sitting directly beneath it, unheeded for two commits. Documentation about
+  fast-moving state needs the same treatment as a cached value: re-derive it, or say
+  where to.
+- **A reaper is the one component whose obvious implementation is a loop.** Reset the
+  status and you have built a machine that retries forever on exactly the inputs that
+  break workers. It cost one sentence of thought and no extra code to route it through
+  the policy that already knew how to give up.
+- **The "could this have failed?" pass earned its keep for the fifth session running,
+  and this time it found a guard with zero coverage rather than a weak assertion.**
+  Worth noticing what the fix was: not a cleverer test, but splitting a function so
+  the property had somewhere to be checked. When a test cannot fail, the code usually
+  has the wrong seams.
+
+---
+
+## 2026-08-12 — retrieval lands, and M3 is closed
 
 Slice 6, the last of the milestone. Screening costs a model call per resume, so
 something has to say where to spend it first. `GET /jobs/{id}/candidates` orders the
