@@ -4,8 +4,9 @@ Written 2026-07-30 at the end of M1, rewritten 2026-08-07 after the Postgres
 cutover, again 2026-08-08 when M2 completed, and updated the same day when M3's
 scope was agreed and its first slice landed. Updated 2026-08-12 when slice 5 put a
 face on the matching engine, again when slice 6 closed **M3**, and again the same
-day when all five slices of **M4** landed. Read this first when picking the project
-back up — then
+day when all five slices of **M4** landed, and again on 2026-08-13 when slice 5 was
+finally watched in a browser and turned out not to work. Read this first when picking
+the project back up — then
 `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
 
@@ -159,7 +160,11 @@ same thing — it is the first item in §9.
 | SQLite was ignoring every `ON DELETE` clause | Found by writing the cascade test and watching it fail for the wrong reason: SQLite does not enforce foreign keys unless asked, so `CASCADE` and `SET NULL` were inert there and live on Postgres — **and the whole suite runs on SQLite**. `PRAGMA foreign_keys=ON` now, in `db.build_engine` and in the test engine. Mutation-tested: turning it off fails 4 cases (2026-08-12) |
 | **The application journey's data, panel by panel** | Every call each new screen makes, against the containers and live Gemini: `/applications` gets `role=candidate` and one application (`Backend Engineer · resume_th.pdf · applied`); `/jobs/{id}` gets one applicant. Shortlisting before a screening is **refused by the server with the same sentence the UI disables the button with**; after screening it succeeds. The timeline reads `#0 The candidate applied / #1 The system moved it to screening [cited evidence] / #2 The system moved it to screened / #3 The employer moved it to shortlisted` — matching `describeEvent` exactly (2026-08-12) |
 | The bundle a browser would load | `npm run build` clean, `/applications` a 200 from the container, and the container's own `.next/static/chunks` carry the new strings. Note the honest limit: the pages return `null` until the client auth hook is ready, so **fetching the HTML proves nothing** — that probe came back empty and the instrument was wrong, not the code (2026-08-12) |
-| ⚠️ **Nobody has watched slice 5 in a browser** | The Chrome extension was not connected this session. Every gate is green, the data behind every panel is verified above, and that is **not the same thing** — this project has twice shipped a feature no human had seen render. It is the first check to run next session (2026-08-12) |
+| ~~⚠️ **Nobody has watched slice 5 in a browser**~~ | **Closed 2026-08-13**, and it found **seven defects, four of them blocking** — the row below. The warning was right: every gate was green, every call each panel makes was verified, and the screens still did not work (2026-08-12) |
+| **Slice 5, watched at last — and it did not work** | The Chrome extension connected for the first time on 2026-08-13. What rendered was correct; what a person could *do* was almost nothing. **A candidate could not see any posting** (`GET /jobs` filtered by owner → `200 []`), so applying was unreachable. **`Create job` would not submit** — the weight input's `min=0.1 step=0.5` made its own default of `1` invalid. **A recruiter could not screen an applicant** — the picker was built from `GET /resumes`, which returns only their own — so the disabled Shortlist could never unlock. And **every transition answered 422**, because `moveApplication` and `applyToJob` skipped the `json()` helper and sent no `Content-Type`. All four fixed and re-verified the same day (2026-08-13) |
+| **The journey, browser-only, after the fixes** | Against the containers and live Gemini, with no `curl` anywhere: a recruiter authors a job leaving both weights at the **default**, a candidate uploads `resume_th.pdf` with consent (10/10 claims verified, 1 model call), sees `Backend Engineer` in *Apply to a job*, applies, and the recruiter screens that applicant from their own panel — 100.0%, 2/2 met including the Thai requirement — then shortlists. `psql` afterwards: `#0 → APPLIED` by `CANDIDATE` **with** `actor_id`, `#1`/`#2` by **(system)** with `actor_id` null and a screening attached, `#3 → SHORTLISTED` by `RECRUITER` with both. The Thai label reads back at **36 characters / 90 bytes**, typed through the browser (2026-08-13) |
+| Consent, watched rather than inferred | The box is **unticked on load** (`useState(false)`) and the file picker is **disabled until it is ticked** — so an upload cannot assert an agreement nobody made. The earlier ticked state in this session was a stray click of mine, not a default (2026-08-13) |
+| Erasure, through the API | Both throwaway accounts erased with `DELETE /auth/me`: `stored_files_removed: 1`, the token then 401, and `psql` reports 0 rows. The blobs-before-rows order exercised for real rather than only in tests (2026-08-13) |
 | Migration `0009` on both dialects | Postgres round-trip with `alembic check` clean, `consented_at` landing as `timestamp with time zone` and both columns nullable; SQLite `upgrade head` → `downgrade base` (2026-08-12) |
 | Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
 | The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
@@ -1012,14 +1017,26 @@ paid for itself twice.
 
 **Four things to know before starting M5:**
 
-1. **Watch the application journey in a browser — it is the one M4 check that never
-   ran**, because the Chrome extension was not connected. Everything else is verified
-   in §1, including every call each screen makes, and this project has twice shipped
-   a feature no human had seen render. It is twenty minutes and it goes first.
+1. ~~**Watch the application journey in a browser.**~~ **Done 2026-08-13, and it was
+   the most productive twenty minutes of the milestone** — it found seven defects,
+   four of them blocking, in code where every gate was green. §1 has them. The
+   lesson to carry into M5 is the one this row keeps teaching in new costumes:
+   **verifying every call a screen makes is not the same as using the screen.**
+   Four of the seven were pure wiring — a missing header, a list built from the
+   wrong endpoint, an input whose bounds rejected its own default — and none of
+   them are the kind of thing a test of pure logic can see. Whatever M5 ships,
+   somebody drives it in a browser *inside* the slice, not after it.
 2. **Keep the two kinds of refusal apart.** A wrong *role* for a route is **403** —
    the route is in `/docs` and saying so leaks nothing. Not *your* resource stays
    **404**, because a 403 there is an id-probing oracle. Mixing them is the easiest
    way to undo M3's whole ownership story.
+   **One deliberate exception, added 2026-08-13: a job posting is public to read.**
+   It is an advertisement, and `GET /jobs` now hands every posting's id to every
+   candidate, so a 404 on the detail route was hiding something already public.
+   Every *write* still answers 404, and so does everything the posting produced —
+   a ranking, a screening, an applicant list all carry verdicts about named people
+   and stay on `_owned_job`. That boundary is pinned by
+   `test_a_public_posting_does_not_make_its_screenings_public`.
 3. **Retrieval is still the only part of the system allowed to be approximate**,
    because it makes no claim about anyone. Everything M4 added that *does* make a
    claim went through the same treatment as a verdict, which is why an application's

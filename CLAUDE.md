@@ -8,9 +8,10 @@ to it, the way M3's and M4's were; both paid for themselves. The authoritative
 per-item status is the table in `docs/PLAN.md`. Orientation for a new session: this
 file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
 
-**One M4 check never ran: nobody has watched the application journey in a browser.**
-`HANDOFF.md` §1 records it. It is the cheapest outstanding item and this project has
-twice shipped a feature no human had seen render.
+**That check ran on 2026-08-13 and found seven defects, four of them blocking** — in a
+slice where every gate was green and every API call had been verified. `HANDOFF.md` §1
+has them. The rule it bought: **a slice is done when somebody has used it, not when its
+calls are verified.** Drive the browser *inside* the slice, the way M3's slice 5 did.
 
 M4's governing rule, the same shape as the one below: **a state transition is a claim
 about a person, so it is derived from an append-only event log rather than asserted.**

@@ -6,7 +6,114 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-12 (latest) — M4 is scoped, and closes
+## 2026-08-13 (latest) — the browser check finally ran, and M4 slice 5 did not work
+
+The one M4 check that never ran was watching the application journey render. The
+Chrome extension connected for the first time this session. Twenty minutes, as
+predicted — and it found **seven defects, four of them blocking**, in a slice where
+`pytest -q`, `mypy`, `npm run typecheck`, `lint`, `build` and 43 vitest cases were all
+green, and where every call each screen makes had been verified against live Gemini.
+
+Suite **529 → 534**, vitest **43 → 57**, four commits, none pushed.
+
+### What was actually broken
+
+| Defect | Why nothing caught it |
+|---|---|
+| **A candidate could not see any posting.** `GET /jobs` filtered by `owner_id` unconditionally, and a candidate owns none — so `200 []`, and the apply screen that builds its list from it had nothing to offer | The RBAC case registers as a recruiter, authors a job, then *demotes* the account — so the reader owns the row — and asserts the **status code**. `200` was true the whole time and useless |
+| **`Create job` would not submit.** The weight input had `min=0.1 step=0.5` while every new requirement starts at `weight: 1`, and a browser needs `(value - min)` to be a whole multiple of `step`. `(1 - 0.1) / 0.5` is 1.8 | The rule lived in JSX attributes and `npm test` has no DOM. There was nowhere for it to be checked |
+| **A recruiter could not screen an applicant.** The picker was built from `GET /resumes`, which returns only the caller's own — zero for a recruiter — so the disabled Shortlist could never unlock | `NOTES.md` **predicted this exactly** on 2026-08-12: "`GET /resumes` … stops being true when M4's RBAC lets a recruiter screen someone else's resume." Slice 3 fixed the ranking-filename half of that sentence and left this half |
+| **Every transition answered 422.** `moveApplication` and `applyToJob` hand-built their `RequestInit` instead of using `json()`, so neither sent `Content-Type` and Starlette never parsed the body | The 13 cases covering `lib/applications.ts` pin the **pure logic** — which moves to offer, how the log reads — and nothing exercised the wiring beneath them |
+
+Three more are open and not blocking: registration cannot choose a role in the web
+client (so the browser can only ever create candidates), the blocked-Shortlist sentence
+still reads "Screen this candidate first" once already shortlisted, and the applicants
+panel does not refresh when a screening completes.
+
+### The shape they share
+
+**Every one of the four is wiring, and the server was right in all four cases.**
+`POST /jobs/{id}/screenings` answered 202 for an applicant's resume the whole time;
+the transition route worked the moment a header was added; `resume_filename` was
+already being served and the client was still joining it client-side.
+
+That is what makes this session's lesson narrower than "test more". The Python suite
+is thorough, `lib/applications.ts` is genuinely well tested, and neither could see any
+of this, because **the bugs live in the seam between two things that are each correct.**
+A test of pure logic cannot reach it and a test of the API cannot either.
+
+### The test that could not fail, in its fifth costume
+
+`test_a_candidate_may_still_read_a_job` is the clearest one yet. It reads:
+
+```
+register as recruiter → author a job → demote to candidate → assert GET /jobs is 200
+```
+
+Every line is deliberate and the assertion is about the **status code**. So it passed
+against an implementation that returns `200 []` to every candidate who ever lives. The
+replacement asserts the *contents*, with two accounts — which is slice 3's
+`actor_role`-not-`actor_id` lesson again, and the fifth session running that the fixture
+rather than the code was the thing that was wrong.
+
+### One design call, taken with the owner rather than silently
+
+Opening `GET /jobs` broke `test_someone_elses_job_is_404_even_for_a_recruiter`, which
+was written on purpose with its reasoning attached. Two coherent answers existed and
+one of them (candidates yes, peer recruiters no) meant letting a **role** gate a **row**,
+which is the thing M4 says never to do. So it went to the owner rather than being
+decided in passing.
+
+**A posting is public to read.** It is an advertisement, and once `GET /jobs` hands
+every posting's id to every candidate, a 404 on the detail route hides nothing. The old
+test now pins the boundary that actually matters — every *write* is still 404, and so is
+everything the posting produced: a ranking, a screening, an applicant list all carry
+verdicts about named people and stay on `_owned_job`.
+
+### Verified by using it, not only by fixing it
+
+The whole journey re-walked in a browser afterwards with **no `curl` anywhere**: a
+recruiter authors a job leaving both weights at the default, a candidate uploads
+`resume_th.pdf` with consent (10/10 verified, 1 model call), sees the posting, applies;
+the recruiter screens that applicant from their own panel — 100.0%, 2/2 met including
+the Thai requirement — and shortlists. `psql` afterwards shows the log with the
+attribution intact: the two system moves anonymous with a screening attached, the two
+human moves carrying `actor_id`. The Thai label reads back at 36 characters / 90 bytes,
+typed through the browser rather than through a shell.
+
+Consent was watched too, and it is right: unticked on load, with the file picker
+disabled until it is ticked. Both throwaway accounts were erased through
+`DELETE /auth/me` — `stored_files_removed: 1`, token then 401, 0 rows in `psql`.
+
+### Still open, in order
+
+1. **Three non-blocking defects** from the walkthrough: the missing role selector, the
+   wrong blocked-Shortlist sentence, and the applicants panel not refreshing.
+2. `next@16` for the 3 high advisories. Deferred *again* this session, deliberately —
+   the browser check outranked it. All four route files are `"use client"` and
+   `/jobs/[id]` uses `useParams()`, so the async-`params` migration does not apply.
+3. **M5's scope is still a draft.** Its review is now worth more than it was: roughly
+   two of the four "full recruiter UI" items are already shipped, and this session
+   showed the real gap is not features.
+4. M6's evaluation stays out of the critical path.
+
+### Advice for the owner
+
+- **A slice is not done when its calls are verified; it is done when somebody uses it.**
+  This one was signed off with "every call each screen makes was exercised" — true, and
+  it did not notice that a candidate could not see a single job. Put the walkthrough
+  *inside* the slice. M3's slice 5 did exactly that and shipped clean; M4's slice 5
+  deferred it and shipped four blocking bugs.
+- **The warning in the handoff was worth writing and worth acting on.** Last session
+  recorded the gap honestly instead of glossing it, and named it the first thing to do.
+  That paragraph is the entire reason these were found before anyone else met them.
+- **When a green test guards a feature nobody has used, ask what it asserts.** Three of
+  this session's four blocking defects had a test sitting next to them that passed for a
+  reason unrelated to the behaviour anyone wanted.
+
+---
+
+## 2026-08-12 — M4 is scoped, and closes
 
 Eleven commits. The first fixes documentation that had gone wrong, the second records
 the scope review M4 was gated on, and the rest ship all five slices — the visibility

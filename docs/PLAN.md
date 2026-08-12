@@ -568,6 +568,24 @@ match the pattern already in the codebase.
   watched it render** — the Chrome extension was not connected — and that gap is
   recorded in `HANDOFF.md` §1 rather than glossed over.
 
+  **Watched on 2026-08-13, and the gap was not cosmetic.** Seven defects, four of them
+  blocking, in a slice where every gate was green and every call was verified:
+  a candidate could not see any posting (`GET /jobs` filtered by owner, so `200 []`);
+  `Create job` would not submit (the weight input's `min=0.1 step=0.5` rejected its own
+  default of `1`); a recruiter could not screen an applicant (the picker was built from
+  `GET /resumes`, which returns only their own), so the disabled Shortlist could never
+  unlock; and **every transition answered 422**, because `moveApplication` and
+  `applyToJob` skipped the `json()` helper and sent no `Content-Type`.
+  All four are fixed, each as its own commit with a test that fails without it, and the
+  whole journey was then re-walked in a browser with no `curl` anywhere.
+  Three remain open and are not blocking: registration cannot choose a role in the web
+  client, the blocked-Shortlist sentence is wrong once already shortlisted, and the
+  applicants panel does not refresh when a screening completes.
+  **The lesson is the one the slice's own note asked for:** verifying every call a
+  screen makes is not the same as using the screen, and the four blocking defects were
+  all wiring — invisible to a suite that tests pure logic, which is what
+  `lib/applications.ts`'s 13 cases do.
+
 Deliberately **not** in M4: `next@16` (3 high advisories, all transitive through
 Next — an isolated commit, not tangled into a slice), the refresh-token denylist and
 httpOnly cookies (below), and M6's evaluation.
