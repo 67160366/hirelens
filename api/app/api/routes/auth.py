@@ -6,13 +6,15 @@ distinction in the error message between "no such account" and "wrong password".
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CandidateDep, SessionDep, SettingsDep
-from app.models import Candidate
+from app.models import Candidate, Role
 from app.security import (
     TOKEN_TYPE_REFRESH,
     AuthError,
@@ -26,10 +28,29 @@ from app.security import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+class SelfServiceRole(StrEnum):
+    """The roles an account may claim for itself.
+
+    `admin` is absent on purpose: an account that can grant itself admin is not a
+    role system. It is set out of band, which for now means a SQL statement.
+
+    **`recruiter` being self-selectable is a known limitation, not a decision that
+    an employer needs no verification.** Checking that someone really represents the
+    company they say they do is an identity problem, and this project has no answer
+    to it — so the limitation is written down (`README.md`) rather than papered over
+    with a check that proves nothing. What the role does buy is real: a `candidate`
+    account cannot reach a recruiter route at all.
+    """
+
+    CANDIDATE = "candidate"
+    RECRUITER = "recruiter"
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=200)
     display_name: str | None = Field(default=None, max_length=200)
+    role: SelfServiceRole = SelfServiceRole.CANDIDATE
 
 
 class LoginRequest(BaseModel):
@@ -56,6 +77,9 @@ class CandidateOut(BaseModel):
     id: str
     email: str
     display_name: str | None
+    role: Role
+    """So a client can render the right home page without probing a route to see
+    whether it 403s."""
 
 
 @router.post("/register", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
@@ -66,6 +90,7 @@ async def register(
         email=payload.email.lower(),
         display_name=payload.display_name,
         password_hash=hash_password(payload.password),
+        role=Role(payload.role.value),
     )
     session.add(candidate)
     try:
@@ -175,4 +200,7 @@ async def me(candidate: CandidateDep) -> CandidateOut:
         id=str(candidate.id),
         email=candidate.email,
         display_name=candidate.display_name,
+        # Read from the row, never from the token: a role change has to take effect
+        # on the next request, not whenever the access token happens to expire.
+        role=candidate.role,
     )

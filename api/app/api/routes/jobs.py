@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CandidateDep, SessionDep
+from app.api.deps import CandidateDep, RecruiterDep, SessionDep
 from app.models import Candidate, Job, JobRequirement, RequirementKind
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -146,7 +146,7 @@ def _changes(payload: BaseModel, *, nullable: frozenset[str]) -> dict[str, Any]:
 
 
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
-async def create_job(payload: JobIn, candidate: CandidateDep, session: SessionDep) -> JobOut:
+async def create_job(payload: JobIn, candidate: RecruiterDep, session: SessionDep) -> JobOut:
     """Create a job, with its requirements in the same call.
 
     One call rather than two because authoring both together is the common case.
@@ -198,7 +198,7 @@ async def get_job(job_id: uuid.UUID, candidate: CandidateDep, session: SessionDe
 
 @router.patch("/{job_id}", response_model=JobOut)
 async def update_job(
-    job_id: uuid.UUID, payload: JobPatch, candidate: CandidateDep, session: SessionDep
+    job_id: uuid.UUID, payload: JobPatch, candidate: RecruiterDep, session: SessionDep
 ) -> JobOut:
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
     for field, value in _changes(payload, nullable=frozenset({"description"})).items():
@@ -209,7 +209,7 @@ async def update_job(
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_job(job_id: uuid.UUID, candidate: CandidateDep, session: SessionDep) -> None:
+async def delete_job(job_id: uuid.UUID, candidate: RecruiterDep, session: SessionDep) -> None:
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
     await session.delete(job)
     await session.commit()
@@ -219,7 +219,7 @@ async def delete_job(job_id: uuid.UUID, candidate: CandidateDep, session: Sessio
     "/{job_id}/requirements", response_model=RequirementOut, status_code=status.HTTP_201_CREATED
 )
 async def add_requirement(
-    job_id: uuid.UUID, payload: RequirementIn, candidate: CandidateDep, session: SessionDep
+    job_id: uuid.UUID, payload: RequirementIn, candidate: RecruiterDep, session: SessionDep
 ) -> RequirementOut:
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
 
@@ -248,7 +248,7 @@ async def update_requirement(
     job_id: uuid.UUID,
     requirement_id: uuid.UUID,
     payload: RequirementPatch,
-    candidate: CandidateDep,
+    candidate: RecruiterDep,
     session: SessionDep,
 ) -> RequirementOut:
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
@@ -263,7 +263,7 @@ async def update_requirement(
 
 @router.delete("/{job_id}/requirements/{requirement_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_requirement(
-    job_id: uuid.UUID, requirement_id: uuid.UUID, candidate: CandidateDep, session: SessionDep
+    job_id: uuid.UUID, requirement_id: uuid.UUID, candidate: RecruiterDep, session: SessionDep
 ) -> None:
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
     await session.delete(_find_requirement(job, requirement_id))

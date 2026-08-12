@@ -36,9 +36,17 @@ async def create_job(client: AsyncClient, payload: dict | None = None) -> dict:
 
 async def register_another_candidate(client: AsyncClient, email: str) -> None:
     """Swap the client onto a second account, so the first one's rows are foreign."""
-    response = await client.post("/auth/register", json={"email": email, "password": "another-pw"})
+    response = await client.post(
+        "/auth/register", json={"email": email, "password": "another-pw", "role": "recruiter"}
+    )
     assert response.status_code == 201, response.text
     client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+
+
+@pytest.fixture
+async def authed_client(recruiter_client: AsyncClient) -> AsyncClient:
+    """This whole module is the recruiter side, so the default client is one."""
+    return recruiter_client
 
 
 class TestCreatingAJob:

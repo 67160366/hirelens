@@ -58,12 +58,36 @@ class ResumeStatus(StrEnum):
     `failed` because this one is worth retrying — see `POST /resumes/{id}/retry`."""
 
 
+class Role(StrEnum):
+    """What an account is allowed to do (M4 slice 2).
+
+    Deliberately a column on the one actor this system has rather than a second
+    table: M3's handoff promised RBAC would widen *who* may own a job without
+    changing the shape of anything, and this keeps that promise. Ownership checks
+    are unchanged — a role says which routes you may reach, never which rows.
+    """
+
+    CANDIDATE = "candidate"
+    """Uploads resumes and applies. The default for a new account."""
+
+    RECRUITER = "recruiter"
+    """Also posts jobs and screens the people who applied to them."""
+
+    ADMIN = "admin"
+    """Everything. Deliberately not self-selectable at registration — it is set out
+    of band, because an account that can grant itself admin is not a role system."""
+
+
 class Candidate(UUIDPrimaryKey, Timestamps, Base):
     __tablename__ = "candidates"
 
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200))
     password_hash: Mapped[str | None] = mapped_column(String(200))
+
+    role: Mapped[Role] = mapped_column(
+        Enum(Role, native_enum=False, length=20), default=Role.CANDIDATE, nullable=False
+    )
 
     resumes: Mapped[list[Resume]] = relationship(
         back_populates="candidate", cascade="all, delete-orphan"

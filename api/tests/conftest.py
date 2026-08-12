@@ -128,17 +128,37 @@ async def client(
         yield http_client
 
 
-@pytest.fixture
-async def authed_client(client: AsyncClient) -> AsyncClient:
-    """A client carrying a bearer token for a freshly registered candidate."""
+async def register_as(client: AsyncClient, *, email: str, role: str = "candidate") -> AsyncClient:
+    """Register an account, put its token on the client, and hand the client back.
+
+    `role` is a registration field because there is no other way to become a
+    recruiter — see `SelfServiceRole` in `app/api/routes/auth.py` for why that is a
+    recorded limitation rather than a claim that employers need no verification.
+    """
     response = await client.post(
         "/auth/register",
-        json={"email": "candidate@example.com", "password": "correct horse battery"},
+        json={"email": email, "password": "correct horse battery", "role": role},
     )
     assert response.status_code == 201, response.text
-    token = response.json()["access_token"]
-    client.headers["Authorization"] = f"Bearer {token}"
+    client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
     return client
+
+
+@pytest.fixture
+async def authed_client(client: AsyncClient) -> AsyncClient:
+    """A client carrying a bearer token for a freshly registered **candidate**.
+
+    The default role, because most of the suite is the candidate journey. A module
+    about the recruiter side overrides this fixture with `recruiter_client` — see
+    `tests/test_jobs.py` — which keeps every test body unchanged.
+    """
+    return await register_as(client, email="candidate@example.com")
+
+
+@pytest.fixture
+async def recruiter_client(client: AsyncClient) -> AsyncClient:
+    """The same, for an account that may author job postings."""
+    return await register_as(client, email="recruiter@example.com", role="recruiter")
 
 
 CONTENT_TYPES = {

@@ -775,17 +775,21 @@ class TestTheVisibilityTimeout:
 
     async def test_a_screening_is_reclaimed_the_same_way(
         self,
-        authed_client: AsyncClient,
+        recruiter_client: AsyncClient,
         context: JobContext,
         settings: Settings,
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
-        """Two tables, one policy — the reason `decide_retry` was extracted at all."""
-        job = await authed_client.post(
+        """Two tables, one policy — the reason `decide_retry` was extracted at all.
+
+        A recruiter client because authoring the job needs the role; the reclaim
+        itself is indifferent to who owns the row.
+        """
+        job = await recruiter_client.post(
             "/jobs", json={"title": "Backend", "requirements": [{"label": "Python"}]}
         )
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
-        created = await authed_client.post(
+        uploaded = await recruiter_client.post("/resumes", files=resume_upload())
+        created = await recruiter_client.post(
             f"/jobs/{job.json()['id']}/screenings", json={"resume_id": uploaded.json()["id"]}
         )
         screening_id = uuid.UUID(created.json()["id"])

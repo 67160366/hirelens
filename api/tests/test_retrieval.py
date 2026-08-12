@@ -38,6 +38,12 @@ THAI_LINE = "ดูแลระบบกระทบยอดการชำร�
 
 
 @pytest.fixture
+async def authed_client(recruiter_client: AsyncClient) -> AsyncClient:
+    """This whole module is the recruiter side, so the default client is one."""
+    return recruiter_client
+
+
+@pytest.fixture
 def queue() -> RecordingQueue:
     """Replaces the inline queue, so the resume job runs deliberately and a
     requested screening is recorded rather than executed."""
@@ -309,13 +315,15 @@ class TestTheCandidatesRoute:
 
     async def test_another_candidates_job_is_not_found(self, client: AsyncClient) -> None:
         first = await client.post(
-            "/auth/register", json={"email": "one@example.com", "password": "correct horse b"}
+            "/auth/register",
+            json={"email": "one@example.com", "password": "correct horse b", "role": "recruiter"},
         )
         client.headers["Authorization"] = f"Bearer {first.json()['access_token']}"
         job_id = await self._job(client)
 
         second = await client.post(
-            "/auth/register", json={"email": "two@example.com", "password": "correct horse b"}
+            "/auth/register",
+            json={"email": "two@example.com", "password": "correct horse b", "role": "recruiter"},
         )
         client.headers["Authorization"] = f"Bearer {second.json()['access_token']}"
 

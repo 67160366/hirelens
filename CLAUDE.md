@@ -13,6 +13,11 @@ M4's governing rule, the same shape as the one below: **a state transition is a 
 about a person, so it is derived from an append-only event log rather than asserted.**
 Nothing may write `Application.state` without appending the event that caused it.
 
+And M4's other rule, easy to undo by accident: **a role gates a route (403), while
+ownership gates a row (404).** Never merge them — a 403 on an id confirms the id
+exists, which is the account-enumeration answer `_owned_job` and `_owned_resume` are
+written to avoid. `require_role` in `api/deps.py` is the only place a 403 belongs.
+
 ## The one idea — never weaken it
 
 Models cannot count characters, so they are never asked to. The model returns only

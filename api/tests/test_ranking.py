@@ -465,6 +465,12 @@ JOB_PAYLOAD = {
 
 
 @pytest.fixture
+async def authed_client(recruiter_client: AsyncClient) -> AsyncClient:
+    """This whole module is the recruiter side, so the default client is one."""
+    return recruiter_client
+
+
+@pytest.fixture
 def queue() -> RecordingQueue:
     """Replaces the inline queue so a test runs each job deliberately."""
     return RecordingQueue()

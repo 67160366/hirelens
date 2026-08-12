@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.llm.base import StructuredExtractor
-from app.models import Candidate
+from app.models import Candidate, Role
 from app.pipeline.retrieval import Retriever
 from app.queue import JobQueue
 from app.security import TOKEN_TYPE_ACCESS, AuthError, decode_token
@@ -103,3 +103,38 @@ async def get_current_candidate(
 
 
 CandidateDep = Annotated[Candidate, Depends(get_current_candidate)]
+
+
+def require_role(*allowed: Role) -> Callable[[Candidate], Candidate]:
+    """A dependency that refuses an account whose role may not reach this route.
+
+    **403 here, and 404 everywhere ownership is checked.** The two refusals answer
+    different questions and must not be merged. A role check is about the *route*,
+    which is listed in `/docs` and which the caller has plainly found — saying "not
+    for your role" leaks nothing. An ownership check is about a specific *id*, and
+    a 403 there would confirm the id exists, which is the account-enumeration
+    problem `_owned_job` and `_owned_resume` already answer 404 to avoid.
+
+    `ADMIN` passes everything without being listed at each call site: a role system
+    where every route has to remember to name the superuser grows a hole the first
+    time someone forgets.
+    """
+    permitted = frozenset(allowed) | {Role.ADMIN}
+
+    def guard(candidate: CandidateDep) -> Candidate:
+        if candidate.role not in permitted:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"This action needs the "
+                    f"{' or '.join(sorted(r.value for r in allowed))} role; "
+                    f"this account is a {candidate.role.value}."
+                ),
+            )
+        return candidate
+
+    return guard
+
+
+RecruiterDep = Annotated[Candidate, Depends(require_role(Role.RECRUITER))]
+"""Posting a job and screening against it. Admin passes too, via `require_role`."""

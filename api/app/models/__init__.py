@@ -11,6 +11,7 @@ from app.models.core import (
     LLMCallLog,
     Resume,
     ResumeStatus,
+    Role,
 )
 from app.models.matching import (
     Job,
@@ -30,6 +31,7 @@ __all__ = [
     "RequirementKind",
     "Resume",
     "ResumeStatus",
+    "Role",
     "Screening",
     "ScreeningStatus",
 ]

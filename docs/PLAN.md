@@ -455,10 +455,35 @@ match the pattern already in the codebase.
   arrived unplanned proved the budget guard by dead-lettering at 3 attempts rather than
   looping. A screening was reclaimed the same way and completed 2/2. `JOB_VISIBILITY_TIMEOUT_SECONDS`
   is passed through `docker-compose.yml` and documented in `.env.example`.
-- [ ] 2. **RBAC: a role on the one actor** (migration `0007`). Wrong role for a route
-  is **403**; not your resource stays **404**, unchanged from M3. The migration
-  backfills `RECRUITER` from `jobs.owner_id` rather than guessing a default —
-  existing accounts genuinely do both, and who owns a job is checkable.
+- [x] 2. **RBAC: a role on the one actor** (2026-08-12). `Role` on
+  `app/models/core.py` and `require_role` in `app/api/deps.py`, migration `0007`.
+  Applied only where it is real in this slice: authoring or changing a posting, its
+  requirements, and the two screening routes that spend money. **Reads stay open to
+  every role** — slice 3 has candidates applying to postings, which means seeing one
+  first — and ownership still gates which rows they see.
+  Three decisions inside it:
+  **a role gates a route and ownership gates a row, so 403 and 404 never merge.**
+  A role check is about a route that is listed in `/docs` and which the caller has
+  plainly found; an ownership check is about an id, and a 403 there confirms the id
+  exists. The role check runs as a dependency *before* any row is read, so a candidate
+  hitting a real id and an invented one get byte-identical responses.
+  **`require_role` grants `ADMIN` implicitly**, because a role system where every
+  route must remember the superuser grows a hole the first time someone forgets.
+  **The role is read from the row, never carried in the token** — in the JWT a
+  demotion would do nothing until the token expired.
+  The migration **derives its backfill from `jobs.owner_id`** rather than guessing a
+  default, declares the upper-case enum names (`0004`'s lesson), and uses
+  `batch_alter_table` so it runs on the SQLite CI checks it (`0006`'s lesson). Its one
+  wart is written down: a downgrade discards the only record of a role, so re-running
+  it demotes a recruiter who has not posted anything — watched on Postgres.
+  Registration takes the role, because there is no other way to become a recruiter;
+  `admin` is deliberately not self-selectable. **That employers are unverified is
+  recorded in `README.md` as a limitation**, not hidden behind a check that proves
+  nothing.
+  Pinned by `tests/test_rbac.py` (17 cases; suite 452 → 469), and both decisions with
+  a silent failure mode were confirmed load-bearing by mutation: answering 403 on
+  ownership fails 7 cases, dropping the implicit admin fails 1. Verified live in the
+  containers and through a Postgres round-trip with `alembic check` clean.
 - [ ] 3. **The application and its state machine** (migration `0008`). Also fixes the
   two things RBAC breaks, both named in HANDOFF §9: `_owned_resume` widens to a resume
   applied to a job you own, and `GET /jobs/{id}/candidates` stops joining filenames

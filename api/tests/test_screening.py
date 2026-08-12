@@ -45,6 +45,12 @@ JOB_PAYLOAD = {
 
 
 @pytest.fixture
+async def authed_client(recruiter_client: AsyncClient) -> AsyncClient:
+    """This whole module is the recruiter side, so the default client is one."""
+    return recruiter_client
+
+
+@pytest.fixture
 def queue() -> RecordingQueue:
     """Replaces the inline queue so a test runs the screening job deliberately."""
     return RecordingQueue()
@@ -297,13 +303,15 @@ class TestOwnership:
         self, client: AsyncClient, context: JobContext
     ):
         owner = await client.post(
-            "/auth/register", json={"email": "owner@example.com", "password": "a-good-password"}
+            "/auth/register",
+            json={"email": "owner@example.com", "password": "a-good-password", "role": "recruiter"},
         )
         client.headers["Authorization"] = f"Bearer {owner.json()['access_token']}"
         job_id, _ = await _job_and_resume(client, context)
 
         intruder = await client.post(
-            "/auth/register", json={"email": "other@example.com", "password": "a-good-password"}
+            "/auth/register",
+            json={"email": "other@example.com", "password": "a-good-password", "role": "recruiter"},
         )
         client.headers["Authorization"] = f"Bearer {intruder.json()['access_token']}"
         their = await client.post("/resumes", files=resume_upload())
@@ -315,14 +323,20 @@ class TestOwnership:
 
     async def test_another_candidates_resume_is_not_found(self, client: AsyncClient):
         stranger = await client.post(
-            "/auth/register", json={"email": "stranger@example.com", "password": "a-good-password"}
+            "/auth/register",
+            json={
+                "email": "stranger@example.com",
+                "password": "a-good-password",
+                "role": "recruiter",
+            },
         )
         client.headers["Authorization"] = f"Bearer {stranger.json()['access_token']}"
         theirs = await client.post("/resumes", files=resume_upload())
         their_resume_id = theirs.json()["id"]
 
         mine = await client.post(
-            "/auth/register", json={"email": "mine@example.com", "password": "a-good-password"}
+            "/auth/register",
+            json={"email": "mine@example.com", "password": "a-good-password", "role": "recruiter"},
         )
         client.headers["Authorization"] = f"Bearer {mine.json()['access_token']}"
         job = await client.post("/jobs", json=JOB_PAYLOAD)
@@ -336,7 +350,12 @@ class TestOwnership:
         self, client: AsyncClient, context: JobContext
     ):
         owner = await client.post(
-            "/auth/register", json={"email": "owner2@example.com", "password": "a-good-password"}
+            "/auth/register",
+            json={
+                "email": "owner2@example.com",
+                "password": "a-good-password",
+                "role": "recruiter",
+            },
         )
         client.headers["Authorization"] = f"Bearer {owner.json()['access_token']}"
         job_id, resume_id = await _job_and_resume(client, context)
@@ -344,7 +363,12 @@ class TestOwnership:
         screening_id = created.json()["id"]
 
         intruder = await client.post(
-            "/auth/register", json={"email": "other2@example.com", "password": "a-good-password"}
+            "/auth/register",
+            json={
+                "email": "other2@example.com",
+                "password": "a-good-password",
+                "role": "recruiter",
+            },
         )
         client.headers["Authorization"] = f"Bearer {intruder.json()['access_token']}"
 

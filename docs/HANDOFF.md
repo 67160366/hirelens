@@ -117,6 +117,10 @@ system is unchanged. That is what makes it safe for it to be approximate.
 | The budget guard, proven by an unplanned provider outage | Gemini answered **503 UNAVAILABLE** on the requeued job, so the row failed twice more at 5 s and 10 s and **dead-lettered after 3 attempts — of which the reclaim was attempt 1**. That is exactly the property a plain status reset would lose: it would have looped forever instead. Nobody scripted this; the provider obliged (2026-08-12) |
 | The replay, and the citations after all of it | `POST /retry` on that dead letter → 200 → `extracted` on **attempt 4** once Gemini recovered: **10/10 verified, 0 dropped, 10/10 spans slicing back out of `document_text`, all tier-1 exact, no NUL** (2026-08-12) |
 | **A screening reclaimed the same way** | Created with the worker stopped, so it queued without spending anything, then stranded at `processing` with a 120 s-old claim: `can_retry=true`. Starting the worker reclaimed it and it **completed 2/2 met** on attempt 2. `psql` afterwards: 1 `extract-v1` carrying `resume_id`, 1 `judge-v1` carrying `screening_id`, neither crossed — the M3 cost split survives the reaper (2026-08-12) |
+| **Roles, live in the containers** | `api` and `worker` rebuilt first, then asked directly (`'role' in Candidate.__table__.c` → True). A recruiter and a candidate registered; `GET /auth/me` reports each. The candidate gets **403** on `POST /jobs` and on `PATCH` of the recruiter's job, **404** on `GET` of it, and **200** on `GET /jobs` — the two refusals staying apart on real data, and reads staying open so slice 3 can have candidates see a posting (2026-08-12) |
+| Roles are stored as enum **names** | `psql` shows `RECRUITER` / `CANDIDATE`, not the lower-case values the API serializes — the §7 split, and what migration `0007` declares (2026-08-12) |
+| Migration `0007` on Postgres | `downgrade -1` drops the column (`information_schema` says 0), `upgrade head` puts it back and re-runs the backfill; `alembic check` finds no drift, and the column lands **NOT NULL with no server default left behind** — the default exists only to fill existing rows (2026-08-12) |
+| The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
 
 ### Repository state
 
@@ -237,7 +241,8 @@ api/app/
                        so judge.py stays ORM-free the way extract.py is
     ranking.py         M3: a ranked entry carries its citations, and an excluded one
                        carries why — nothing is dropped silently
-  models/core.py       candidates, resumes, extracted_profiles, llm_call_logs
+  models/core.py       candidates (with M4's `role`), resumes, extracted_profiles,
+                       llm_call_logs
   models/matching.py   M3: jobs, the requirements they are screened by, and a
                        screening — one resume judged against one job
   services/screening_service.py  M3: request one (idempotent on the fingerprint),
@@ -249,6 +254,8 @@ api/app/
   queue.py             JobQueue seam: inline (no server) / arq (Redis)
   worker.py            `arq app.worker.WorkerSettings` — adapter only
   logging_config.py    shared by API and worker so the worker need not import the app
+  api/deps.py          M4: `require_role` beside `CandidateDep`. 403 for a route a
+                       role may not reach; ownership still answers 404
   api/routes/          auth.py, resumes.py — upload, profile, retry, progress stream
                        jobs.py — postings and requirements; requirement routes are
                        nested so ownership is settled in one place
@@ -490,6 +497,25 @@ Worth reading once, because the request no longer does the work.
 - **A job is owned by a `Candidate` row.** That is the only actor the system has,
   and RBAC is M4's. The M3 rule is therefore "you may screen a resume you own
   against a job you own", which M4 widens without changing the table.
+- **A role gates a route; ownership gates a row — 403 and 404, never merged**
+  (M4 slice 2). A role check is about the *route*, which is listed in `/docs` and
+  which the caller has plainly found, so naming the role it needs leaks nothing:
+  **403**. An ownership check is about a specific *id*, and a 403 there would confirm
+  the id exists — the account-enumeration answer `_owned_job` and `_owned_resume`
+  were written to avoid: **404**. Collapsing the two is a one-line change with no
+  visible symptom, which is why `test_rbac.py` asserts the codes rather than just
+  that a request was refused. Mutation-tested: answering 403 on ownership fails 7
+  cases. The role check runs as a dependency, *before* any row is read, so a
+  candidate hitting a real id and an invented one get byte-identical responses.
+- **`require_role` grants `ADMIN` implicitly** (M4 slice 2). A role system where
+  every route has to remember to list the superuser grows a hole the first time
+  someone forgets. Mutation-tested: removing it fails 1 case.
+- **The role is read from the row, never carried in the token** (M4 slice 2).
+  Putting it in the JWT would mean a demotion did nothing until the access token
+  expired — a window in which a permission you removed is still live. Every check
+  reads `candidates.role`, so the next request is already correct, and `GET /auth/me`
+  reports it so a client can render the right home page without probing a route to
+  see whether it 403s.
 - **Two attempt counters, because one cannot do both jobs.** `failed_attempts` is
   the retry budget and is cleared by a success or a manual retry. `attempts` is the
   honest total and never resets — it is also what makes each dispatch's queue job id
@@ -862,12 +888,12 @@ than a reconstruction. **M5–M6 are still a draft**; review each the same way.
 | # | Work | Status |
 |---|---|---|
 | 1 | The visibility timeout | **done** — `jobs.reclaim_stalled` + the arq cron in `worker.py`, `can_retry` as a predicate; **no migration**; `tests/test_retry.py` |
-| 2 | RBAC: a role on the one actor | migration `0007` |
+| 2 | RBAC: a role on the one actor | **done** — `Role` on `models/core.py`, `require_role` in `api/deps.py`, migration `0007` with a derived backfill, `tests/test_rbac.py` |
 | 3 | The application and its state machine | migration `0008` |
 | 4 | PDPA: consent, export, delete | migration `0009` |
 | 5 | A thin UI for the journey | cuttable |
 
-**Three things to know before slice 2:**
+**Three things to know before slice 3:**
 
 1. **The one actor is still `Candidate`.** M3's rule is "you may screen a resume you
    own against a job you own", enforced in `_owned_job` / `_owned_resume` with 404

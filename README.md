@@ -128,7 +128,7 @@ credential endpoints. Full schema at `/docs`.
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/auth/register` | Create an account; returns an access + refresh pair |
+| `POST` | `/auth/register` | Create an account; returns an access + refresh pair. `role` is `candidate` (default) or `recruiter` — see the limitation below |
 | `POST` | `/auth/login` | Exchange credentials for a token pair |
 | `POST` | `/auth/refresh` | Rotate the pair; a refresh token is single-use |
 | `POST` | `/auth/change-password` | Prove the old password, set a new one |
@@ -266,6 +266,14 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
   until they expire, because revocation needs a refresh-token denylist that does not
   exist yet — the same gap that is why there is no `/auth/logout`. Pinned by
   `tests/test_api.py::TestChangePassword`.
+- **Anyone may register as a recruiter.** The role is a field on `POST /auth/register`,
+  because there is no other way to become one. Verifying that somebody really
+  represents the company they claim to is an identity problem this project has no
+  answer to, so the gap is recorded rather than papered over with a check that proves
+  nothing. What the role *does* buy is real and tested: a `candidate` account cannot
+  reach a recruiter route at all, and `admin` is deliberately **not** self-selectable —
+  an account that can grant itself admin is not a role system. Pinned by
+  `tests/test_rbac.py`.
 - **The access token is kept in `localStorage`,** which is XSS-readable. Acceptable
   for a two-origin dev setup; the production answer is an httpOnly cookie.
 

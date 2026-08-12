@@ -25,7 +25,14 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CandidateDep, QueueDep, RetrieverDep, SessionDep, SettingsDep
+from app.api.deps import (
+    CandidateDep,
+    QueueDep,
+    RecruiterDep,
+    RetrieverDep,
+    SessionDep,
+    SettingsDep,
+)
 from app.config import Settings
 from app.jobs import is_stalled
 from app.models import Candidate, Job, Resume, Screening, ScreeningStatus
@@ -202,7 +209,7 @@ def _retrieval_terms(job: Job) -> list[str]:
 async def create_screening(
     job_id: uuid.UUID,
     payload: ScreeningIn,
-    candidate: CandidateDep,
+    candidate: RecruiterDep,
     session: SessionDep,
     queue: QueueDep,
     settings: SettingsDep,
@@ -346,7 +353,7 @@ async def suggest_candidates(
 @router.post("/screenings/{screening_id}/retry", response_model=ScreeningOut)
 async def retry_screening(
     screening_id: uuid.UUID,
-    candidate: CandidateDep,
+    candidate: RecruiterDep,
     session: SessionDep,
     queue: QueueDep,
     settings: SettingsDep,
