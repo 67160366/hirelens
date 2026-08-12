@@ -144,10 +144,19 @@ class TestOwnership:
         await register_another_candidate(authed_client, "intruder@example.com")
         return str(job["id"])
 
-    async def test_someone_elses_job_cannot_be_read(
+    async def test_someone_elses_job_can_be_read_because_a_posting_is_public(
         self, authed_client: AsyncClient, foreign_job_id: str
     ):
-        assert (await authed_client.get(f"/jobs/{foreign_job_id}")).status_code == 404
+        """The one read that is deliberately open, and the only one.
+
+        A posting is an advertisement — it exists to be read by people who do not
+        own it, and a candidate who cannot read one cannot decide whether to apply.
+        Everything below this still answers 404, which is the distinction that
+        matters: reading a posting is open, *doing* anything with it is not.
+        """
+        response = await authed_client.get(f"/jobs/{foreign_job_id}")
+        assert response.status_code == 200
+        assert response.json()["id"] == foreign_job_id
 
     async def test_someone_elses_job_cannot_be_edited(
         self, authed_client: AsyncClient, foreign_job_id: str

@@ -127,8 +127,9 @@ class TestWhatARoleGates:
         """Reads are not gated by role, and must not be.
 
         Slice 3 has candidates applying to postings, which means seeing one first.
-        Ownership still applies — this account owns the job, having authored it
-        before being demoted.
+        This account owns the job, having authored it before being demoted, so it
+        says nothing about *somebody else's* posting — which is the case that
+        actually matters and which the two cases below cover.
         """
         await register_as(client, email="reader@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
@@ -136,6 +137,65 @@ class TestWhatARoleGates:
 
         assert (await client.get(f"/jobs/{job_id}")).status_code == 200
         assert (await client.get("/jobs")).status_code == 200
+
+    async def test_a_candidate_sees_a_posting_they_do_not_own(self, client: AsyncClient):
+        """The one that was missing, and the reason the journey was unreachable.
+
+        Asserting the *status code* of `GET /jobs` passed against a version that
+        filtered by owner and so answered `200 []` to every candidate alive. A
+        candidate owns no postings, so an owner-filtered list is always empty, and
+        the apply screen — which builds its list from here — had nothing to offer.
+
+        The assertion that matters is therefore about the **contents**, not the code:
+        the same lesson as slice 3's `actor_role`-not-`actor_id`.
+        """
+        await register_as(client, email="hirer@example.com", role="recruiter")
+        job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+
+        await register_as(client, email="seeker@example.com", role="candidate")
+
+        listed = await client.get("/jobs")
+        assert listed.status_code == 200
+        assert [job["id"] for job in listed.json()] == [job_id]
+
+        one = await client.get(f"/jobs/{job_id}")
+        assert one.status_code == 200
+        assert one.json()["title"] == JOB["title"]
+        # The requirements travel with it: they are what an applicant would be
+        # judged against, so showing them is the honest version of a posting.
+        assert [item["label"] for item in one.json()["requirements"]] == ["Python"]
+
+    async def test_reading_a_posting_does_not_widen_anything_else(self, client: AsyncClient):
+        """Only the read opened. Every write stays on `_owned_job`, and a candidate
+        hitting one gets the **403** its role earns rather than a 404 — the role
+        check runs as a dependency, before any row is read."""
+        await register_as(client, email="owner@example.com", role="recruiter")
+        job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+
+        await register_as(client, email="applicant@example.com", role="candidate")
+
+        edit = await client.patch(f"/jobs/{job_id}", json={"title": "mine now"})
+        assert edit.status_code == 403
+        assert (await client.delete(f"/jobs/{job_id}")).status_code == 403
+        assert (
+            await client.post(f"/jobs/{job_id}/requirements", json={"label": "Go"})
+        ).status_code == 403
+
+    async def test_a_recruiters_own_list_is_still_only_theirs(self, client: AsyncClient):
+        """A recruiter's `/jobs` is an authoring surface, so it stays owner-filtered.
+
+        Without this, widening the candidate's list would quietly turn every
+        recruiter's home page into every other recruiter's postings too.
+        """
+        await register_as(client, email="first@example.com", role="recruiter")
+        mine = (await client.post("/jobs", json=JOB)).json()["id"]
+
+        await register_as(client, email="second@example.com", role="recruiter")
+        theirs = (await client.post("/jobs", json={**JOB, "title": "Frontend"})).json()["id"]
+
+        listed = [job["id"] for job in (await client.get("/jobs")).json()]
+        assert listed == [theirs]
+        assert mine not in listed
 
     async def test_a_candidate_keeps_the_whole_resume_journey(self, authed_client: AsyncClient):
         """The default role must not have lost anything it had before M4."""
@@ -146,22 +206,52 @@ class TestWhatARoleGates:
 
 
 class TestTheTwoRefusalsStayApart:
-    async def test_someone_elses_job_is_404_even_for_a_recruiter(self, client: AsyncClient):
+    async def test_writing_someone_elses_job_is_404_even_for_a_recruiter(self, client: AsyncClient):
         """The case that would silently become 403 if the two checks were merged.
 
         Both accounts have the role, so nothing about the *route* is refused — only
-        the row — and the answer must not confirm the id exists.
+        the row — and the answer must not confirm the id belongs to anyone.
+
+        **Reading is deliberately absent here.** A posting is an advertisement: it
+        is published so that people who do not own it can read it, and since
+        `GET /jobs` now hands every posting's id to every candidate, a 404 on the
+        detail route would be hiding an id that is already public. What ownership
+        still protects is every *write*, which is what this case pins.
+
+        The rows the 404 rule exists for are the ones that say something about a
+        person — resumes, screenings, applications — and those are unchanged;
+        `test_someone_elses_resume_is_404` below is the case that carries it.
         """
         await register_as(client, email="owner@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
 
         await register_as(client, email="rival@example.com", role="recruiter")
 
-        assert (await client.get(f"/jobs/{job_id}")).status_code == 404
         assert (
             await client.patch(f"/jobs/{job_id}", json={"title": "mine now"})
         ).status_code == 404
         assert (await client.delete(f"/jobs/{job_id}")).status_code == 404
+        assert (
+            await client.post(f"/jobs/{job_id}/requirements", json={"label": "Go"})
+        ).status_code == 404
+
+    async def test_a_public_posting_does_not_make_its_screenings_public(self, client: AsyncClient):
+        """Opening the posting must not open what the posting *produced*.
+
+        A ranking and a screening carry verdicts about named people, so they stay on
+        `screenings.py`'s own `_owned_job` and answer 404 to everyone else — which is
+        the line that keeps "a posting is public" from leaking into "so is everything
+        hanging off it".
+        """
+        await register_as(client, email="poster@example.com", role="recruiter")
+        job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+
+        await register_as(client, email="onlooker@example.com", role="recruiter")
+
+        assert (await client.get(f"/jobs/{job_id}")).status_code == 200
+        assert (await client.get(f"/jobs/{job_id}/ranking")).status_code == 404
+        assert (await client.get(f"/jobs/{job_id}/screenings")).status_code == 404
+        assert (await client.get(f"/jobs/{job_id}/applications")).status_code == 404
 
     async def test_a_candidate_hitting_someone_elses_job_is_refused_by_role_first(
         self, client: AsyncClient

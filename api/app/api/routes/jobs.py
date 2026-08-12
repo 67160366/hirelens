@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CandidateDep, RecruiterDep, SessionDep
-from app.models import Candidate, Job, JobRequirement, RequirementKind
+from app.models import Candidate, Job, JobRequirement, RequirementKind, Role
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -118,6 +118,28 @@ async def _owned_job(session: SessionDep, *, job_id: uuid.UUID, candidate: Candi
     return job
 
 
+async def _readable_job(session: SessionDep, *, job_id: uuid.UUID) -> Job:
+    """Any account's view of a posting, or 404 when there is no such posting.
+
+    A posting is an advertisement, and a candidate who cannot read one cannot decide
+    whether to apply to it — which is what M4 slice 2 meant by reads staying open to
+    every role. Every *write* still goes through `_owned_job`, so widening the read
+    widens nothing else.
+
+    The 404 here answers "no such id" rather than "not yours", so unlike `_owned_job`
+    it is not hiding anything: the whole point is that the row is public to read.
+    """
+    job = (
+        await session.execute(
+            select(Job).where(Job.id == job_id).options(selectinload(Job.requirements))
+        )
+    ).scalar_one_or_none()
+
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return job
+
+
 def _find_requirement(job: Job, requirement_id: uuid.UUID) -> JobRequirement:
     for requirement in job.requirements:
         if requirement.id == requirement_id:
@@ -182,18 +204,32 @@ async def create_job(payload: JobIn, candidate: RecruiterDep, session: SessionDe
 
 @router.get("", response_model=list[JobOut])
 async def list_jobs(candidate: CandidateDep, session: SessionDep) -> list[JobOut]:
-    result = await session.execute(
-        select(Job)
-        .where(Job.owner_id == candidate.id)
-        .options(selectinload(Job.requirements))
-        .order_by(Job.created_at.desc())
-    )
+    """The postings this account works with — which is a different list per role.
+
+    A recruiter's `/jobs` is an authoring surface and answers "the postings I own".
+    A candidate's is a discovery surface and answers "the postings I could apply
+    to", so it is not filtered by ownership: a candidate owns no postings, and
+    filtering by owner returned an empty list to every one of them. That left the
+    whole application journey unreachable from a browser — the apply screen builds
+    its list from here — while `GET /jobs` still answered 200, which is why the
+    RBAC check that asserted the status code never saw it.
+
+    Only the read widens. Authoring, editing and screening all still go through
+    `_owned_job`, so a candidate reaching this list gains nothing but the ability
+    to read a posting and apply to it.
+    """
+    query = select(Job).options(selectinload(Job.requirements)).order_by(Job.created_at.desc())
+    if candidate.role is not Role.CANDIDATE:
+        query = query.where(Job.owner_id == candidate.id)
+
+    result = await session.execute(query)
     return [JobOut.of(job) for job in result.scalars()]
 
 
 @router.get("/{job_id}", response_model=JobOut)
 async def get_job(job_id: uuid.UUID, candidate: CandidateDep, session: SessionDep) -> JobOut:
-    return JobOut.of(await _owned_job(session, job_id=job_id, candidate=candidate))
+    """Read one posting. Public to any account, for the reason `_readable_job` gives."""
+    return JobOut.of(await _readable_job(session, job_id=job_id))
 
 
 @router.patch("/{job_id}", response_model=JobOut)
