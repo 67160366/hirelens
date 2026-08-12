@@ -25,6 +25,7 @@ from app.api.deps import (
     StorageDep,
 )
 from app.config import Settings
+from app.jobs import is_stalled
 from app.models import Candidate, Resume, ResumeStatus
 from app.services import resume_service
 
@@ -46,9 +47,8 @@ MAGIC_BY_SUFFIX = {
 }
 ALLOWED_SUFFIXES = frozenset(MAGIC_BY_SUFFIX)
 
-# Where a retry can help. `pending` and `processing` are already in hand;
-# `extracted` is done, and redoing it would bill a second extraction to produce
-# the profile we already have.
+# Where a retry can help. `pending` is already in hand; `extracted` is done, and
+# redoing it would bill a second extraction to produce the profile we already have.
 #
 # `parsed` is here for rows written before the retry policy existed, where a
 # failed extraction left the status behind. Nothing commits it any more — the job
@@ -61,6 +61,22 @@ RETRYABLE_STATUSES = frozenset(
 # state, which is what ends a progress stream — the server-side twin of
 # `isSettled` in `web/lib/api.ts`.
 IN_FLIGHT_STATUSES = frozenset({ResumeStatus.PENDING, ResumeStatus.PROCESSING})
+
+
+def can_retry(resume: Resume, settings: Settings) -> bool:
+    """Whether `POST /resumes/{id}/retry` would be accepted for this row.
+
+    `processing` is normally in hand and answering 409 is right. Once it has been
+    held past the visibility timeout it is not in hand at all — the worker died,
+    redelivery skips the row and re-upload dedupes to it — so the honest answer
+    flips. This is the manual half of `jobs.reclaim_stalled`, and it is the only
+    half that exists under `QUEUE_BACKEND=inline`, where nothing sweeps.
+    """
+    if resume.status in RETRYABLE_STATUSES:
+        return True
+    return resume.status is ResumeStatus.PROCESSING and is_stalled(
+        resume.last_attempt_at, timeout_seconds=settings.job_visibility_timeout_seconds
+    )
 
 
 class ResumeOut(BaseModel):
@@ -81,7 +97,7 @@ class ResumeOut(BaseModel):
     have to reimplement the rule."""
 
     @classmethod
-    def of(cls, resume: Resume) -> ResumeOut:
+    def of(cls, resume: Resume, settings: Settings) -> ResumeOut:
         return cls(
             id=str(resume.id),
             filename=resume.filename,
@@ -92,7 +108,9 @@ class ResumeOut(BaseModel):
             pages_from_ocr=resume.pages_from_ocr or [],
             failure_reason=resume.failure_reason,
             attempts=resume.attempts,
-            can_retry=resume.status in RETRYABLE_STATUSES,
+            # Takes settings because the answer is time-dependent now: a stalled
+            # `processing` row becomes retryable, and the timeout says when.
+            can_retry=can_retry(resume, settings),
         )
 
 
@@ -110,6 +128,7 @@ async def upload_resume(
     session: SessionDep,
     storage: StorageDep,
     queue: QueueDep,
+    settings: SettingsDep,
     request: Request,
     response: Response,
     file: Annotated[UploadFile, File(description="A PDF or DOCX resume.")],
@@ -168,15 +187,17 @@ async def upload_resume(
     )
 
     response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
-    return ResumeOut.of(result.resume)
+    return ResumeOut.of(result.resume, settings)
 
 
 @router.get("", response_model=list[ResumeOut])
-async def list_resumes(candidate: CandidateDep, session: SessionDep) -> list[ResumeOut]:
+async def list_resumes(
+    candidate: CandidateDep, session: SessionDep, settings: SettingsDep
+) -> list[ResumeOut]:
     result = await session.execute(
         select(Resume).where(Resume.candidate_id == candidate.id).order_by(Resume.created_at.desc())
     )
-    return [ResumeOut.of(resume) for resume in result.scalars()]
+    return [ResumeOut.of(resume, settings) for resume in result.scalars()]
 
 
 async def _owned_resume(
@@ -207,16 +228,22 @@ async def retry_resume(
     candidate: CandidateDep,
     session: SessionDep,
     queue: QueueDep,
+    settings: SettingsDep,
 ) -> ResumeOut:
     """Put a stopped resume back on the queue.
 
     The replay half of the dead-letter queue: a resume that exhausted its retries
     is kept with the reason it gave up, and this is how that work is picked up
     again once whatever broke has been fixed.
+
+    Also accepts a resume stranded at `processing` past the visibility timeout —
+    a worker that died holding it. `jobs.reclaim_stalled` does that automatically
+    where a worker is running; this is the same door, opened by hand, and it is the
+    only one under `QUEUE_BACKEND=inline`.
     """
     resume = await _owned_resume(session, resume_id=resume_id, candidate=candidate)
 
-    if resume.status not in RETRYABLE_STATUSES:
+    if not can_retry(resume, settings):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -226,18 +253,18 @@ async def retry_resume(
         )
 
     await resume_service.requeue(session, resume=resume, queue=queue)
-    return ResumeOut.of(resume)
+    return ResumeOut.of(resume, settings)
 
 
 @router.get("/{resume_id}", response_model=ProfileOut)
 async def get_resume_profile(
-    resume_id: uuid.UUID, candidate: CandidateDep, session: SessionDep
+    resume_id: uuid.UUID, candidate: CandidateDep, session: SessionDep, settings: SettingsDep
 ) -> ProfileOut:
     resume = await _owned_resume(
         session, resume_id=resume_id, candidate=candidate, with_profile=True
     )
     return ProfileOut(
-        resume=ResumeOut.of(resume),
+        resume=ResumeOut.of(resume, settings),
         profile=resume.profile.profile if resume.profile else None,
         document_text=resume.document_text,
     )
@@ -287,7 +314,7 @@ async def _resume_events(
             frames += 1
             break
 
-        payload = ResumeOut.of(resume).model_dump_json()
+        payload = ResumeOut.of(resume, settings).model_dump_json()
         if payload != last_payload:
             yield _frame("status", payload)
             last_payload = payload
@@ -301,9 +328,10 @@ async def _resume_events(
 
         now = monotonic()
         if now >= deadline:
-            # A resume stranded at `processing` by a worker that died is never
-            # swept back (see `docs/HANDOFF.md` §7), so without a cap this stream
-            # would stay open forever. The client falls back to polling.
+            # A resume stranded at `processing` by a worker that died waits out the
+            # visibility timeout before anything moves it, and that is far longer
+            # than a connection should be held. The client falls back to polling,
+            # and sees `can_retry` turn true once the timeout passes.
             yield _frame("timeout", "{}")
             frames += 1
             break

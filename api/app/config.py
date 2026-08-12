@@ -188,6 +188,19 @@ class Settings(BaseSettings):
     # an upload is not abandoned.
     job_retry_base_seconds: float = Field(default=5.0, gt=0)
 
+    # How long a row may sit at `processing` before a worker is presumed dead and
+    # the row is reclaimed (`jobs.reclaim_stalled`). Deliberately far longer than
+    # any legitimate job — the live runs in `docs/HANDOFF.md` §1 finish in 4-11 s
+    # and OCR adds roughly a second a page — because reaping a worker that is
+    # merely slow duplicates its work, while reaping one that is dead costs a
+    # requeue. The claim sets `last_attempt_at` once and does not heartbeat, so
+    # this has to cover a whole job rather than a step of one.
+    # The sweep itself runs once a minute (`app/worker.py`), which is noise next to
+    # a timeout this long. Nothing sweeps under `QUEUE_BACKEND=inline`, which has no
+    # worker process at all — there, `POST /resumes/{id}/retry` on a stalled row is
+    # the way back.
+    job_visibility_timeout_seconds: float = Field(default=900.0, gt=0)
+
     # The progress stream: how often it re-reads the resume, how long it may go
     # quiet before sending a keep-alive comment, and how long one connection may
     # stay open at all. Each is a number a deployment behind a proxy may have to

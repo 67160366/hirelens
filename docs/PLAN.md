@@ -192,10 +192,11 @@ page with the object in the bucket and **absent** from the uploads volume.
   because reportlab only ever writes correct maps — and because *removing* the map,
   the obvious approach, produces `(cid:N)` placeholders instead, which is a different
   defect.
-- [ ] **The visibility timeout** for a worker that dies mid-job, the last §11
-  follow-up. **Moved out of M5 and into M4 as slice 1** (2026-08-12): it is the only
-  open item that can strand a user's data with no way back through the API, which
-  makes it a correctness item rather than an observability one.
+- [x] **The visibility timeout** for a worker that dies mid-job, the last §11
+  follow-up. **Moved out of M5 and into M4 as slice 1** and shipped there
+  (2026-08-12): it was the only open item that could strand a user's data with no way
+  back through the API, which makes it a correctness item rather than an
+  observability one. **Nothing from the §11 incident is outstanding now.**
 
 ## M3 — matching engine
 
@@ -419,12 +420,35 @@ second mechanism for something the schema already guarantees. The draft's wordin
 "idempotency keys on submission endpoints"; this is the narrower reading, chosen to
 match the pattern already in the codebase.
 
-- [ ] 1. **The visibility timeout** — a worker that dies mid-job. No migration.
-  Reclaims a row stuck at `processing` through the *existing* retry policy rather
-  than a second one, so a row that keeps killing its worker dead-letters instead of
-  looping reap → retry → die. Also makes `POST /resumes/{id}/retry` accept a stalled
-  `processing` row, which is what actually closes "no way back through the API" —
-  including under `QUEUE_BACKEND=inline`, where no reaper runs.
+- [x] 1. **The visibility timeout** (2026-08-12). `jobs.reclaim_stalled` plus an arq
+  cron in `app/worker.py`, once a minute and at startup, `unique=True` so replicas do
+  not each reclaim the same row. **No migration and no new table** — the four
+  job-state columns `decide_retry` was extracted for already carry everything.
+  `JOB_VISIBILITY_TIMEOUT_SECONDS` defaults to **900**, far beyond any real job,
+  because reaping a worker that is merely slow duplicates its work while reaping a
+  dead one costs a requeue.
+  Three decisions inside it:
+  **it reuses `decide_retry` rather than resetting the status** — a reclaim counts
+  against `failed_attempts`, so a document that kills its worker every time
+  dead-letters instead of looping reap → requeue → die, which is the failure mode a
+  reaper introduces;
+  **listing candidates and reclaiming one are separate functions**, because
+  `_record_failure` commits and drops the locks the list took — so each row is
+  re-read `with_for_update` and re-tested, or a `POST /retry`, a worker claiming it
+  afresh, or the original finishing would each get the budget spent on a live run;
+  and **a `processing` row with no `last_attempt_at` counts as stalled**, since the
+  claim writes both in one commit.
+  Plus the manual half: `POST /resumes/{id}/retry` and `POST /screenings/{id}/retry`
+  accept a stalled row and `can_retry` says so — what actually closes "no way back
+  through the API", and the only half that exists under `QUEUE_BACKEND=inline`.
+  Pinned by `tests/test_retry.py` (13 new cases; suite 439 → 452), and every decision
+  was confirmed load-bearing by mutation: a plain status reset fails 3 cases, dropping
+  the staleness re-check 1, the status re-check 2, both 3, and treating a missing
+  timestamp as fresh 1.
+  **One test had to be rewritten because it could not fail** — running two sweeps back
+  to back proves nothing, since the second one's candidate query already excludes a row
+  the first moved to `pending`, so the guard under the lock never ran. The fix was to
+  the *code's shape*: the guard is its own function now and the test drives it.
 - [ ] 2. **RBAC: a role on the one actor** (migration `0007`). Wrong role for a route
   is **403**; not your resource stays **404**, unchanged from M3. The migration
   backfills `RECRUITER` from `jobs.owner_id` rather than guessing a default —

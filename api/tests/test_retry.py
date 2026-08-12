@@ -12,8 +12,12 @@ different statuses rather than one `failed` with a comment.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
@@ -22,10 +26,20 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.jobs import JobContext, backoff_seconds, is_retryable, run_resume_job
-from app.llm.base import LLMConfigError, LLMResponseError, LLMUnavailableError
+from app.jobs import (
+    JobContext,
+    backoff_seconds,
+    find_stalled,
+    is_retryable,
+    is_stalled,
+    reclaim_resume,
+    reclaim_stalled,
+    run_resume_job,
+)
+from app.llm.base import LLMConfigError, LLMResponseError, LLMUnavailableError, StructuredExtractor
 from app.llm.fake import FakeExtractor, FakeMode
-from app.models import Resume, ResumeStatus
+from app.models import Resume, ResumeStatus, Screening, ScreeningStatus
+from app.models.base import utcnow
 from app.pipeline.parse import CorruptDocumentError
 from app.storage import LocalStorage, ObjectNotFoundError
 from tests.conftest import resume_upload
@@ -499,3 +513,339 @@ class TestConcurrentDelivery:
         resume = await _load(sessionmaker_for_tests, resume_id)
         assert resume.status is ResumeStatus.PROCESSING
         assert resume.attempts == 0
+
+
+class _WorkerDies(StructuredExtractor):
+    """An extractor whose process is killed mid-call.
+
+    `BaseException` on purpose: `run_resume_job` catches `Exception`, so anything
+    below that would be recorded as a failure and the row would never strand. A
+    `KeyboardInterrupt`-shaped exit escapes every handler and leaves the row exactly
+    as a `docker kill` does — claimed, `processing`, nothing written down. That is
+    the state this whole section exists to get out of, and it is produced here
+    rather than simulated by editing a row.
+    """
+
+    provider_name = "dies"
+
+    async def extract(self, *, system: str, user: str, schema: type[Any]) -> Any:
+        raise KeyboardInterrupt("the container went away")
+
+
+async def _strand(context: JobContext, resume_id: uuid.UUID, settings: Settings) -> None:
+    dying = JobContext(
+        sessionmaker=context.sessionmaker,
+        storage=LocalStorage(settings.storage_path),
+        extractor=_WorkerDies(),
+        settings=settings,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        await run_resume_job(dying, resume_id)
+
+
+def _later(settings: Settings, *, by: float = 1.0) -> datetime:
+    """A moment far enough past the visibility timeout to make a claim stale."""
+    return utcnow() + timedelta(seconds=settings.job_visibility_timeout_seconds * (1 + by))
+
+
+class TestTheVisibilityTimeout:
+    """A worker that dies mid-job, and the sweep that reopens the road out.
+
+    Before this existed a stranded row was unreachable by every route: redelivery
+    skipped it because `processing` is in `_NOT_OURS_TO_RUN`, `POST /retry` answered
+    409, and re-uploading the same bytes deduplicated onto it.
+    """
+
+    async def test_a_dead_worker_really_does_strand_the_row(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """The premise, asserted rather than assumed.
+
+        If this ever stops being true the rest of the class is testing a situation
+        that cannot arise, which is the failure mode `docs/NOTES.md` keeps recording.
+        """
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await _strand(context, resume_id, settings)
+
+        resume = await _load(sessionmaker_for_tests, resume_id)
+        assert resume.status is ResumeStatus.PROCESSING
+        assert resume.failure_reason is None
+        assert resume.failed_attempts == 0
+        # And the row is genuinely unreachable: a redelivery skips it.
+        assert not (await run_resume_job(context, resume_id)).should_retry
+        assert (await _load(sessionmaker_for_tests, resume_id)).attempts == 1
+
+    async def test_a_stalled_resume_is_reclaimed_and_requeued(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await _strand(context, resume_id, settings)
+        queue.dispatches.clear()
+
+        context.queue = queue
+        assert await reclaim_stalled(context, now=_later(settings)) == 1
+
+        resume = await _load(sessionmaker_for_tests, resume_id)
+        assert resume.status is ResumeStatus.PENDING
+        assert resume.failed_attempts == 1
+        assert "the worker stopped before it finished" in (resume.failure_reason or "")
+        # Re-dispatched under the attempt the dead run owns, so arq does not refuse
+        # it as a duplicate of the job that never came back.
+        assert queue.dispatches == [(resume_id, 1)]
+
+    async def test_a_fresh_processing_row_is_left_alone(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """A worker that is merely slow must keep its claim."""
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await _strand(context, resume_id, settings)
+
+        context.queue = queue
+        assert await reclaim_stalled(context) == 0
+
+        resume = await _load(sessionmaker_for_tests, resume_id)
+        assert resume.status is ResumeStatus.PROCESSING
+        assert resume.failed_attempts == 0
+
+    async def test_a_claim_with_no_timestamp_counts_as_stalled(self):
+        """The one state no live worker can be in.
+
+        `_claim` writes `last_attempt_at` in the same commit as `processing`, so a
+        row holding one without the other was never claimed by code that still
+        exists — and leaving it there is the failure being fixed.
+        """
+        assert is_stalled(None, timeout_seconds=900)
+        assert not is_stalled(utcnow(), timeout_seconds=900)
+
+    async def test_a_naive_timestamp_is_read_as_utc(self, settings: Settings):
+        """SQLite's DATETIME storage format has no timezone field.
+
+        So `last_attempt_at` comes back naive there while `utcnow()` is aware, and
+        comparing the two raises `TypeError` rather than answering wrongly. Pinned
+        because the suite runs on SQLite and production does not.
+        """
+        naive = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=10_000)
+        assert is_stalled(naive, timeout_seconds=900)
+
+    async def test_reclaiming_counts_against_the_retry_budget(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """The reap loop a reaper introduces, and the thing that forecloses it.
+
+        A document that kills its worker every time — one large enough to exhaust
+        memory, say — would otherwise cycle reap → requeue → die forever. Routing
+        the reclaim through `decide_retry` rather than writing a second policy is
+        what makes it dead-letter instead, and this is the test that would fail if
+        someone later "simplified" the reclaim into a plain status reset.
+        """
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        context.queue = queue
+
+        for _ in range(settings.job_max_attempts):
+            await _strand(context, resume_id, settings)
+            assert await reclaim_stalled(context, now=_later(settings)) == 1
+
+        resume = await _load(sessionmaker_for_tests, resume_id)
+        assert resume.status is ResumeStatus.DEAD_LETTERED
+        assert f"after {settings.job_max_attempts} attempts" in (resume.failure_reason or "")
+        # And the last reclaim did not put it back on the queue.
+        assert len(queue.dispatches) == settings.job_max_attempts
+
+    async def test_a_second_sweep_does_not_reclaim_the_same_row_twice(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await _strand(context, resume_id, settings)
+        context.queue = queue
+
+        assert await reclaim_stalled(context, now=_later(settings)) == 1
+        assert await reclaim_stalled(context, now=_later(settings)) == 0
+
+        assert (await _load(sessionmaker_for_tests, resume_id)).failed_attempts == 1
+
+    @pytest.mark.parametrize(
+        ("status", "claimed_now", "what_happened"),
+        [
+            (ResumeStatus.PENDING, False, "a manual retry moved it out of processing"),
+            (ResumeStatus.PROCESSING, True, "a worker picked it up and claimed it afresh"),
+            (ResumeStatus.EXTRACTED, False, "the original worker finished after all"),
+        ],
+    )
+    async def test_a_listed_row_that_stopped_qualifying_is_left_alone(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+        status: ResumeStatus,
+        claimed_now: bool,
+        what_happened: str,
+    ):
+        """The window between listing a candidate and locking it.
+
+        `find_stalled` and `reclaim_resume` cannot share a transaction — reclaiming
+        commits, which would drop the locks the list took — so a listed id is a
+        *candidate*, not a decision. In the gap the row can stop being abandoned,
+        and reclaiming it then spends the retry budget on a run that is alive.
+
+        Written as its own test because the obvious one could not fail: running two
+        sweeps back to back proves nothing, since the second one's candidate query
+        already excludes a row the first moved to `pending`. The guard under the lock
+        never ran. This drives it directly, which is the only way to see it work.
+        """
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await _strand(context, resume_id, settings)
+        context.queue = queue
+        queue.dispatches.clear()
+
+        moment = _later(settings)
+        listed = await find_stalled(context, now=moment)
+        assert listed.resumes == (resume_id,), "the premise: it is listed as a candidate"
+
+        async with sessionmaker_for_tests() as session:
+            row = (await session.execute(select(Resume).where(Resume.id == resume_id))).scalar_one()
+            row.status = status
+            if claimed_now:
+                row.last_attempt_at = moment
+            await session.commit()
+
+        assert not await reclaim_resume(context, resume_id, now=moment), what_happened
+
+        untouched = await _load(sessionmaker_for_tests, resume_id)
+        assert untouched.status is status
+        assert untouched.failed_attempts == 0
+        assert queue.dispatches == []
+
+    async def test_the_reclaimed_work_then_succeeds(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+    ):
+        """The point of the whole slice: the row is workable again."""
+        await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await _strand(context, resume_id, settings)
+        context.queue = queue
+        await reclaim_stalled(context, now=_later(settings))
+
+        recovered = JobContext(
+            sessionmaker=context.sessionmaker,
+            storage=LocalStorage(settings.storage_path),
+            extractor=FakeExtractor(FakeMode.FAITHFUL),
+            settings=settings,
+        )
+        await run_resume_job(recovered, resume_id)
+
+        response = await authed_client.get(f"/resumes/{resume_id}")
+        assert response.json()["resume"]["status"] == ResumeStatus.EXTRACTED
+
+    async def test_a_screening_is_reclaimed_the_same_way(
+        self,
+        authed_client: AsyncClient,
+        context: JobContext,
+        settings: Settings,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """Two tables, one policy — the reason `decide_retry` was extracted at all."""
+        job = await authed_client.post(
+            "/jobs", json={"title": "Backend", "requirements": [{"label": "Python"}]}
+        )
+        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        created = await authed_client.post(
+            f"/jobs/{job.json()['id']}/screenings", json={"resume_id": uploaded.json()["id"]}
+        )
+        screening_id = uuid.UUID(created.json()["id"])
+
+        async with sessionmaker_for_tests() as session:
+            screening = (
+                await session.execute(select(Screening).where(Screening.id == screening_id))
+            ).scalar_one()
+            screening.status = ScreeningStatus.PROCESSING
+            screening.attempts = 1
+            screening.last_attempt_at = utcnow()
+            await session.commit()
+
+        assert await reclaim_stalled(context, now=_later(settings)) == 1
+
+        async with sessionmaker_for_tests() as session:
+            reclaimed = (
+                await session.execute(select(Screening).where(Screening.id == screening_id))
+            ).scalar_one()
+        assert reclaimed.status is ScreeningStatus.PENDING
+        assert reclaimed.failed_attempts == 1
+
+
+class TestRetryingAStalledRow:
+    """The manual half, and the only half under `QUEUE_BACKEND=inline`."""
+
+    @pytest.fixture
+    def settings(self, tmp_path: Path) -> Settings:
+        """A timeout short enough to cross inside a test, rather than 15 minutes."""
+        return Settings(
+            _env_file=None,
+            jwt_secret="test-secret-not-used-anywhere-real",
+            storage_dir=tmp_path / "uploads",
+            extraction_max_attempts=2,
+            job_visibility_timeout_seconds=0.25,
+        )
+
+    async def test_a_processing_resume_refuses_a_retry_until_the_timeout_passes(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+        settings: Settings,
+    ):
+        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        resume_id = queue.enqueued[0]
+        await _strand(context, resume_id, settings)
+
+        held = await authed_client.get(f"/resumes/{uploaded.json()['id']}")
+        assert held.json()["resume"]["can_retry"] is False
+        refused = await authed_client.post(f"/resumes/{uploaded.json()['id']}/retry")
+        assert refused.status_code == 409
+
+        await asyncio.sleep(settings.job_visibility_timeout_seconds * 2)
+
+        stalled = await authed_client.get(f"/resumes/{uploaded.json()['id']}")
+        assert stalled.json()["resume"]["can_retry"] is True
+        queue.dispatches.clear()
+
+        replayed = await authed_client.post(f"/resumes/{uploaded.json()['id']}/retry")
+        assert replayed.status_code == 200
+        assert replayed.json()["status"] == ResumeStatus.PENDING
+        assert queue.dispatches == [(resume_id, 1)]

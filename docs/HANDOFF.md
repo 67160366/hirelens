@@ -501,7 +501,7 @@ The newest and most intricate part, so it gets its own section.
 | Status | Meaning |
 |---|---|
 | `pending` | Queued, or waiting out a retry backoff. `failure_reason` may explain the last attempt. |
-| `processing` | A worker has claimed it. Stuck here means a worker died mid-job. |
+| `processing` | A worker has claimed it. Held here past `JOB_VISIBILITY_TIMEOUT_SECONDS` means the worker died, and the reaper (below) moves it back. |
 | `parsed` | Text extracted, extraction did not finish. **No longer reachable as a resting state**: `process_resume` sets it, but every path out of the job overwrites it before the commit. It survives only on rows written before M2 #2, which is why it is still accepted for retry. |
 | `extracted` | A verified profile exists. Terminal, and refuses a retry — redoing it would bill a second call for the profile we already have. |
 | `failed` | **This document cannot be processed.** A corrupt file, a blank one, a missing object, a missing API key — or a scan that OCR was not enabled for, or could not read. Retrying changes nothing *unless the configuration changes*, which is why `POST /retry` accepts it. |
@@ -539,15 +539,58 @@ the failure is recorded on a fresh one.
 `POST /resumes/{id}/retry` clears `failed_attempts` and `failure_reason`, sets
 `pending`, and enqueues under a job id derived from the untouched `attempts`.
 Accepted for `dead_lettered`, `failed` and `parsed` (the last only for pre-M2 #2
-rows — see the status table); 409 for `pending`, `processing` and `extracted`. `ResumeOut.can_retry` tells a client the answer
-without reimplementing the rule; the web UI shows a "Try again" button from it.
+rows — see the status table), and since M4 slice 1 for a `processing` row held past
+the visibility timeout; 409 for `pending`, `extracted` and a `processing` row a
+worker is plausibly still holding. `ResumeOut.can_retry` tells a client the answer
+without reimplementing the rule — it takes `Settings` now, because the answer is
+time-dependent — and the web UI shows a "Try again" button from it.
+
+### Reclaiming a row whose worker died (M4 slice 1)
+
+Everything above handles a job that *fails*. A job whose process simply stops —
+power loss, OOM, `docker kill` — never gets to fail: the claim is committed, and
+then nothing. The row sits at `processing` where every road out was closed.
+Redelivery skips it (`processing` is in `_NOT_OURS_TO_RUN`), `POST /retry` answered
+409, and re-uploading the same bytes dedupes onto it.
+
+`jobs.reclaim_stalled` is the sweep. `app/worker.py` registers it as an arq cron
+job, once a minute and at startup, with arq's `unique=True` so replicas do not each
+reclaim the same row.
+
+Three things about it are deliberate:
+
+- **It reuses `decide_retry` rather than resetting the status.** A reclaim counts
+  against `failed_attempts`, so a document that kills its worker every time
+  dead-letters after the budget instead of looping reap → requeue → die forever.
+  That loop is the failure mode a reaper introduces, and inheriting the policy is
+  what forecloses it. Mutation-tested: a plain status reset fails 3 cases.
+- **Listing a candidate and reclaiming it are separate functions on purpose.**
+  `_record_failure` commits, which drops whatever locks the candidate query took —
+  so the list cannot be trusted, and `reclaim_resume` re-reads each row
+  `with_for_update` and re-tests it. In the gap a `POST /retry` can move the row to
+  `pending`, a worker can claim it afresh, or the original can finish; reclaiming
+  then would spend the budget on a run that is alive. Mutation-tested three ways.
+- **A `processing` row with no `last_attempt_at` counts as stalled.** The claim
+  writes both in one commit, so that combination cannot be held by anything running.
+
+And one trap the tests had to be reshaped to catch: two sweeps back to back prove
+nothing, because the second one's *candidate query* already excludes a row the first
+moved to `pending` — the guard under the lock never runs. That test passed against
+a version with no guard at all. `test_a_listed_row_that_stopped_qualifying_is_left_alone`
+drives `reclaim_resume` directly instead.
+
+**The manual half.** `POST /resumes/{id}/retry` and `POST /screenings/{id}/retry`
+now accept a row stalled past the timeout, and `can_retry` says so — which is what
+actually closes "no way back through the API", and is the *only* half that exists
+under `QUEUE_BACKEND=inline`, where there is no worker to run a cron.
 
 ### What `InlineQueue` does not do
 
 It cannot defer work, and sleeping through a backoff would hold the upload request
 open for the length of it. So it never retries: a transient failure leaves the
 resume `pending` with the reason recorded, and re-uploading the file picks it up
-again. That is a property of running without a queue, not a bug — deployments that
+again. It also runs no reaper, for the same reason — there is no process to schedule
+one on. That is a property of running without a queue, not a bug — deployments that
 want the retry policy run the ARQ worker.
 
 ---
@@ -641,10 +684,15 @@ want the retry policy run the ARQ worker.
   produces is *good* — only that it is deterministic, explainable and free. Judging
   ranking quality against a BM25/embedding baseline needs a labelled gold set and is
   M6 with a one-week timebox (§scope discipline in §10). Do not quietly promote it.
-- **A resume stuck at `processing` is never reaped.** If a worker dies mid-job
-  nothing sweeps the row back to `pending`; the job that redelivers it will skip it
-  as already claimed. A visibility timeout on `last_attempt_at` would fix it and
-  belongs with M5's observability work.
+- ~~**A resume stuck at `processing` is never reaped.**~~ **Closed 2026-08-12** by
+  M4 slice 1: `jobs.reclaim_stalled` sweeps rows held past
+  `JOB_VISIBILITY_TIMEOUT_SECONDS` (900), and `POST /retry` accepts one by hand.
+  What is still true is the trade underneath it — the claim writes
+  `last_attempt_at` once and never heartbeats, so the timeout has to cover a whole
+  job rather than a step of one, and a worker that is merely *slow* past 15 minutes
+  gets reaped and its work duplicated. Harmless (the loser's `_claim` sees
+  `extracted` and skips) but wasteful, and a heartbeat is what would let the number
+  come down.
 - **The client still knows how to poll.** `api.waitForProfile` opens the stream
   first and falls back to the old loop when the stream ends without a verdict — a
   proxy that buffers `text/event-stream`, or a connection the server capped. It is
@@ -657,9 +705,11 @@ want the retry policy run the ARQ worker.
   which is what a client acts on; only the flicker is lost. Pub/sub would close the
   gap, and §5 says why it is not there yet.
 - **A stream capped at `SSE_MAX_STREAM_SECONDS` is not a failure.** It is how a
-  resume stranded at `processing` by a dead worker (below) stops holding a
-  connection open. The client polls on from there, and sees the same nothing —
-  which is the honest answer until the reaper lands with M5.
+  resume stranded at `processing` by a dead worker stops holding a connection open.
+  The client polls on from there and sees the same nothing — which stays the honest
+  answer until the visibility timeout expires, at which point the reaper moves the
+  row and `can_retry` turns true. The cap (300 s) is deliberately well under the
+  timeout (900 s): a connection should not be held for the length of a sweep cycle.
 - **Enums are stored as their *names*** (`EXTRACTED`, `DEAD_LETTERED`, `LANGUAGE`),
   because SQLAlchemy's `Enum` persists names by default, while the API serializes
   the values (`extracted`, `language`). Harmless, and worth knowing before writing a
@@ -799,25 +849,35 @@ free.
 | 5 | A thin web UI | **done** — `web/app/jobs/`, `lib/auth.ts`, `lib/screening.ts`, `components/{RankingTable,JudgmentView,RequirementEditor,RequirementFields,AuthPanel}.tsx`; **no API change, no migration**; `lib/screening.test.ts` |
 | 6 | Retrieval — the pre-filter | **done** — `pipeline/retrieval.py`, `GET /jobs/{id}/candidates`, `RETRIEVAL_BACKEND`; no model call, no migration; `tests/test_retrieval.py` |
 
-**M3 is closed. Four things to know before starting M4:**
+**M3 is closed, and M4 is under way.** Its scope was reviewed with the owner on
+2026-08-12 — four decisions and five slices, in `docs/PLAN.md`, commitments rather
+than a reconstruction. **M5–M6 are still a draft**; review each the same way.
 
-1. **`docs/PLAN.md`'s M4–M6 are still a draft** reconstructed from the README. M3's
-   scope review on 2026-08-08 is the reason that milestone went cleanly — four
-   questions settled with the owner before any code. Do that again before building.
-2. **The visibility timeout is now the oldest open item**, and the only one that can
-   strand a user's data with no way back through the API: a worker that dies mid-job
-   leaves a resume at `processing`, where redelivery skips it, `POST /retry` answers
-   409 and re-upload dedupes. §7 and §11 both point at it, and M5 is where it sits.
-3. **The one actor is still `Candidate`.** M3's rule is "you may screen a resume you
+| # | Work | Status |
+|---|---|---|
+| 1 | The visibility timeout | **done** — `jobs.reclaim_stalled` + the arq cron in `worker.py`, `can_retry` as a predicate; **no migration**; `tests/test_retry.py` |
+| 2 | RBAC: a role on the one actor | migration `0007` |
+| 3 | The application and its state machine | migration `0008` |
+| 4 | PDPA: consent, export, delete | migration `0009` |
+| 5 | A thin UI for the journey | cuttable |
+
+**Three things to know before slice 2:**
+
+1. **The one actor is still `Candidate`.** M3's rule is "you may screen a resume you
    own against a job you own", enforced in `_owned_job` / `_owned_resume` with 404
-   rather than 403 throughout. M4's RBAC widens *who* without changing the tables —
+   rather than 403 throughout. Slice 2 widens *who* without changing the tables —
    and `GET /jobs/{id}/candidates` joins resume filenames client-side on the
    assumption that every screened resume belongs to the caller, which is exactly the
-   assumption RBAC breaks.
-4. **Retrieval is the only part of the system that is allowed to be approximate**,
-   because it makes no claim about anyone. Anything M4 adds that *does* make a claim —
-   a state transition, a shortlist decision — needs the same treatment as a verdict:
-   derived from something checkable, or not asserted.
+   assumption RBAC breaks. Slice 3 is where both of those get fixed.
+2. **Keep the two kinds of refusal apart.** A wrong *role* for a route is **403** —
+   the route is in `/docs` and saying so leaks nothing. Not *your* resource stays
+   **404**, because a 403 there is an id-probing oracle. Mixing them is the easiest
+   way to undo M3's whole ownership story.
+3. **Retrieval is the only part of the system allowed to be approximate**, because it
+   makes no claim about anyone. Anything M4 adds that *does* make a claim — a state
+   transition, a shortlist decision — needs the same treatment as a verdict: derived
+   from something checkable, or not asserted. That is why an application's state is
+   a projection of an append-only event log rather than a column anyone may set.
 
 M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 
@@ -983,7 +1043,9 @@ One follow-up closed, one still open:
   which only ever writes correct maps. It is the one fixture that needs no Thai font
   to regenerate. The wider lesson still stands for *other* damage classes: mixed
   encodings, broken xrefs and real photographs are still unrepresented.
-- **The visibility timeout from §7.** Bug 2's fix covers a commit that *fails*;
-  a worker that dies mid-job (power loss, kill) can still strand a row at
-  `processing`. That reaper belongs with M5's observability work, and is now the
-  last open item from this incident.
+- ~~**The visibility timeout from §7.**~~ **Done 2026-08-12** as M4 slice 1 — pulled
+  out of M5 because a row nobody can reach is a correctness problem, not an
+  observability one. Bug 2's fix covered a commit that *fails*; this covers a worker
+  that never gets as far as failing. `jobs.reclaim_stalled` sweeps it, `POST /retry`
+  opens the same door by hand, and §6 has the three decisions inside it.
+  **This closes the incident: nothing from §11 is outstanding.**

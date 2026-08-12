@@ -149,3 +149,9 @@ verdict. Two failure statuses: `failed` means the document cannot be processed, 
 `dead_lettered` means transient failures used up the retry budget and it is worth
 replaying via `POST /resumes/{id}/retry`. Both, and why the split matters, are in
 `docs/HANDOFF.md` §6.
+
+A row held at `processing` past `JOB_VISIBILITY_TIMEOUT_SECONDS` (900) means the
+worker died rather than failed. `jobs.reclaim_stalled` sweeps those on an arq cron,
+**through `decide_retry` rather than a status reset** — that is what stops a document
+which kills its worker every time from looping reap → requeue → die. The same row is
+retryable by hand from the API, which is the only route under `QUEUE_BACKEND=inline`.

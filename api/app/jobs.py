@@ -16,6 +16,12 @@ parse, anything unexpected — go back to `pending` with exponential backoff unt
 the budget runs out, at which point the resume is dead-lettered so a human can
 replay it. Permanent ones — a scanned PDF, a missing key, a file that is gone —
 fail immediately, because retrying them only fails the same way three times.
+
+That policy covers a job that *fails*. A job whose worker simply stops — power
+loss, OOM, a killed container — never gets to fail, and leaves its row at
+`processing` where nothing will touch it again. `reclaim_stalled` at the bottom of
+this module is the sweep for those, and it deliberately routes them through the
+same `decide_retry` rather than a policy of its own.
 """
 
 from __future__ import annotations
@@ -23,9 +29,11 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -39,11 +47,27 @@ from app.services import resume_service, screening_service
 from app.services.screening_service import NotScreenable
 from app.storage import ObjectNotFoundError, Storage
 
+if TYPE_CHECKING:
+    # Import-time only: `app.queue` imports this module, so the runtime dependency
+    # runs one way — the queue calls a job. The reaper is the one job that has to
+    # put work *back* on the queue, and it does it through this seam rather than by
+    # reversing that direction. Same trick the two services already use.
+    from app.queue import JobQueue
+
 logger = logging.getLogger(__name__)
 
 # Statuses a job will not touch. `processing` is here so a second delivery of the
 # same resume cannot run alongside the first.
 _NOT_OURS_TO_RUN = frozenset({ResumeStatus.EXTRACTED, ResumeStatus.PROCESSING})
+
+
+class WorkerVanished(Exception):
+    """A row was left at `processing` by a worker that never came back.
+
+    Not a fact about the document, so `is_retryable` treats it as transient by
+    simply not being on the permanent whitelist — and its message is written right
+    here, which is why it is safe to quote (`_SAFE_TO_QUOTE`).
+    """
 
 
 @dataclass(slots=True)
@@ -56,6 +80,12 @@ class JobContext:
     settings: Settings
     ocr: OCREngine | None = None
     """None means OCR is off, which is the default everywhere without a Tesseract."""
+
+    queue: JobQueue | None = None
+    """Only the reaper needs it: reclaiming a row means putting work back on the
+    queue, where every other job here only takes work off it. `None` means a
+    reclaimed row is recorded but not re-dispatched, which is what the tests and
+    the inline queue get."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +137,7 @@ def backoff_seconds(settings: Settings, *, failures: int) -> float:
 # and a setting, never document text, and quoting it is what makes the failure
 # actionable instead of a bare type name. `NotScreenable` is too — its message is
 # an instruction to the user ("process the resume first"), written right here.
-_SAFE_TO_QUOTE = (LLMError, ParseError, OCRUnavailableError, NotScreenable)
+_SAFE_TO_QUOTE = (LLMError, ParseError, OCRUnavailableError, NotScreenable, WorkerVanished)
 
 
 def _describe(error: Exception) -> str:
@@ -429,3 +459,187 @@ async def _record_screening_failure_on_a_fresh_session(
         if screening is None:
             return DONE
         return await _record_screening_failure(session, screening, error, context.settings)
+
+
+# --------------------------------------------------------------------------- #
+# The reaper: rows a worker claimed and never came back to.
+# --------------------------------------------------------------------------- #
+
+_VANISHED = "the worker stopped before it finished"
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """Read a stored timestamp as the UTC it was written as.
+
+    SQLite's `DATETIME` storage format has no timezone field, so `last_attempt_at`
+    comes back **naive** there while `utcnow()` is aware, and comparing the two
+    raises rather than answering wrongly. Everything this codebase writes is UTC, so
+    attaching UTC to a naive value is decoding it, not guessing at it. Postgres
+    returns an aware value and this is a no-op.
+    """
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def is_stalled(
+    claimed_at: datetime | None, *, timeout_seconds: float, now: datetime | None = None
+) -> bool:
+    """Whether a row has been held at `processing` longer than a live worker would.
+
+    `None` counts as stalled. The claim writes `last_attempt_at` in the same commit
+    that writes `processing`, so a row in that state without one cannot be held by
+    anything currently running — and leaving it there is the exact failure this
+    function exists to end.
+    """
+    if claimed_at is None:
+        return True
+    return _as_utc(claimed_at) <= (now or utcnow()) - timedelta(seconds=timeout_seconds)
+
+
+@dataclass(frozen=True, slots=True)
+class StalledRows:
+    """What one candidate query found. Ids only — the rows are re-read under a lock."""
+
+    resumes: tuple[uuid.UUID, ...] = ()
+    screenings: tuple[uuid.UUID, ...] = ()
+
+    def __len__(self) -> int:
+        return len(self.resumes) + len(self.screenings)
+
+
+async def find_stalled(context: JobContext, *, now: datetime | None = None) -> StalledRows:
+    """Which rows look abandoned. Deliberately only *looks*.
+
+    Split from the reclaim because the two cannot share a transaction: reclaiming
+    commits, which drops whatever locks this query took, so by the second row the
+    rest of the list is unguarded anyway. Naming the split is better than pretending
+    it is not there — every id here is a candidate whose claim may already have moved
+    on, which is why `reclaim_resume` and `reclaim_screening` re-test it under a lock
+    rather than trusting this list.
+    """
+    cutoff = (now or utcnow()) - timedelta(seconds=context.settings.job_visibility_timeout_seconds)
+    async with context.sessionmaker() as session:
+        resumes = (
+            await session.execute(
+                select(Resume.id).where(
+                    Resume.status == ResumeStatus.PROCESSING,
+                    or_(Resume.last_attempt_at.is_(None), Resume.last_attempt_at <= cutoff),
+                )
+            )
+        ).scalars()
+        screenings = (
+            await session.execute(
+                select(Screening.id).where(
+                    Screening.status == ScreeningStatus.PROCESSING,
+                    or_(Screening.last_attempt_at.is_(None), Screening.last_attempt_at <= cutoff),
+                )
+            )
+        ).scalars()
+        return StalledRows(resumes=tuple(resumes), screenings=tuple(screenings))
+
+
+async def reclaim_resume(
+    context: JobContext, resume_id: uuid.UUID, *, now: datetime | None = None
+) -> bool:
+    """Reclaim one listed resume, or answer False because it no longer qualifies.
+
+    The re-test under the lock is the whole point of this function existing on its
+    own. Between `find_stalled` listing an id and this running, the row can stop
+    being abandoned — a `POST /retry` moves it to `pending`, and a worker picking
+    that up writes a *fresh* claim. Reclaiming then would spend the retry budget on
+    a run that is alive and healthy, and enqueue a duplicate of it.
+    """
+    moment = now or utcnow()
+    async with context.sessionmaker() as session:
+        resume = await session.get(Resume, resume_id, with_for_update=True)
+        if resume is None or resume.status is not ResumeStatus.PROCESSING:
+            await session.rollback()
+            return False
+        if not is_stalled(
+            resume.last_attempt_at,
+            timeout_seconds=context.settings.job_visibility_timeout_seconds,
+            now=moment,
+        ):
+            await session.rollback()
+            return False
+
+        logger.warning("resume %s: stalled at processing, reclaiming", resume_id)
+        outcome = await _record_failure(
+            session, resume, WorkerVanished(_VANISHED), context.settings
+        )
+        attempts = resume.attempts
+
+    # After the commit, never before — the same rule the upload path follows.
+    if outcome.should_retry and context.queue is not None:
+        await context.queue.enqueue_resume(resume_id, attempt=attempts)
+    return True
+
+
+async def reclaim_screening(
+    context: JobContext, screening_id: uuid.UUID, *, now: datetime | None = None
+) -> bool:
+    """The screening twin. Same policy, same lock-and-re-test, different row."""
+    moment = now or utcnow()
+    async with context.sessionmaker() as session:
+        screening = await session.get(Screening, screening_id, with_for_update=True)
+        if screening is None or screening.status is not ScreeningStatus.PROCESSING:
+            await session.rollback()
+            return False
+        if not is_stalled(
+            screening.last_attempt_at,
+            timeout_seconds=context.settings.job_visibility_timeout_seconds,
+            now=moment,
+        ):
+            await session.rollback()
+            return False
+
+        logger.warning("screening %s: stalled at processing, reclaiming", screening_id)
+        outcome = await _record_screening_failure(
+            session, screening, WorkerVanished(_VANISHED), context.settings
+        )
+        attempts = screening.attempts
+
+    if outcome.should_retry and context.queue is not None:
+        await context.queue.enqueue_screening(screening_id, attempt=attempts)
+    return True
+
+
+async def reclaim_stalled(context: JobContext, *, now: datetime | None = None) -> int:
+    """Put rows a dead worker was holding back on the queue. Returns how many moved.
+
+    A worker that dies mid-job — power loss, OOM, `docker kill` — leaves its row at
+    `processing`, and every road out is closed: redelivery skips it (`processing` is
+    in `_NOT_OURS_TO_RUN`), `POST /retry` used to answer 409, and re-uploading the
+    same bytes dedupes to it. This is the sweep that reopens one.
+
+    **It goes through the existing retry policy rather than a second one**, which is
+    the load-bearing part. Reclaiming counts against `failed_attempts` like any other
+    failure, so a row that keeps killing its worker — a scan large enough to exhaust
+    memory, say — dead-letters after the budget instead of looping reap → requeue →
+    die forever. That loop is the failure mode a reaper introduces, and inheriting
+    `decide_retry` is what forecloses it.
+
+    Reaping a worker that is merely slow is not a correctness problem, only wasted
+    work: if the original finishes afterwards it commits `extracted`, and the fresh
+    dispatch's `_claim` sees that in `_NOT_OURS_TO_RUN` and skips. The generous
+    default timeout is there to make it rare rather than to make it safe.
+    """
+    moment = now or utcnow()
+    stalled = await find_stalled(context, now=moment)
+
+    resumes = 0
+    for resume_id in stalled.resumes:
+        resumes += await reclaim_resume(context, resume_id, now=moment)
+    screenings = 0
+    for screening_id in stalled.screenings:
+        screenings += await reclaim_screening(context, screening_id, now=moment)
+
+    total = resumes + screenings
+    if total:
+        logger.warning(
+            "reclaimed %d row(s) stalled beyond %.0fs: %d resume(s), %d screening(s)",
+            total,
+            context.settings.job_visibility_timeout_seconds,
+            resumes,
+            screenings,
+        )
+    return total

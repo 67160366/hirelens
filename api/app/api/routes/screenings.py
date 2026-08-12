@@ -25,7 +25,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CandidateDep, QueueDep, RetrieverDep, SessionDep
+from app.api.deps import CandidateDep, QueueDep, RetrieverDep, SessionDep, SettingsDep
+from app.config import Settings
+from app.jobs import is_stalled
 from app.models import Candidate, Job, Resume, Screening, ScreeningStatus
 from app.pipeline.judge import requirements_fingerprint
 from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
@@ -41,6 +43,20 @@ RETRYABLE_STATUSES = frozenset({ScreeningStatus.DEAD_LETTERED, ScreeningStatus.F
 reproduce it — ask again through `POST /jobs/{id}/screenings`, which re-queues
 exactly when the answer is out of date. `pending` and `processing` are absent
 because the work is already on its way."""
+
+
+def can_retry(screening: Screening, settings: Settings) -> bool:
+    """The screening twin of `resumes.can_retry`, and for the same reason.
+
+    A screening held at `processing` past the visibility timeout is not on its way
+    anywhere: the worker that claimed it is gone. `jobs.reclaim_stalled` sweeps it
+    where a worker runs, and this is the door to open by hand where none does.
+    """
+    if screening.status in RETRYABLE_STATUSES:
+        return True
+    return screening.status is ScreeningStatus.PROCESSING and is_stalled(
+        screening.last_attempt_at, timeout_seconds=settings.job_visibility_timeout_seconds
+    )
 
 
 class ScreeningIn(BaseModel):
@@ -68,7 +84,9 @@ class ScreeningOut(BaseModel):
     silently recomputed: it was true of what it saw, and re-running costs money."""
 
     @classmethod
-    def of(cls, screening: Screening, *, requirements_hash: str) -> ScreeningOut:
+    def of(
+        cls, screening: Screening, *, requirements_hash: str, settings: Settings
+    ) -> ScreeningOut:
         return cls(
             id=str(screening.id),
             job_id=str(screening.job_id),
@@ -76,7 +94,9 @@ class ScreeningOut(BaseModel):
             status=screening.status,
             failure_reason=screening.failure_reason,
             attempts=screening.attempts,
-            can_retry=screening.status in RETRYABLE_STATUSES,
+            # Takes settings because the answer is time-dependent: a stalled
+            # `processing` screening becomes retryable, and the timeout says when.
+            can_retry=can_retry(screening, settings),
             requirements_met=screening.requirements_met,
             requirements_total=screening.requirements_total,
             claims_verified=screening.claims_verified,
@@ -185,6 +205,7 @@ async def create_screening(
     candidate: CandidateDep,
     session: SessionDep,
     queue: QueueDep,
+    settings: SettingsDep,
     response: Response,
 ) -> ScreeningOut:
     """Screen one of the caller's resumes against one of their jobs.
@@ -210,12 +231,12 @@ async def create_screening(
     )
 
     response.status_code = status.HTTP_202_ACCEPTED if queued else status.HTTP_200_OK
-    return ScreeningOut.of(screening, requirements_hash=_fingerprint(job))
+    return ScreeningOut.of(screening, requirements_hash=_fingerprint(job), settings=settings)
 
 
 @router.get("/jobs/{job_id}/screenings", response_model=list[ScreeningOut])
 async def list_screenings(
-    job_id: uuid.UUID, candidate: CandidateDep, session: SessionDep
+    job_id: uuid.UUID, candidate: CandidateDep, session: SessionDep, settings: SettingsDep
 ) -> list[ScreeningOut]:
     """Every screening for one job, newest first.
 
@@ -230,7 +251,8 @@ async def list_screenings(
         select(Screening).where(Screening.job_id == job.id).order_by(Screening.created_at.desc())
     )
     return [
-        ScreeningOut.of(screening, requirements_hash=fingerprint) for screening in result.scalars()
+        ScreeningOut.of(screening, requirements_hash=fingerprint, settings=settings)
+        for screening in result.scalars()
     ]
 
 
@@ -327,11 +349,16 @@ async def retry_screening(
     candidate: CandidateDep,
     session: SessionDep,
     queue: QueueDep,
+    settings: SettingsDep,
 ) -> ScreeningOut:
-    """Replay a screening that gave up. The dead-letter half, as for resumes."""
+    """Replay a screening that gave up, or one a dead worker is still holding.
+
+    The dead-letter half, as for resumes — and, past the visibility timeout, the
+    stalled-`processing` half too.
+    """
     screening, job = await _owned_screening(session, screening_id=screening_id, candidate=candidate)
 
-    if screening.status not in RETRYABLE_STATUSES:
+    if not can_retry(screening, settings):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -349,18 +376,20 @@ async def retry_screening(
     await screening_service.request_screening(
         session, job=job, resume=resume, queue=queue, force=True
     )
-    return ScreeningOut.of(screening, requirements_hash=_fingerprint(job))
+    return ScreeningOut.of(screening, requirements_hash=_fingerprint(job), settings=settings)
 
 
 @router.get("/screenings/{screening_id}", response_model=ScreeningDetail)
 async def get_screening(
-    screening_id: uuid.UUID, candidate: CandidateDep, session: SessionDep
+    screening_id: uuid.UUID, candidate: CandidateDep, session: SessionDep, settings: SettingsDep
 ) -> ScreeningDetail:
     screening, job = await _owned_screening(session, screening_id=screening_id, candidate=candidate)
     resume = await session.get(Resume, screening.resume_id)
 
     return ScreeningDetail(
-        screening=ScreeningOut.of(screening, requirements_hash=_fingerprint(job)),
+        screening=ScreeningOut.of(
+            screening, requirements_hash=_fingerprint(job), settings=settings
+        ),
         judgment=screening.result,
         document_text=resume.document_text if resume else None,
     )
