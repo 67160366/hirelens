@@ -194,3 +194,58 @@ describe("uploadResume", () => {
     expect(body.get("consent")).toBe("false");
   });
 });
+
+/**
+ * Every write that carries a JSON body must say so.
+ *
+ * Starlette decides whether to parse a body by its `Content-Type`. Without the
+ * header the body arrives as a *string*, pydantic answers 422 — "Input should be
+ * a valid dictionary or object to extract fields from" — and the UI shows that
+ * sentence to a person who has done nothing wrong.
+ *
+ * `moveApplication` hand-built its `RequestInit` instead of going through
+ * `json()`, so **every** application transition failed: shortlist, reject and
+ * withdraw. Found by clicking Shortlist in a browser; no test looked, because the
+ * 13 cases covering `lib/applications.ts` test the pure logic and never the wiring.
+ *
+ * This is a table rather than one case about one call, so the next write to skip
+ * the helper fails here rather than in front of a user.
+ */
+describe("every JSON write sets Content-Type", () => {
+  function captureInit() {
+    const sent: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(init);
+        return new Response(JSON.stringify({}), { status: 200 });
+      }),
+    );
+    return sent;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const writes: [string, () => Promise<unknown>][] = [
+    ["moveApplication", () => api.moveApplication("a1", "shortlisted", "token")],
+    ["moveApplication with a reason", () => api.moveApplication("a1", "rejected", "token", "no")],
+    ["applyToJob", () => api.applyToJob("j1", "r1", "token")],
+    ["createJob", () => api.createJob({ title: "t", description: null, requirements: [] }, "token")],
+    ["createScreening", () => api.createScreening("j1", "r1", "token")],
+    ["register", () => api.register("a@example.com", "a-good-password")],
+    ["login", () => api.login("a@example.com", "a-good-password")],
+  ];
+
+  it.each(writes)("%s", async (_name, call) => {
+    const sent = captureInit();
+    await call();
+
+    const init = sent[0];
+    expect(init).toBeDefined();
+    expect(typeof init?.body).toBe("string");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Content-Type")).toBe("application/json");
+  });
+});

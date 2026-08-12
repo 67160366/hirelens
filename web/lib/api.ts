@@ -484,11 +484,7 @@ export const api = {
   /** Apply to a job. 201 when created, 200 when you had already applied — the
    * natural key carrying the idempotency, so calling it twice is safe. */
   applyToJob: (jobId: string, resumeId: string, token: string) =>
-    request<Application>(
-      `/jobs/${jobId}/applications`,
-      { method: "POST", body: JSON.stringify({ resume_id: resumeId }) },
-      token,
-    ),
+    request<Application>(`/jobs/${jobId}/applications`, json("POST", { resume_id: resumeId }), token),
 
   listJobApplications: (jobId: string, token: string) =>
     request<Application[]>(`/jobs/${jobId}/applications`, {}, token),
@@ -497,7 +493,12 @@ export const api = {
 
   /** Move an application. The server answers **409 with the reason** when the move
    * is not allowed, which surfaces here as an `ApiError` carrying that sentence —
-   * it is written for a person to read, so show it rather than replacing it. */
+   * it is written for a person to read, so show it rather than replacing it.
+   *
+   * Goes through `json()` like every other write. Hand-building the `RequestInit`
+   * here omitted `Content-Type`, so the body was never parsed as JSON and the
+   * server answered 422 to *every* transition — shortlist, reject and withdraw
+   * alike — with a pydantic message shown to the user verbatim. */
   moveApplication: (
     applicationId: string,
     toState: ApplicationState,
@@ -506,7 +507,7 @@ export const api = {
   ) =>
     request<Application>(
       `/applications/${applicationId}/transitions`,
-      { method: "POST", body: JSON.stringify({ to_state: toState, reason: reason ?? null }) },
+      json("POST", { to_state: toState, reason: reason ?? null }),
       token,
     ),
 
