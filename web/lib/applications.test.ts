@@ -30,6 +30,7 @@ function application(state: ApplicationState): Application {
     candidate_id: APPLICANT_ID,
     resume_id: "resume-1",
     resume_filename: "cv.pdf",
+    resume_status: "extracted",
     state,
     created_at: "2026-08-12T00:00:00Z",
   };

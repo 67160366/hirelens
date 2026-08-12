@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import CandidateDep, SessionDep
 from app.applications import Actor
-from app.models import Candidate, Job, Resume, Role
+from app.models import Candidate, Job, Resume, ResumeStatus, Role
 from app.models.application import Application, ApplicationEvent, ApplicationState
 from app.services import application_service
 from app.services.application_service import TransitionRefused
@@ -85,6 +85,7 @@ class ApplicationOut(BaseModel):
     candidate_id: str
     resume_id: str
     resume_filename: str
+    resume_status: ResumeStatus
     state: ApplicationState
     created_at: str
 
@@ -100,6 +101,13 @@ class ApplicationOut(BaseModel):
             # used to leave this to the caller on the assumption that every resume
             # in the list belonged to them — the assumption an application breaks.
             resume_filename=resume.filename,
+            # Same reasoning, and the same mistake caught one screen later: a
+            # recruiter can screen an applicant's resume but `GET /resumes` returns
+            # only their own, so the applicants panel had no way to tell a resume it
+            # can screen from one that would raise `NotScreenable` on the worker.
+            # Applying does not require an extracted resume, so this is a real
+            # question rather than a constant.
+            resume_status=resume.status,
             state=application.state,
             created_at=application.created_at.isoformat(),
         )

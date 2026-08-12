@@ -271,6 +271,21 @@ class TestApplying:
         assert [row["resume_filename"] for row in listed] == ["resume_en.pdf"]
         assert (await client.get("/resumes")).json() == [], "and it is not in their own list"
 
+    async def test_the_resume_status_comes_from_the_server_too(self, client: AsyncClient):
+        """For the same reason, and it is what says whether it can be screened.
+
+        A recruiter may screen an applicant's resume but cannot list it, so without
+        this the applicants panel could not tell a resume it can screen from one
+        that would raise `NotScreenable` on the worker — and it offered neither.
+        Applying does not require an extracted resume, so this is a real question
+        rather than a constant that could be assumed.
+        """
+        ids = await _apply(client)
+        client.headers["Authorization"] = ids["recruiter"]
+
+        listed = (await client.get(f"/jobs/{ids['job']}/applications")).json()
+        assert [row["resume_status"] for row in listed] == ["extracted"]
+
 
 class TestMovingAnApplication:
     async def test_the_screening_journey_moves_it_without_anyone_asking(self, client: AsyncClient):

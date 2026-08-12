@@ -28,6 +28,7 @@ import {
   type RequirementInput,
   type RequirementPatch,
   type Resume,
+  type ResumeStatus,
   type Screening,
   type ScreeningDetail,
 } from "@/lib/api";
@@ -150,10 +151,42 @@ export default function JobPage() {
     });
   }, [authorized, jobId]);
 
+  /**
+   * Every resume this account may screen against this job.
+   *
+   * Two sources, and after M4 they are genuinely different lists. `GET /resumes`
+   * returns only the resumes the account uploaded itself — a recruiter uploads
+   * none — while the people who applied brought their own, which slice 3
+   * deliberately made readable and screenable without making them listable.
+   *
+   * Building this panel from `resumes` alone therefore offered a recruiter nothing
+   * at all, and the applicants panel beside it showed a Shortlist that could never
+   * unlock: a shortlist needs a completed screening, and there was no way to run
+   * one. The server was willing the whole time — `POST /jobs/{id}/screenings`
+   * answers 202 for an applicant's resume.
+   */
+  const screenable = useMemo(() => {
+    const byId = new Map<string, { id: string; filename: string; status: ResumeStatus }>();
+    for (const resume of resumes) {
+      byId.set(resume.id, { id: resume.id, filename: resume.filename, status: resume.status });
+    }
+    for (const application of applications) {
+      // Own resumes first: an account that applied to its own posting should not
+      // appear twice, and its `Resume` row is the fuller record.
+      if (byId.has(application.resume_id)) continue;
+      byId.set(application.resume_id, {
+        id: application.resume_id,
+        filename: application.resume_filename,
+        status: application.resume_status,
+      });
+    }
+    return [...byId.values()];
+  }, [resumes, applications]);
+
   const resumeName = useCallback(
     (resumeId: string) =>
-      resumes.find((resume) => resume.id === resumeId)?.filename ?? resumeId.slice(0, 8),
-    [resumes],
+      screenable.find((resume) => resume.id === resumeId)?.filename ?? resumeId.slice(0, 8),
+    [screenable],
   );
 
   /**
@@ -431,13 +464,14 @@ export default function JobPage() {
             </p>
           </header>
 
-          {resumes.length === 0 ? (
+          {screenable.length === 0 ? (
             <p className="px-4 py-4 text-sm text-stone-500 dark:text-stone-400">
-              No resumes yet. <Link href="/" className="underline">Upload one first.</Link>
+              Nothing to screen yet — nobody has applied, and you have uploaded no
+              resumes of your own. <Link href="/" className="underline">Upload one.</Link>
             </p>
           ) : (
             <ul className="divide-y divide-stone-100 dark:divide-stone-800">
-              {resumes.map((resume) => {
+              {screenable.map((resume) => {
                 const screening = screenings.find((item) => item.resume_id === resume.id);
                 // A resume with no verified text raises `NotScreenable` on the
                 // worker, which the retry policy treats as permanent. Say so here

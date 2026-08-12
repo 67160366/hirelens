@@ -144,6 +144,11 @@ export interface Application {
   /** Served by the API, not joined from `GET /resumes` — that returns the caller's
    * own, which stopped covering the list the moment somebody else could apply. */
   resume_filename: string;
+  /** Served for the same reason, and needed for the same screen: a recruiter may
+   * screen this resume but cannot list it, so without this there is no way to tell
+   * one that can be screened from one that would raise `NotScreenable`. Applying
+   * does not require an extracted resume, so it is a real question. */
+  resume_status: ResumeStatus;
   state: ApplicationState;
   created_at: string;
 }
