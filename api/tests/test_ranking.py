@@ -502,7 +502,7 @@ async def _completed_screening(
     job = await client.post("/jobs", json=JOB_PAYLOAD)
     assert job.status_code == 201, job.text
 
-    uploaded = await client.post("/resumes", files=resume_upload())
+    uploaded = await client.post("/resumes", **resume_upload())
     resume_id = uploaded.json()["id"]
     await run_resume_job(context, uuid.UUID(resume_id))
 

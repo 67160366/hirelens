@@ -70,7 +70,7 @@ class TestUploadEnqueues:
     async def test_upload_stores_the_file_and_queues_the_work(
         self, authed_client: AsyncClient, queue: RecordingQueue
     ):
-        response = await authed_client.post("/resumes", files=resume_upload())
+        response = await authed_client.post("/resumes", **resume_upload())
 
         assert response.status_code == 201
         body = response.json()
@@ -81,7 +81,7 @@ class TestUploadEnqueues:
         self, authed_client: AsyncClient, queue: RecordingQueue, context: JobContext
     ):
         """The whole point of the split: the request does not wait for the model."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = uploaded.json()["id"]
 
         before = await authed_client.get(f"/resumes/{resume_id}")
@@ -101,8 +101,8 @@ class TestUploadEnqueues:
 
         It must not dedupe to a row that is stuck at `pending` and then do nothing.
         """
-        first = await authed_client.post("/resumes", files=resume_upload())
-        second = await authed_client.post("/resumes", files=resume_upload())
+        first = await authed_client.post("/resumes", **resume_upload())
+        second = await authed_client.post("/resumes", **resume_upload())
 
         assert second.status_code == 200
         assert first.json()["id"] == second.json()["id"]
@@ -112,11 +112,11 @@ class TestUploadEnqueues:
         self, authed_client: AsyncClient, queue: RecordingQueue, context: JobContext
     ):
         """Extraction costs money; a finished resume must not be redone."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         await run_resume_job(context, queue.enqueued[0])
         queue.dispatches.clear()
 
-        again = await authed_client.post("/resumes", files=resume_upload())
+        again = await authed_client.post("/resumes", **resume_upload())
 
         assert again.status_code == 200
         assert again.json()["status"] == ResumeStatus.EXTRACTED
@@ -143,7 +143,7 @@ class TestJob:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
         """A retry (M2 #2) can deliver the same id twice. The second run is a no-op."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         await run_resume_job(context, resume_id)
@@ -176,7 +176,7 @@ class TestJob:
     ):
         """A resume left at `pending` with no explanation is the silent failure
         the journey's requirements rule out."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         LocalStorage(settings.storage_path).clear()
@@ -205,7 +205,7 @@ class TestStoredPageSpans:
         context: JobContext,
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await run_resume_job(context, resume_id)
 
@@ -227,7 +227,7 @@ class TestStoredPageSpans:
     ):
         """Spans and text are written in the same breath, so they must agree — and
         a span that indexes past its own text is the bug this catches."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await run_resume_job(context, resume_id)
 
@@ -254,7 +254,7 @@ class TestStoredPageSpans:
         from app.pipeline.evidence import EvidenceResolver, ResolvedSpan
         from app.pipeline.parse import ParsedDocument
 
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await run_resume_job(context, resume_id)
 
@@ -295,7 +295,7 @@ class TestWorkerWiring:
         """Ids cross Redis as strings; the adapter has to turn one back into a UUID."""
         from app.worker import CONTEXT_KEY, process_resume
 
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         await process_resume({CONTEXT_KEY: context}, str(resume_id))

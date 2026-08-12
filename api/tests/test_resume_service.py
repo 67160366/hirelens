@@ -50,6 +50,7 @@ class TestDuplicateUploadRace:
                 data=data,
                 storage=storage,
                 queue=queue,
+                consent_version="test-consent",
             )
             assert winner.created
 
@@ -77,6 +78,7 @@ class TestDuplicateUploadRace:
                 data=data,
                 storage=storage,
                 queue=queue,
+                consent_version="test-consent",
             )
 
         assert not result.created
@@ -113,6 +115,7 @@ class TestFailedIngestCleanup:
                     data=data,
                     storage=storage,
                     queue=queue,
+                    consent_version="test-consent",
                 )
 
         digest = content_hash(data)
@@ -150,6 +153,7 @@ class TestLogging:
                 data=data,
                 storage=storage,
                 queue=queue,
+                consent_version="test-consent",
             )
 
         assert "extracted" in caplog.text

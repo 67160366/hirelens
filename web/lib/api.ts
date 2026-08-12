@@ -76,6 +76,11 @@ export interface ExtractedProfile {
   stats: EvidenceStats;
 }
 
+export interface ConsentTerms {
+  version: string;
+  text: string;
+}
+
 export interface Resume {
   id: string;
   filename: string;
@@ -390,9 +395,18 @@ export const api = {
   refresh: (refreshToken: string) =>
     request<TokenPair>("/auth/refresh", json("POST", { refresh_token: refreshToken })),
 
-  uploadResume: (file: File, token: string) => {
+  /** The wording an upload's `consent` agrees to. Unauthenticated, so it can be
+   * shown before anyone has an account — and fetched rather than duplicated here,
+   * so what somebody agreed to and what they were shown cannot drift apart. */
+  getConsent: () => request<ConsentTerms>("/resumes/consent", {}),
+
+  uploadResume: (file: File, token: string, consent: boolean) => {
     const form = new FormData();
     form.append("file", file);
+    // Required by the server since M4 slice 4, and sent as what the box actually
+    // says rather than a hard-coded "true": a client that always sends true has
+    // turned a consent field into a formality.
+    form.append("consent", String(consent));
     return request<Resume>("/resumes", { method: "POST", body: form }, token);
   },
 

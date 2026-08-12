@@ -67,6 +67,13 @@ it is dropped, reported in `dropped`, and counted in the hallucination rate.
 - **The fake provider (`api/app/llm/fake.py`) is load-bearing infrastructure**, not a
   stub — the whole suite and CI depend on it. Read it before touching the provider seam.
 - **Never log or print document text or personal data** — resumes are PII.
+- **Erasure deletes stored files before rows, and deletes nothing if a file refuses**
+  (`api/app/services/privacy_service.py`). Rows-first leaves an object in the bucket
+  that nothing points at — undiscoverable, and so unerasable. A row whose file is
+  missing is already a handled state. Do not "simplify" the order.
+- **`PRAGMA foreign_keys=ON` in `api/app/db.py` is load-bearing.** SQLite ignores
+  every `ON DELETE` clause without it, so a cascade that works on Postgres does
+  nothing there — and the whole test suite runs on SQLite.
 
 ## Commands
 

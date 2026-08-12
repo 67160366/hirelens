@@ -200,7 +200,7 @@ async def _apply(client: AsyncClient) -> dict[str, str]:
     await register_as(client, email="seeker@example.com")
     applicant = client.headers["Authorization"]
     applicant_id = (await client.get("/auth/me")).json()["id"]
-    resume_id = (await client.post("/resumes", files=resume_upload())).json()["id"]
+    resume_id = (await client.post("/resumes", **resume_upload())).json()["id"]
 
     created = await client.post(f"/jobs/{job_id}/applications", json={"resume_id": resume_id})
     assert created.status_code == 201, created.text
@@ -255,7 +255,7 @@ class TestApplying:
         """A role says which routes you may reach, not which life you may lead."""
         ids = await _apply(client)
         await register_as(client, email="alsohiring@example.com", role="recruiter")
-        resume_id = (await client.post("/resumes", files=resume_upload())).json()["id"]
+        resume_id = (await client.post("/resumes", **resume_upload())).json()["id"]
 
         response = await client.post(
             f"/jobs/{ids['job']}/applications", json={"resume_id": resume_id}
@@ -448,7 +448,7 @@ class TestWhatARecruiterMaySeeOfAnApplicant:
 
         await register_as(client, email="seeker2@example.com")
         applicant = client.headers["Authorization"]
-        resume_id = (await client.post("/resumes", files=resume_upload())).json()["id"]
+        resume_id = (await client.post("/resumes", **resume_upload())).json()["id"]
 
         client.headers["Authorization"] = recruiter
         assert (await client.get(f"/resumes/{resume_id}")).status_code == 404
@@ -492,7 +492,7 @@ class TestTheRankingCarriesTheFilename:
 class TestApplyingToAJobThatIsGone:
     async def test_an_unknown_job_is_not_found(self, client: AsyncClient):
         await register_as(client, email="lost@example.com")
-        resume_id = (await client.post("/resumes", files=resume_upload())).json()["id"]
+        resume_id = (await client.post("/resumes", **resume_upload())).json()["id"]
         response = await client.post(
             f"/jobs/{uuid.uuid4()}/applications", json={"resume_id": resume_id}
         )

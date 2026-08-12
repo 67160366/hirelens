@@ -91,7 +91,7 @@ async def _job_and_resume(
     job = await client.post("/jobs", json=payload)
     assert job.status_code == 201, job.text
 
-    uploaded = await client.post("/resumes", files=resume_upload())
+    uploaded = await client.post("/resumes", **resume_upload())
     assert uploaded.status_code in (200, 201), uploaded.text
     resume_id = uploaded.json()["id"]
     await run_resume_job(context, uuid.UUID(resume_id))
@@ -314,7 +314,7 @@ class TestOwnership:
             json={"email": "other@example.com", "password": "a-good-password", "role": "recruiter"},
         )
         client.headers["Authorization"] = f"Bearer {intruder.json()['access_token']}"
-        their = await client.post("/resumes", files=resume_upload())
+        their = await client.post("/resumes", **resume_upload())
 
         response = await client.post(
             f"/jobs/{job_id}/screenings", json={"resume_id": their.json()["id"]}
@@ -331,7 +331,7 @@ class TestOwnership:
             },
         )
         client.headers["Authorization"] = f"Bearer {stranger.json()['access_token']}"
-        theirs = await client.post("/resumes", files=resume_upload())
+        theirs = await client.post("/resumes", **resume_upload())
         their_resume_id = theirs.json()["id"]
 
         mine = await client.post(

@@ -9,7 +9,16 @@ from collections.abc import AsyncIterator
 from time import monotonic
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -47,6 +56,22 @@ MAGIC_BY_SUFFIX = {
     ".docx": b"PK\x03\x04",
 }
 ALLOWED_SUFFIXES = frozenset(MAGIC_BY_SUFFIX)
+
+CONSENT_VERSION = "2026-08-12"
+"""Which wording an uploader is agreeing to (M4 slice 4).
+
+Stored on the row beside the timestamp rather than assumed, for the same reason
+`prompt_version` sits beside `requirements_hash`: "they consented" and "they
+consented to *this*" are different claims, and only one survives a rewording.
+**Bump this whenever `CONSENT_TEXT` changes.**"""
+
+CONSENT_TEXT = (
+    "I agree that this document may be stored, its text extracted, and that text "
+    "sent to a third-party language model in order to produce a cited profile and "
+    "screen it against job requirements."
+)
+"""What `consent=true` means, in the response of `GET /resumes/consent` so a client
+can show it rather than invent its own wording."""
 
 # Where a retry can help. `pending` is already in hand; `extracted` is done, and
 # redoing it would bill a second extraction to produce the profile we already have.
@@ -123,6 +148,22 @@ class ProfileOut(BaseModel):
     spans without re-parsing and risking a shifted offset."""
 
 
+class ConsentOut(BaseModel):
+    version: str
+    text: str
+
+
+@router.get("/consent", response_model=ConsentOut)
+async def current_consent() -> ConsentOut:
+    """What `consent=true` on an upload means, and which version of it.
+
+    Served rather than duplicated in the client, so the wording somebody agreed to
+    and the wording they were shown cannot drift apart. Unauthenticated on purpose —
+    you should be able to read it before deciding to have an account.
+    """
+    return ConsentOut(version=CONSENT_VERSION, text=CONSENT_TEXT)
+
+
 @router.post("", response_model=ResumeOut)
 async def upload_resume(
     candidate: CandidateDep,
@@ -133,6 +174,10 @@ async def upload_resume(
     request: Request,
     response: Response,
     file: Annotated[UploadFile, File(description="A PDF or DOCX resume.")],
+    consent: Annotated[
+        bool,
+        Form(description=f"Must be true. Agreeing to: {CONSENT_TEXT}"),
+    ],
 ) -> ResumeOut:
     """Store a resume and queue it for parsing and extraction.
 
@@ -142,7 +187,19 @@ async def upload_resume(
 
     Idempotent on file content: re-uploading the same bytes returns the existing
     resource with 200 rather than creating a duplicate or re-billing extraction.
+
+    **`consent` is required and must be true.** A field defaulting to true is not
+    consent, so it has no default and a missing one is a 422 from the schema — the
+    cheapest possible place for the refusal. `GET /resumes/consent` serves the
+    wording being agreed to, so a client shows it rather than inventing its own.
     """
+    if not consent:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"This document cannot be processed without consent. Consent means: {CONSENT_TEXT}"
+            ),
+        )
     too_large = HTTPException(
         status_code=status.HTTP_413_CONTENT_TOO_LARGE,
         detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
@@ -185,6 +242,7 @@ async def upload_resume(
         data=data,
         storage=storage,
         queue=queue,
+        consent_version=CONSENT_VERSION,
     )
 
     response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK

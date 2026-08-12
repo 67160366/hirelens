@@ -121,7 +121,7 @@ class TestRetryLoop:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
         settings: Settings,
     ):
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         outcome = await run_resume_job(context, resume_id)
@@ -145,7 +145,7 @@ class TestRetryLoop:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
         settings: Settings,
     ):
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         for _ in range(settings.job_max_attempts - 1):
@@ -168,7 +168,7 @@ class TestRetryLoop:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
         """Extraction failing must not throw away the parse it already paid for."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         await run_resume_job(context, resume_id)
@@ -186,7 +186,7 @@ class TestRetryLoop:
         settings: Settings,
     ):
         """A file that is gone will still be gone in five seconds."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         LocalStorage(settings.storage_path).clear()
 
@@ -208,7 +208,7 @@ class TestRetryLoop:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
         """A parse failure is a fact about the document, not a job failure."""
-        await authed_client.post("/resumes", files=resume_upload("resume_scanned.pdf"))
+        await authed_client.post("/resumes", **resume_upload("resume_scanned.pdf"))
         resume_id = queue.enqueued[0]
 
         outcome = await run_resume_job(context, resume_id)
@@ -227,7 +227,7 @@ class TestRetryLoop:
         settings: Settings,
     ):
         """Two blips and a success must not leave one strike hanging over it."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         storage = LocalStorage(settings.storage_path)
 
@@ -266,7 +266,7 @@ class TestRetryEndpoint:
         context: JobContext,
         settings: Settings,
     ) -> str:
-        uploaded = await client.post("/resumes", files=resume_upload())
+        uploaded = await client.post("/resumes", **resume_upload())
         for _ in range(settings.job_max_attempts):
             await run_resume_job(context, queue.enqueued[0])
         return str(uploaded.json()["id"])
@@ -326,7 +326,7 @@ class TestRetryEndpoint:
         settings: Settings,
     ):
         """Re-extracting would bill a second call to reproduce what we have."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         working = JobContext(
             sessionmaker=sessionmaker_for_tests,
             storage=LocalStorage(settings.storage_path),
@@ -345,7 +345,7 @@ class TestRetryEndpoint:
         self, authed_client: AsyncClient, queue: RecordingQueue
     ):
         """It is already queued; a second dispatch would only race the first."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         response = await authed_client.post(f"/resumes/{uploaded.json()['id']}/retry")
         assert response.status_code == 409
 
@@ -357,7 +357,7 @@ class TestRetryEndpoint:
             "/auth/register", json={"email": "owner@example.com", "password": "a-good-password"}
         )
         client.headers["Authorization"] = f"Bearer {owner.json()['access_token']}"
-        uploaded = await client.post("/resumes", files=resume_upload())
+        uploaded = await client.post("/resumes", **resume_upload())
 
         intruder = await client.post(
             "/auth/register", json={"email": "other@example.com", "password": "a-good-password"}
@@ -434,7 +434,7 @@ class TestAFailingCommit:
         context: JobContext,
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         outcome = await run_resume_job(context, resume_id)
@@ -452,7 +452,7 @@ class TestAFailingCommit:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
         settings: Settings,
     ):
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         for _ in range(settings.job_max_attempts - 1):
@@ -472,7 +472,7 @@ class TestAFailingCommit:
     ):
         """A DBAPIError message embeds the statement's parameters — resume text
         included. Only the exception's type name may be recorded or logged."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         with caplog.at_level(logging.DEBUG):
@@ -497,7 +497,7 @@ class TestConcurrentDelivery:
         Without this, a duplicate delivery would extract the same document twice
         and bill for it twice.
         """
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
 
         async with sessionmaker_for_tests() as session:
@@ -569,7 +569,7 @@ class TestTheVisibilityTimeout:
         If this ever stops being true the rest of the class is testing a situation
         that cannot arise, which is the failure mode `docs/NOTES.md` keeps recording.
         """
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await _strand(context, resume_id, settings)
 
@@ -589,7 +589,7 @@ class TestTheVisibilityTimeout:
         settings: Settings,
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await _strand(context, resume_id, settings)
         queue.dispatches.clear()
@@ -614,7 +614,7 @@ class TestTheVisibilityTimeout:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
         """A worker that is merely slow must keep its claim."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await _strand(context, resume_id, settings)
 
@@ -661,7 +661,7 @@ class TestTheVisibilityTimeout:
         what makes it dead-letter instead, and this is the test that would fail if
         someone later "simplified" the reclaim into a plain status reset.
         """
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         context.queue = queue
 
@@ -683,7 +683,7 @@ class TestTheVisibilityTimeout:
         settings: Settings,
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await _strand(context, resume_id, settings)
         context.queue = queue
@@ -724,7 +724,7 @@ class TestTheVisibilityTimeout:
         already excludes a row the first moved to `pending`. The guard under the lock
         never ran. This drives it directly, which is the only way to see it work.
         """
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await _strand(context, resume_id, settings)
         context.queue = queue
@@ -756,7 +756,7 @@ class TestTheVisibilityTimeout:
         settings: Settings,
     ):
         """The point of the whole slice: the row is workable again."""
-        await authed_client.post("/resumes", files=resume_upload())
+        await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await _strand(context, resume_id, settings)
         context.queue = queue
@@ -788,7 +788,7 @@ class TestTheVisibilityTimeout:
         job = await recruiter_client.post(
             "/jobs", json={"title": "Backend", "requirements": [{"label": "Python"}]}
         )
-        uploaded = await recruiter_client.post("/resumes", files=resume_upload())
+        uploaded = await recruiter_client.post("/resumes", **resume_upload())
         created = await recruiter_client.post(
             f"/jobs/{job.json()['id']}/screenings", json={"resume_id": uploaded.json()["id"]}
         )
@@ -834,7 +834,7 @@ class TestRetryingAStalledRow:
         context: JobContext,
         settings: Settings,
     ):
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = queue.enqueued[0]
         await _strand(context, resume_id, settings)
 

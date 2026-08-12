@@ -148,3 +148,49 @@ describe("createScreening", () => {
     expect(screening.id).toBe("s1");
   });
 });
+
+/**
+ * Consent travels with the upload, and it travels as what the box actually says.
+ *
+ * The tempting version hard-codes `"true"` — the server requires it, after all,
+ * so why send anything else. That turns a consent field into a formality: the
+ * checkbox could be unticked and the upload would still assert agreement. What
+ * makes it mean something is that the value is the user's answer, so an unticked
+ * box produces an upload the server refuses.
+ */
+describe("uploadResume", () => {
+  function capture() {
+    const sent: FormData[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(init.body as FormData);
+        return new Response(JSON.stringify({ id: "r1" }), { status: 201 });
+      }),
+    );
+    return sent;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function uploadWith(consent: boolean): Promise<FormData> {
+    const sent = capture();
+    await api.uploadResume(new File(["%PDF-"], "cv.pdf"), "token", consent);
+    const body = sent[0];
+    expect(body).toBeDefined();
+    return body as FormData;
+  }
+
+  it("sends the file and the consent together", async () => {
+    const body = await uploadWith(true);
+    expect(body.get("consent")).toBe("true");
+    expect((body.get("file") as File).name).toBe("cv.pdf");
+  });
+
+  it("sends false when the box is not ticked, rather than asserting agreement", async () => {
+    const body = await uploadWith(false);
+    expect(body.get("consent")).toBe("false");
+  });
+});

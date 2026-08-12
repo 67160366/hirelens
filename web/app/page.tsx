@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/AuthPanel";
 import {
@@ -10,7 +10,7 @@ import {
   collectEvidence,
 } from "@/components/DocumentPane";
 import { ProfileView } from "@/components/ProfileView";
-import { api, type ProfileResponse, type Resume } from "@/lib/api";
+import { api, type ConsentTerms, type ProfileResponse, type Resume } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
 
 /**
@@ -35,6 +35,15 @@ export default function Home() {
   // The last state the progress stream reported, which is what the waiting
   // message is written from.
   const [progress, setProgress] = useState<Resume | null>(null);
+  // The consent terms come from the server rather than being written here, so the
+  // wording somebody agreed to is the wording they were shown.
+  const [consent, setConsent] = useState<ConsentTerms | null>(null);
+  const [consented, setConsented] = useState(false);
+
+  useEffect(() => {
+    // Unauthenticated, so it loads whether or not anyone is signed in.
+    api.getConsent().then(setConsent).catch(() => setConsent(null));
+  }, []);
 
   /** Replay a resume the worker gave up on, and wait for the new run. */
   async function retry() {
@@ -63,7 +72,7 @@ export default function Home() {
       // Upload only stores the file and queues the work, so the result has to be
       // waited for rather than read straight out of the response.
       const uploaded = await authorized(async (accessToken) => {
-        const resume = await api.uploadResume(file, accessToken);
+        const resume = await api.uploadResume(file, accessToken, consented);
         setProgress(resume);
         return api.waitForProfile(resume.id, accessToken, setProgress);
       });
@@ -96,17 +105,30 @@ export default function Home() {
               <span className="mt-0.5 block text-xs text-stone-500 dark:text-stone-400">
                 PDF, up to 10 MB. Re-uploading the same file returns the existing result.
               </span>
+              {/* The wording comes from the server, so what was agreed to and what
+                  was shown cannot drift apart. The file input stays disabled until
+                  the box is ticked: a consent you have to un-tick is not one. */}
+              <span className="mt-2.5 flex items-start gap-2 rounded-md bg-stone-50 p-2.5 text-xs text-stone-600 dark:bg-stone-800/60 dark:text-stone-300">
+                <input
+                  type="checkbox"
+                  checked={consented}
+                  disabled={busy}
+                  onChange={(event) => setConsented(event.target.checked)}
+                  className="mt-0.5 shrink-0"
+                />
+                <span>{consent?.text ?? "Loading the consent terms…"}</span>
+              </span>
               <input
                 type="file"
                 accept="application/pdf,.pdf"
-                disabled={busy}
+                disabled={busy || !consented}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   // Reset so selecting the same file twice still fires a change.
                   event.target.value = "";
                   if (file) void upload(file);
                 }}
-                className="mt-2 block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white dark:file:bg-stone-100 dark:file:text-stone-900"
+                className="mt-2 block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white disabled:opacity-50 dark:file:bg-stone-100 dark:file:text-stone-900"
               />
             </label>
             <div className="flex flex-col items-end gap-2 self-start">

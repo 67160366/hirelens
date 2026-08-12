@@ -121,7 +121,7 @@ class TestReachingTheStream:
         """Ownership has to be settled before the response starts. Once a stream is
         open the status line is already 200, and a refusal can only be an event the
         client is trusted to interpret."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = uploaded.json()["id"]
         intruder = await authed_client.post(
             "/auth/register",
@@ -139,7 +139,7 @@ class TestAResumeThatIsAlreadyFinished:
     also the no-server path: connect, learn the answer, close."""
 
     async def test_the_stream_reports_the_result_and_ends(self, authed_client: AsyncClient):
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
 
         response = await authed_client.get(f"/resumes/{uploaded.json()['id']}/events")
 
@@ -154,7 +154,7 @@ class TestAResumeThatIsAlreadyFinished:
         """The profile and `document_text` stay behind `GET /resumes/{id}`, which
         the client calls once. Frames stay small, and resume text is not repeated
         down a connection that stays open."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
 
         response = await authed_client.get(f"/resumes/{uploaded.json()['id']}/events")
 
@@ -179,7 +179,7 @@ class TestFollowingAResumeThroughTheWork:
         sessionmaker_for_tests: async_sessionmaker[AsyncSession],
         settings: Settings,
     ):
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = uuid.UUID(uploaded.json()["id"])
         stream = _resume_events(sessionmaker_for_tests, settings, _still_connected(), resume_id)
 
@@ -204,7 +204,7 @@ class TestFollowingAResumeThroughTheWork:
         """The state polling was worst at. A retryable failure puts the resume back
         to `pending`, which is where it already was — only `failure_reason` and
         `attempts` moved, and only for as long as the backoff lasts."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = uuid.UUID(uploaded.json()["id"])
         provider_down = JobContext(
             sessionmaker=sessionmaker_for_tests,
@@ -232,7 +232,7 @@ class TestFollowingAResumeThroughTheWork:
         settings: Settings,
     ):
         """Rather than repeating the last state it saw until the cap runs out."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = uuid.UUID(uploaded.json()["id"])
         stream = _resume_events(sessionmaker_for_tests, settings, _still_connected(), resume_id)
         await anext(stream)
@@ -260,7 +260,7 @@ class TestAStreamThatWouldOtherwiseNeverEnd:
         back to `pending` (`docs/HANDOFF.md` §7), so without a cap this connection
         would outlive the problem it is reporting. The client falls back to
         polling."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
 
         response = await authed_client.get(f"/resumes/{uploaded.json()['id']}/events")
 
@@ -283,7 +283,7 @@ class TestAStreamWithNothingToSay:
     ):
         """Nothing about a resume changes while it waits out a backoff, and an idle
         connection is what proxies and load balancers close."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
 
         response = await authed_client.get(f"/resumes/{uploaded.json()['id']}/events")
 

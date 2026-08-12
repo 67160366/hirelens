@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_current_candidate, get_extractor, get_queue, get_storage
 from app.config import Settings, get_settings
-from app.db import get_session
+from app.db import enforce_foreign_keys, get_session
 from app.jobs import JobContext
 from app.llm.fake import FakeExtractor, FakeMode
 from app.main import create_app
@@ -54,6 +54,11 @@ async def sessionmaker_for_tests() -> AsyncIterator[async_sessionmaker[AsyncSess
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+    # The same pragma `build_engine` applies. Without it SQLite ignores every
+    # `ON DELETE` clause, so a cascade that works on Postgres would silently do
+    # nothing here — and the suite, which runs only here, could not tell.
+    enforce_foreign_keys(engine)
+
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
@@ -161,14 +166,24 @@ async def recruiter_client(client: AsyncClient) -> AsyncClient:
     return await register_as(client, email="recruiter@example.com", role="recruiter")
 
 
+CONSENT = {"consent": "true"}
+"""The form field every upload needs since M4 slice 4. Spelled out for the few
+tests that hand-build a payload to aim at the file gates — without it they stop
+at schema validation with a 422 and never reach the gate they are named for."""
+
 CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
 
-def resume_upload(name: str = "resume_en.pdf") -> dict[str, tuple[str, bytes, str]]:
-    """A multipart payload for one of the fixtures.
+def resume_upload(name: str = "resume_en.pdf", *, consent: bool = True) -> dict[str, Any]:
+    """A whole multipart upload for one of the fixtures — spread it with `**`.
+
+    Returns `files` *and* `data` rather than just the file, because since M4 slice 4
+    an upload without `consent` is a 422. Spreading keeps the consent field out of
+    sixty-eight call sites that are not about consent, while
+    `resume_upload(consent=False)` still lets `tests/test_pdpa.py` aim at it.
 
     The content type follows the extension. The upload gate does not read it — it
     trusts the magic bytes instead — but a test that announced every file as a PDF
@@ -176,7 +191,10 @@ def resume_upload(name: str = "resume_en.pdf") -> dict[str, tuple[str, bytes, st
     """
     data = (FIXTURES / name).read_bytes()
     suffix = Path(name).suffix.lower()
-    return {"file": (name, data, CONTENT_TYPES.get(suffix, "application/octet-stream"))}
+    return {
+        "files": {"file": (name, data, CONTENT_TYPES.get(suffix, "application/octet-stream"))},
+        "data": {"consent": "true" if consent else "false"},
+    }
 
 
 async def upload_and_read(client: AsyncClient, name: str = "resume_en.pdf") -> dict[str, Any]:
@@ -186,11 +204,11 @@ async def upload_and_read(client: AsyncClient, name: str = "resume_en.pdf") -> d
     file and answers `pending`, and the outcome is read from `GET /resumes/{id}`.
     No polling is needed here because the tests run on the inline queue.
     """
-    uploaded = await client.post("/resumes", files=resume_upload(name))
+    uploaded = await client.post("/resumes", **resume_upload(name))
     assert uploaded.status_code in (200, 201), uploaded.text
     response = await client.get(f"/resumes/{uploaded.json()['id']}")
     assert response.status_code == 200, response.text
     return response.json()  # type: ignore[no-any-return]
 
 
-__all__ = ["get_current_candidate", "resume_upload", "upload_and_read"]
+__all__ = ["CONSENT", "get_current_candidate", "resume_upload", "upload_and_read"]

@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from app.api.routes.resumes import MAX_UPLOAD_BYTES
 from app.llm.fake import FakeMode
 from app.models import ResumeStatus
-from tests.conftest import FIXTURES, resume_upload, upload_and_read
+from tests.conftest import CONSENT, FIXTURES, resume_upload, upload_and_read
 
 
 class TestHealth:
@@ -176,7 +176,7 @@ class TestChangePassword:
 
 class TestUpload:
     async def test_upload_requires_auth(self, client: AsyncClient):
-        response = await client.post("/resumes", files=resume_upload())
+        response = await client.post("/resumes", **resume_upload())
         assert response.status_code == 401
 
     async def test_upload_accepts_the_file_and_answers_pending(self, authed_client: AsyncClient):
@@ -186,7 +186,7 @@ class TestUpload:
         response describes the resume as accepted, not as processed, so a client
         polls the same way against an inline queue and a real worker.
         """
-        response = await authed_client.post("/resumes", files=resume_upload())
+        response = await authed_client.post("/resumes", **resume_upload())
         assert response.status_code == 201, response.text
         body = response.json()
         assert body["status"] == ResumeStatus.PENDING
@@ -202,8 +202,8 @@ class TestUpload:
 
     async def test_reuploading_the_same_bytes_is_idempotent(self, authed_client: AsyncClient):
         """Same file, same resource — no duplicate row and no second extraction."""
-        first = await authed_client.post("/resumes", files=resume_upload())
-        second = await authed_client.post("/resumes", files=resume_upload())
+        first = await authed_client.post("/resumes", **resume_upload())
+        second = await authed_client.post("/resumes", **resume_upload())
 
         assert first.status_code == 201
         assert second.status_code == 200
@@ -214,7 +214,7 @@ class TestUpload:
 
     async def test_rejects_an_unsupported_extension(self, authed_client: AsyncClient):
         response = await authed_client.post(
-            "/resumes", files={"file": ("resume.rtf", b"{\\rtf1}", "application/rtf")}
+            "/resumes", files={"file": ("resume.rtf", b"{\\rtf1}", "application/rtf")}, data=CONSENT
         )
         assert response.status_code == 415
 
@@ -234,13 +234,14 @@ class TestUpload:
         response = await authed_client.post(
             "/resumes",
             files={"file": ("resume.docx", data, "application/octet-stream")},
+            data=CONSENT,
         )
         assert response.status_code == 415
         assert "DOCX" in response.json()["detail"]
 
     async def test_rejects_an_empty_upload(self, authed_client: AsyncClient):
         response = await authed_client.post(
-            "/resumes", files={"file": ("resume.pdf", b"", "application/pdf")}
+            "/resumes", files={"file": ("resume.pdf", b"", "application/pdf")}, data=CONSENT
         )
         assert response.status_code == 400
 
@@ -254,13 +255,13 @@ class TestUpload:
 
     async def test_a_disguised_non_pdf_is_rejected_by_magic_bytes(self, authed_client: AsyncClient):
         """The extension is caller-chosen; the first bytes are not."""
-        response = await authed_client.post("/resumes", files=resume_upload("not_a_pdf.pdf"))
+        response = await authed_client.post("/resumes", **resume_upload("not_a_pdf.pdf"))
         assert response.status_code == 415
 
     async def test_an_oversized_upload_is_rejected(self, authed_client: AsyncClient):
         big = b"%PDF-1.7\n" + b"0" * MAX_UPLOAD_BYTES
         response = await authed_client.post(
-            "/resumes", files={"file": ("resume.pdf", big, "application/pdf")}
+            "/resumes", files={"file": ("resume.pdf", big, "application/pdf")}, data=CONSENT
         )
         assert response.status_code == 413
 
@@ -268,7 +269,7 @@ class TestUpload:
         """Right magic bytes, garbage body: passes the gate, fails the parser."""
         corrupt = b"%PDF-1.7\n" + b"this is not a real pdf body " * 4
         uploaded = await authed_client.post(
-            "/resumes", files={"file": ("resume.pdf", corrupt, "application/pdf")}
+            "/resumes", files={"file": ("resume.pdf", corrupt, "application/pdf")}, data=CONSENT
         )
         response = await authed_client.get(f"/resumes/{uploaded.json()['id']}")
         assert response.json()["resume"]["status"] == ResumeStatus.FAILED
@@ -281,7 +282,7 @@ class TestUpload:
 
 class TestReadProfile:
     async def test_returns_verified_claims_with_evidence(self, authed_client: AsyncClient):
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = uploaded.json()["id"]
 
         response = await authed_client.get(f"/resumes/{resume_id}")
@@ -298,7 +299,7 @@ class TestReadProfile:
     ):
         """The contract the highlighting UI depends on: offsets are resolvable
         against the text the API hands back, with no re-parsing."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         response = await authed_client.get(f"/resumes/{uploaded.json()['id']}")
         body = response.json()
 
@@ -318,7 +319,7 @@ class TestReadProfile:
             "/auth/register", json={"email": "owner@example.com", "password": "a-good-password"}
         )
         client.headers["Authorization"] = f"Bearer {owner.json()['access_token']}"
-        uploaded = await client.post("/resumes", files=resume_upload())
+        uploaded = await client.post("/resumes", **resume_upload())
         resume_id = uploaded.json()["id"]
 
         intruder = await client.post(
@@ -343,7 +344,7 @@ class TestHallucinationSurfacedThroughTheApi:
         return FakeMode.HALLUCINATING
 
     async def test_unverifiable_claims_are_reported_not_hidden(self, authed_client: AsyncClient):
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         response = await authed_client.get(f"/resumes/{uploaded.json()['id']}")
         profile = response.json()["profile"]
 

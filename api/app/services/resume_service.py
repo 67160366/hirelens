@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.llm.base import LLMError, StructuredExtractor
 from app.models import Candidate, ExtractedProfileRow, LLMCallLog, Resume, ResumeStatus
+from app.models.base import utcnow
 from app.pipeline.extract import ExtractionOutcome, extract_profile
 from app.pipeline.ocr import OCREngine
 from app.pipeline.parse import ParsedDocument, ParseError, parse_document_bytes
@@ -64,8 +65,15 @@ async def ingest_resume(
     data: bytes,
     storage: Storage,
     queue: JobQueue,
+    consent_version: str,
 ) -> IngestResult:
-    """Store one upload and queue it for processing. Idempotent on content hash."""
+    """Store one upload and queue it for processing. Idempotent on content hash.
+
+    `consent_version` is stamped on the row. A duplicate upload keeps the *original*
+    consent rather than refreshing it: the agreement that matters is the one made
+    when the document first arrived, and re-stamping it would quietly rewrite when
+    somebody agreed to what.
+    """
     digest = content_hash(data)
 
     existing = await find_by_content(session, candidate_id=candidate.id, digest=digest)
@@ -86,6 +94,8 @@ async def ingest_resume(
         size_bytes=len(data),
         storage_key=key,
         status=ResumeStatus.PENDING,
+        consented_at=utcnow(),
+        consent_version=consent_version,
     )
     session.add(resume)
     try:

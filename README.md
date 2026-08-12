@@ -132,8 +132,11 @@ credential endpoints. Full schema at `/docs`.
 | `POST` | `/auth/login` | Exchange credentials for a token pair |
 | `POST` | `/auth/refresh` | Rotate the pair; a refresh token is single-use |
 | `POST` | `/auth/change-password` | Prove the old password, set a new one |
-| `GET` | `/auth/me` | The signed-in account |
-| `POST` | `/resumes` | Upload a PDF or DOCX; answers `pending` and queues the work |
+| `GET` | `/auth/me` | The signed-in account, and its role |
+| `GET` | `/auth/me/export` | Everything held about you, as one JSON document |
+| `DELETE` | `/auth/me` | Erase the account. Stored files go before rows, and a file that will not delete abandons the whole thing |
+| `GET` | `/resumes/consent` | What an upload's `consent` field agrees to. Unauthenticated |
+| `POST` | `/resumes` | Upload a PDF or DOCX **with `consent=true`**; answers `pending` and queues the work |
 | `GET` | `/resumes` | The caller's resumes |
 | `GET` | `/resumes/{id}` | Profile, evidence spans and the text they index into |
 | `GET` | `/resumes/{id}/events` | SSE progress stream until the status settles |
@@ -153,7 +156,8 @@ credential endpoints. Full schema at `/docs`.
 
 There is deliberately **no `/users` listing, no `/logout` and no username check.**
 Resumes are PII, so letting one account enumerate others is a vulnerability rather
-than a feature — RBAC and PDPA are M4. A `/logout` on stateless JWTs would need a
+than a feature — RBAC landed in M4, and so did the two PDPA rights the system can
+honour: a copy of your data, and its erasure. A `/logout` on stateless JWTs would need a
 refresh-token denylist to mean anything, and an endpoint that returns 200 without
 revoking anything is worse than not having one. Username checks are an
 account-enumeration oracle, which is exactly what `/auth/login`'s single error

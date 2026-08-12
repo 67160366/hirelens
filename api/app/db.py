@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -22,12 +24,37 @@ def get_engine() -> AsyncEngine:
 
 
 def build_engine(settings: Settings) -> AsyncEngine:
-    return create_async_engine(
+    engine = create_async_engine(
         settings.database_url,
         # Verify a connection before handing it out: a container restart otherwise
         # surfaces as a stale-connection error on the next request.
         pool_pre_ping=True,
     )
+    enforce_foreign_keys(engine)
+    return engine
+
+
+def enforce_foreign_keys(engine: AsyncEngine) -> None:
+    """Make SQLite honour foreign keys, which it ignores by default.
+
+    Without this, `ON DELETE CASCADE` and `ON DELETE SET NULL` are inert on SQLite
+    and enforced on Postgres — so deleting an account would clear its rows in
+    production and leave them behind in dev, and **the entire test suite would be
+    blind to the difference**, because it runs on SQLite. That is the same class of
+    gap as SQLite happily storing the NUL that Postgres refused (`docs/HANDOFF.md`
+    §11), and it was found the same way: by writing the test that needed the
+    behaviour and watching it fail for the wrong reason.
+
+    A no-op on Postgres, which has never needed asking.
+    """
+    if not engine.dialect.name.startswith("sqlite"):
+        return
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _on_connect(dbapi_connection: Any, _record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 @lru_cache

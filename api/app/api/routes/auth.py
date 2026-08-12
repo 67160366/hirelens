@@ -7,13 +7,14 @@ distinction in the error message between "no such account" and "wrong password".
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import CandidateDep, SessionDep, SettingsDep
+from app.api.deps import CandidateDep, SessionDep, SettingsDep, StorageDep
 from app.models import Candidate, Role
 from app.security import (
     TOKEN_TYPE_REFRESH,
@@ -24,6 +25,8 @@ from app.security import (
     hash_password,
     verify_password,
 )
+from app.services import privacy_service
+from app.services.privacy_service import ErasureIncomplete
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -203,4 +206,67 @@ async def me(candidate: CandidateDep) -> CandidateOut:
         # Read from the row, never from the token: a role change has to take effect
         # on the next request, not whenever the access token happens to expire.
         role=candidate.role,
+    )
+
+
+class ErasureOut(BaseModel):
+    """What was destroyed, so the answer is a receipt rather than a bare 204."""
+
+    account_id: str
+    stored_files_removed: int
+    message: str
+
+
+@router.get("/me/export")
+async def export_me(candidate: CandidateDep, session: SessionDep) -> dict[str, Any]:
+    """Everything the system holds about this account, as one JSON document.
+
+    A subject-access request, not a dump of everything the caller can see. A
+    recruiter may read the resumes of people who applied to their postings; those
+    belong to the applicants, who can export them from their own accounts.
+
+    The response carries `document_text` and verified profiles — the substance of
+    what is stored. Withholding it would make the export decorative, and it is the
+    caller's own data. It is never logged, which is the rule everywhere here.
+    """
+    return await privacy_service.export_account(session, candidate=candidate)
+
+
+@router.delete("/me", response_model=ErasureOut)
+async def delete_me(
+    candidate: CandidateDep, session: SessionDep, storage: StorageDep
+) -> ErasureOut:
+    """Erase this account and everything that cascades from it. Not undoable.
+
+    **Stored files go before rows**, and a file that will not delete abandons the
+    whole thing with nothing changed. The other order leaves an object in the bucket
+    that no row points at — undiscoverable and therefore unerasable, which is the
+    actual failure. This way the worst case is a row whose file is missing, a state
+    the pipeline already reports.
+
+    Worth knowing before calling it: deleting a **recruiter** deletes their postings,
+    and with them every screening and every other person's application to those
+    postings. That is what a posting ceasing to exist means, but it is other
+    people's history, so it is said out loud rather than discovered.
+
+    Tokens already issued keep working until they expire — the same gap that is why
+    there is no `/auth/logout` — but they authenticate nothing: `get_current_candidate`
+    answers **401** for a valid signature over an account that is gone.
+    """
+    account_id = str(candidate.id)
+    try:
+        removed = await privacy_service.delete_account(
+            session, candidate=candidate, storage=storage
+        )
+    except ErasureIncomplete as exc:
+        # 503, not 500: the request was fine, the store was not, and retrying is the
+        # right next move. Nothing was deleted.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+    return ErasureOut(
+        account_id=account_id,
+        stored_files_removed=removed,
+        message="The account and everything belonging to it have been deleted.",
     )

@@ -145,6 +145,20 @@ class Resume(UUIDPrimaryKey, Timestamps, Base):
     """The parsed text. Evidence offsets index into exactly this string, so it has
     to be stored verbatim — re-parsing later could shift every offset."""
 
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When the uploader agreed to this document being processed (M4 slice 4).
+
+    Per upload rather than per account: each document is a separate piece of
+    personal data, and agreeing to one being read is not agreeing to the next.
+    Nullable only for rows written before migration `0009` — the upload route
+    refuses without it, so nothing new can arrive unconsented."""
+
+    consent_version: Mapped[str | None] = mapped_column(String(40))
+    """Which wording they agreed to. Stored beside the timestamp rather than
+    assumed, for the same reason `prompt_version` sits beside `requirements_hash`:
+    "they consented" and "they consented to *this*" are different claims, and only
+    one of them survives the text being reworded."""
+
     page_spans: Mapped[list[dict[str, int]] | None] = mapped_column(JSON_VARIANT)
     """Where each page begins and ends inside `document_text`.
 

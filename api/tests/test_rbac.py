@@ -139,7 +139,7 @@ class TestWhatARoleGates:
 
     async def test_a_candidate_keeps_the_whole_resume_journey(self, authed_client: AsyncClient):
         """The default role must not have lost anything it had before M4."""
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         assert uploaded.status_code == 201
         assert (await authed_client.get("/resumes")).status_code == 200
         assert (await authed_client.get(f"/resumes/{uploaded.json()['id']}")).status_code == 200

@@ -126,6 +126,11 @@ system is unchanged. That is what makes it safe for it to be approximate.
 | **The audit log, read from `psql`** | Four rows in `position` order: `→ APPLIED` by the seeker (role `CANDIDATE`), `APPLIED → SCREENING` and `SCREENING → SCREENED` by **(system)** with the screening id attached, `SCREENED → SHORTLISTED` by the hirer (role `RECRUITER`) with the same evidence. The system's moves are anonymous and the people's are not (2026-08-12) |
 | The ranking names a resume the recruiter cannot list | `GET /jobs/{id}/ranking` returns `resume_filename=resume_th.pdf`, 2/2 met, gate passed — while `GET /resumes` for that same recruiter returns **0**. That gap is exactly what the client-side join used to fall into (2026-08-12) |
 | Thai survived the whole thing | The job's second requirement reads back from Postgres at **36 characters / 90 bytes** — sent from a `.json` file rather than a shell literal, per §10 (2026-08-12) |
+| **Consent, live against MinIO** | The wording served unauthenticated at `/resumes/consent`; upload with **no consent field → 422**, with `consent=false` → **422**, with `consent=true` → 201 and `extracted`. The refusal is schema validation, so nothing is stored either way (2026-08-12) |
+| **Export carries the substance** | `GET /auth/me/export` for that account: 1 resume with its **382 characters of `document_text`**, the verified profile (`สมชาย ใจดี`), the consent version and timestamp, and the one `extract-v1` call it cost. A summary would have made the right to a copy decorative (2026-08-12) |
+| **Erasure, watched in the bucket** | `DELETE /auth/me` reported 1 stored file removed; the token then answered **401**; `psql` shows 0 candidate rows and 0 resume rows; and `mc ls` shows **0 objects** under that account's prefix. Run on `STORAGE_BACKEND=minio` on purpose — a filesystem cannot show "the object outlived the row" the way a bucket can, and that orphan is the failure the blobs-first order exists to prevent (2026-08-12) |
+| SQLite was ignoring every `ON DELETE` clause | Found by writing the cascade test and watching it fail for the wrong reason: SQLite does not enforce foreign keys unless asked, so `CASCADE` and `SET NULL` were inert there and live on Postgres — **and the whole suite runs on SQLite**. `PRAGMA foreign_keys=ON` now, in `db.build_engine` and in the test engine. Mutation-tested: turning it off fails 4 cases (2026-08-12) |
+| Migration `0009` on both dialects | Postgres round-trip with `alembic check` clean, `consented_at` landing as `timestamp with time zone` and both columns nullable; SQLite `upgrade head` → `downgrade base` (2026-08-12) |
 | Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
 | The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
 
@@ -555,6 +560,33 @@ Worth reading once, because the request no longer does the work.
   belongs to whoever uploaded it. Being shown a CV is not being handed the controls
   for it. Screening is scoped to the *one* posting applied to — applying somewhere is
   not blanket consent to be judged against everything the same recruiter has open.
+- **Erasure deletes the stored files before the rows, and abandons everything if
+  one will not go** (M4 slice 4). The other order is the one that quietly fails
+  PDPA: rows gone, object still in the bucket, and nothing left pointing at it for
+  anyone to notice — undiscoverable and therefore unerasable. This way the worst
+  case is a row whose file is missing, which the pipeline already treats as a
+  permanent failure and reports. A `StorageError` answers **503** with nothing
+  changed; an `ObjectNotFoundError` is not a failure at all, because already-gone is
+  the outcome being asked for.
+- **Export is a subject-access request, not a dump of everything you can see**
+  (M4 slice 4). A recruiter may read the resumes of people who applied to their
+  postings — slice 3 widened `_owned_resume` for exactly that — and those belong to
+  the applicants, who export them from their own accounts. What comes back is what
+  is *about* the caller, including `document_text` and the verified profile:
+  withholding the substance would make the right to a copy decorative.
+- **Consent has no default and is stored with its version** (M4 slice 4). A field
+  defaulting to true is not consent, so `POST /resumes` has none and a missing one is
+  a 422 from the schema — before a byte is stored or a call is billed. `consent_version`
+  sits beside `consented_at` for the reason `prompt_version` sits beside
+  `requirements_hash`: "they consented" and "they consented to *this wording*" are
+  different claims, and only one survives a rewrite. `GET /resumes/consent` serves the
+  text so a client shows it rather than inventing its own, and the web client sends
+  what the box says rather than a hard-coded `true`.
+- **SQLite is told to enforce foreign keys** (M4 slice 4, `db.enforce_foreign_keys`).
+  It does not by default, so `ON DELETE CASCADE` and `ON DELETE SET NULL` were inert
+  there and enforced on Postgres — and **the entire suite runs on SQLite**, so nothing
+  could see the difference. Same class as SQLite storing the NUL that Postgres refused
+  (§11). Found by writing the erasure test and watching it fail for the wrong reason.
 - **The role is read from the row, never carried in the token** (M4 slice 2).
   Putting it in the JWT would mean a demotion did nothing until the access token
   expired — a window in which a permission you removed is still live. Every check
@@ -935,16 +967,17 @@ than a reconstruction. **M5–M6 are still a draft**; review each the same way.
 | 1 | The visibility timeout | **done** — `jobs.reclaim_stalled` + the arq cron in `worker.py`, `can_retry` as a predicate; **no migration**; `tests/test_retry.py` |
 | 2 | RBAC: a role on the one actor | **done** — `Role` on `models/core.py`, `require_role` in `api/deps.py`, migration `0007` with a derived backfill, `tests/test_rbac.py` |
 | 3 | The application and its state machine | **done** — `models/application.py`, `applications.py` (pure), `services/application_service.py`, `api/routes/applications.py`, migration `0008`; widened `_owned_resume` and moved the ranking's filename server-side; `tests/test_applications.py` |
-| 4 | PDPA: consent, export, delete | migration `0009` |
+| 4 | PDPA: consent, export, delete | **done** — `services/privacy_service.py`, `GET /auth/me/export`, `DELETE /auth/me`, `GET /resumes/consent`, migration `0009`, `PRAGMA foreign_keys=ON`; `tests/test_pdpa.py` |
 | 5 | A thin UI for the journey | cuttable |
 
-**Three things to know before slice 4:**
+**Three things to know before slice 5:**
 
-1. **PDPA's erasure has to face `application_events.actor_id`.** It is `SET NULL`
-   rather than `CASCADE` on purpose: deleting an account must not delete the record
-   of what happened to *other people's* applications. Slice 4 should confirm that
-   deliberately rather than discover it — and decide what a deleted applicant's own
-   application history becomes, which cascade currently answers by removing it.
+1. **The web client is the only part of M4 without a face.** Slice 5 is the thin UI
+   for applying, listing and moving an application. `web/lib/` must stay pure so
+   `npm test` needs no DOM — the same property as the Python suite needing no server.
+   `ApplicationOut` already carries `job_title` and `resume_filename`, so a list view
+   needs no second request per row, the way `GET /jobs/{id}/ranking` did for slice 5
+   of M3.
 2. **Keep the two kinds of refusal apart.** A wrong *role* for a route is **403** —
    the route is in `/docs` and saying so leaks nothing. Not *your* resource stays
    **404**, because a 403 there is an id-probing oracle. Mixing them is the easiest

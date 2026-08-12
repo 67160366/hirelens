@@ -515,11 +515,35 @@ match the pattern already in the codebase.
   log read out of `psql` with its actors and evidence, a Thai requirement at 36 chars /
   90 bytes, and a ranking naming a resume the recruiter's own `GET /resumes` returns
   zero of. Migration round-trips on Postgres and SQLite with `alembic check` clean.
-- [ ] 4. **PDPA: consent, export, delete** (migration `0009`). `DELETE /me` removes
-  **blobs first, then rows, and aborts without deleting anything if a blob cannot
-  go** — so "deleted" is never a lie. The other order leaves an object in MinIO that
-  no row points at, which is the actual PDPA failure; a row pointing at a missing
-  blob is already a handled state.
+- [x] 4. **PDPA: consent, export, delete** (2026-08-12). `app/services/privacy_service.py`
+  holds both rights in one module because they are the same question asked twice —
+  export says what is held about you, delete removes exactly that, and if the two
+  disagree one of them is lying. Migration `0009` adds `consented_at` and
+  `consent_version` to `resumes`, **nullable and deliberately not backfilled**:
+  nobody was asked, and writing "now" onto old rows would fabricate an agreement.
+  Four decisions inside it:
+  **erasure deletes stored files before rows and abandons everything if one refuses**
+  (503, nothing changed). The other order leaves an object no row points at —
+  undiscoverable and so unerasable, which is the real PDPA failure; a row whose file
+  is missing is already a handled, reported state.
+  **Export is a subject-access request, not a dump of everything you can see.** A
+  recruiter may read an applicant's resume and it is still not theirs to export. What
+  comes back *is* the substance — `document_text` and the verified profile — because
+  withholding it would make the right to a copy decorative.
+  **Consent has no default and carries its version.** A field defaulting to true is
+  not consent, so a missing one is a 422 from the schema, before anything is stored.
+  `GET /resumes/consent` serves the wording so a client shows it rather than inventing
+  its own, and the web client sends what the box says rather than a hard-coded `true`.
+  **SQLite is told to enforce foreign keys.** Found by writing the cascade test and
+  watching it fail for the wrong reason: SQLite ignores every `ON DELETE` clause
+  unless asked, so `CASCADE` and `SET NULL` were inert there and live on Postgres —
+  and the whole suite runs on SQLite. Same class as SQLite storing the NUL Postgres
+  refused.
+  Pinned by `tests/test_pdpa.py` (21 cases; suite 508 → 529) plus 2 vitest cases, and
+  all four confirmed load-bearing by mutation: 4, 1, 1 and 2 cases fail respectively.
+  Verified live **on `STORAGE_BACKEND=minio`** on purpose — a filesystem cannot show
+  "the object outlived the row" the way a bucket can: `mc ls` reports **0 objects**
+  under the account's prefix afterwards, `psql` 0 rows, and the token 401.
 - [ ] 5. **A thin UI** for the journey, cuttable. The same call M3 made: enough for a
   person to drive it in a browser, with the full recruiter UI still M5.
 

@@ -226,7 +226,7 @@ class TestTheCandidatesRoute:
         job_id = await self._job(authed_client)
 
         for name in ("resume_en.pdf", "resume_two_column.pdf"):
-            uploaded = await authed_client.post("/resumes", files=resume_upload(name))
+            uploaded = await authed_client.post("/resumes", **resume_upload(name))
             assert uploaded.status_code in (200, 201), uploaded.text
             await run_resume_job(context, uuid.UUID(uploaded.json()["id"]))
 
@@ -247,7 +247,7 @@ class TestTheCandidatesRoute:
         job_id = await self._job(authed_client)
 
         for name in ("resume_en.pdf", "resume_two_column.pdf"):
-            uploaded = await authed_client.post("/resumes", files=resume_upload(name))
+            uploaded = await authed_client.post("/resumes", **resume_upload(name))
             await run_resume_job(context, uuid.UUID(uploaded.json()["id"]))
 
         body = (await authed_client.get(f"/jobs/{job_id}/candidates")).json()
@@ -256,7 +256,7 @@ class TestTheCandidatesRoute:
 
     async def test_it_spends_nothing(self, authed_client: AsyncClient, context: JobContext) -> None:
         job_id = await self._job(authed_client)
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         await run_resume_job(context, uuid.UUID(uploaded.json()["id"]))
 
         before = (await authed_client.get(f"/jobs/{job_id}/screenings")).json()
@@ -270,7 +270,7 @@ class TestTheCandidatesRoute:
         # Uploaded but never run, so it has no `document_text`. Screening it would
         # raise `NotScreenable`, and offering it would promise work that must fail.
         job_id = await self._job(authed_client)
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         assert uploaded.status_code in (200, 201)
 
         body = (await authed_client.get(f"/jobs/{job_id}/candidates")).json()
@@ -280,7 +280,7 @@ class TestTheCandidatesRoute:
         self, authed_client: AsyncClient, context: JobContext, queue: RecordingQueue
     ) -> None:
         job_id = await self._job(authed_client)
-        uploaded = await authed_client.post("/resumes", files=resume_upload())
+        uploaded = await authed_client.post("/resumes", **resume_upload())
         resume_id = uploaded.json()["id"]
         await run_resume_job(context, uuid.UUID(resume_id))
 
@@ -304,9 +304,7 @@ class TestTheCandidatesRoute:
             requirements=[{"kind": "skill", "label": "Rust"}],
             description="Kubernetes Terraform gRPC",
         )
-        uploaded = await authed_client.post(
-            "/resumes", files=resume_upload("resume_two_column.pdf")
-        )
+        uploaded = await authed_client.post("/resumes", **resume_upload("resume_two_column.pdf"))
         await run_resume_job(context, uuid.UUID(uploaded.json()["id"]))
 
         body = (await authed_client.get(f"/jobs/{job_id}/candidates")).json()
