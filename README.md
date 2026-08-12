@@ -40,14 +40,15 @@ points at a parser problem rather than hiding one.
 
 ## Status
 
-**M1 complete.** Upload a PDF, get back a profile in which every field is traceable
-to the source.
+**M3 complete.** Upload a PDF, get back a profile in which every field is traceable
+to the source — then post a job, and see every candidate ranked by requirements they
+can be shown to meet, each verdict citing the line it rests on.
 
 | Milestone | Scope |
 |---|---|
 | **M1 ✅** | Parse (PDF, offsets, Thai), extract, verify evidence, retry on rejection, auth, upload API, web UI |
-| M2 | Async worker + queue, OCR for scans, DOCX, two-column layout fix, MinIO, PDF viewer with highlighted spans |
-| M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking |
+| **M2 ✅** | Async worker + queue, OCR for scans, DOCX, two-column layout fix, MinIO, evidence viewer |
+| **M3 ✅** | Job requirements, retrieval, requirement-level judging, ranking, a screening UI |
 | M4 | Application state machine, idempotency, race conditions, RBAC, PDPA |
 | M5 | Full recruiter UI, observability, deploy |
 
@@ -65,14 +66,15 @@ Requires only Docker. No Python, Node or Tesseract on the host.
 docker compose up -d --build
 ```
 
-That builds two images and runs seven services: `postgres`, `redis`, `minio`,
-a one-shot `migrate`, the `api`, the `worker` and the `web` client.
+That builds two images and runs eight services: `postgres`, `redis`, `minio`, the
+one-shot `createbucket` and `migrate`, then the `api`, the `worker` and the `web`
+client.
 
 | | |
 |---|---|
 | API | <http://localhost:8000> — OpenAPI at `/docs` |
 | Web | <http://localhost:3000> |
-| MinIO console | <http://localhost:9001> (unused until M2 #7) |
+| MinIO console | <http://localhost:9001> — holds uploads when `STORAGE_BACKEND=minio` |
 
 ```bash
 docker compose ps          # api and web report healthy; migrate exits 0
@@ -136,6 +138,13 @@ credential endpoints. Full schema at `/docs`.
 | `GET` | `/resumes/{id}` | Profile, evidence spans and the text they index into |
 | `GET` | `/resumes/{id}/events` | SSE progress stream until the status settles |
 | `POST` | `/resumes/{id}/retry` | Replay a `dead_lettered` or `failed` resume |
+| `POST` `GET` `PATCH` `DELETE` | `/jobs`, `/jobs/{id}` | Job postings |
+| `POST` `GET` `PATCH` `DELETE` | `/jobs/{id}/requirements[/{rid}]` | What a candidate is judged against; nested so ownership is settled once |
+| `POST` `GET` | `/jobs/{id}/screenings` | Judge a resume against the job. **202** when it queued work, **200** when the stored result already answers |
+| `GET` | `/jobs/{id}/ranking` | Candidates ordered, each entry carrying its verdicts *and* their citations. No model call |
+| `GET` | `/jobs/{id}/candidates` | Which resumes are worth paying to judge. A hint, never a gate — every resume is returned, ordered |
+| `GET` | `/screenings/{id}` | One screening, with the text its citations index into |
+| `POST` | `/screenings/{id}/retry` | Replay a stopped screening |
 | `GET` | `/health` | Liveness, and which provider is active |
 
 There is deliberately **no `/users` listing, no `/logout` and no username check.**
@@ -171,20 +180,27 @@ match kinds: exact=10
 Next.js (App Router, TS, Tailwind)
    │  REST
    ▼
-FastAPI ──► PostgreSQL (+pgvector, for M3)   ← SQLite works for local dev
+FastAPI ──► PostgreSQL                      ← SQLite works for local dev
    │        Redis          (job queue)
-   │        MinIO / S3     (M2; local filesystem today)
+   │        MinIO / S3     (or the local filesystem)
    │
    └─ enqueue ─► ARQ worker            ← or QUEUE_BACKEND=inline, no Redis
                     ▼
-        Pipeline: parse → extract → verify evidence → score (M3)
+        parse → extract → verify evidence      (one resume)
+        judge requirements → verify evidence   (one screening)
                              │
                              └─► LLM provider (fake | gemini)
+
+        rank · retrieve                        (pure functions, no model call)
 ```
 
-Upload stores the file, queues the work and returns a `pending` resume; the client
-polls `GET /resumes/{id}` until it settles. An SSE progress stream replaces the
-polling in M2 #3.
+Upload stores the file, queues the work and returns a `pending` resume. The client
+follows `GET /resumes/{id}/events` until the status settles, and falls back to polling
+`GET /resumes/{id}` when the stream ends without a verdict.
+
+Ranking and retrieval deliberately spend nothing: both are pure functions over rows
+that already exist, which is what lets a recruiter adjust a weight and watch the list
+reorder without re-billing a single screening.
 
 ### Provider-agnostic by design
 
@@ -228,11 +244,13 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
   renders, so the file does not say — and inventing a page number would be a guess
   presented as a fact. Tables *are* read, in document order, because that is where a
   resume usually keeps its skills.
-- **Two-column PDFs interleave.** pdfplumber reads in visual order, so a job title
-  from the right column can land beside contact details from the left. Quotes stay
-  truthful; adjacency misleads. Pinned by
-  `tests/test_parse.py::TestTwoColumnLayout`, including a `strict` xfail that will
-  start passing when M2 adds bbox column detection.
+- **Column detection is conservative, so some two-column layouts still interleave.**
+  M2 #6 reads a two-column page one column at a time, but only where it is confident:
+  an unusually narrow gutter, or columns wildly unequal in size, fall back to
+  pdfplumber's visual order, where a job title from the right column can land beside
+  contact details from the left. That direction is deliberate — a page wrongly split
+  reorders text that was fine. Quotes stay truthful either way; adjacency is what
+  misleads. Pinned by `tests/test_layout.py`, which tests each guard separately.
 - **OCR text is faithful to what was read, not to what was printed.** A scanned page
   is recovered with Tesseract (`OCR_ENGINE=tesseract`), and the recognized text
   becomes the document every quote is checked against — so the guardrail is
@@ -261,9 +279,12 @@ tests do not depend on a Thai-capable system font being installed.
 ## Tests
 
 ```bash
-cd api && pytest -q            # 130 tests, no database or API key needed
-cd web && npm run typecheck
+cd api && pytest -q            # 439 tests, no database, no API key, no Tesseract
+cd web && npm run typecheck && npm test
 ```
+
+A further 38 are skipped unless you opt in to the real thing — Postgres, Tesseract,
+MinIO, or a billed provider. `CLAUDE.md` lists the environment variable each needs.
 
 CI runs lint, format, types, tests, a migration up/down round-trip, and the web
 build.

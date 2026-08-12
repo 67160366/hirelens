@@ -40,6 +40,9 @@ policy, screenings are ordered into a ranking, there is a UI a person can drive 
 the UI, and retrieval. That is the clearest sign the early slices stored the right
 things: `GET /jobs/{id}/ranking` already returned verdicts *with* their citations, so
 the UI needed no new endpoint, and retrieval scores text the database already held.
+Ranking being a pure function over rows that already exist is worth preserving
+specifically: it is what lets a recruiter drag a weight and watch the list reorder
+without re-billing a single screening.
 
 The idea that made the guardrail generalize, now shipped rather than planned:
 **the model is never asked for a verdict.** It is asked only for quotes showing a
@@ -52,24 +55,11 @@ them being re-implemented. §5 says why `not_met` is deliberately not available.
 a list and produces no claim about anyone; delete the module and every verdict in the
 system is unchanged. That is what makes it safe for it to be approximate.
 
-Slice 4 is the one slice that costs nothing to run: ranking is a pure function over
-rows that already exist, with **no model call, no new table and no migration**. That
-is deliberate and worth preserving — it is what lets a recruiter drag a weight and
-watch the list reorder without re-billing a single screening.
-
-The one idea to carry into the remaining slices, now shipped rather than planned:
-**the model is never asked for a verdict.** It is asked only for quotes showing a
-requirement is met, and the application derives `met` (a quote resolved) or
-`not_evidenced` (none did) from what `EvidenceResolver` could locate — so judging
-inherits the guardrail, the `dropped` list and the hallucination rate without any of
-them being re-implemented or weakened. §5 says why `not_met` is deliberately not
-available.
-
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 411 passed, 38 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans`, 32 for judging, 40 for screening and 32 for ranking. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `pytest -q` | 439 passed, 38 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans`, 32 for judging, 40 for screening, 32 for ranking and 28 for retrieval. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -124,22 +114,21 @@ available.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything
-through M3 slice 4 is pushed and green on CI** (run `31520096469`, 2026-08-12 —
-both the `api` and `web` jobs, including `Verify migrations apply and reverse`, the
-step that caught migration `0006`). That run reports **411 passed, 38 skipped** on a
-runner with no Tesseract, no database, no MinIO and no API key — the same numbers as
-a local run, which is the opt-in test design doing its job — plus the vitest cases in
-`web/`, now **28** (9 before slice 5). It carries **no annotations at all**, which is
-new: earlier green runs still emitted Node deprecations from inside
-`actions/setup-node`. Read them anyway — §1's `setup-uv` story is why.
+`main` is on GitHub at <https://github.com/67160366/hirelens>, and **all six M3
+slices are pushed and green on CI** (run `31528127553`, 2026-08-12 — both the `api`
+and `web` jobs, including `Verify migrations apply and reverse`, the step that caught
+migration `0006`). A local run reports **439 passed, 38 skipped**, and the runner —
+no Tesseract, no database, no MinIO, no API key — reports the same, which is the
+opt-in test design doing its job. Plus the vitest cases in `web/`, now **28** (9
+before slice 5). Recent runs carry **no annotations at all**, which is new: earlier
+green runs still emitted Node deprecations from inside `actions/setup-node`. Read
+them anyway — §1's `setup-uv` story is why.
 
-**Slice 5 (the thin UI) is committed but was not yet pushed when this was written** —
-check `git rev-list --count origin/main..main` rather than trusting that sentence.
-A batch of verified-but-unpushed commits is the easiest way for local and CI to
-drift apart — slice 1 sat in the working tree, uncommitted, for a whole session —
-and CI is the only thing that tests a clean machine with no `.env`, no Docker and
-no API key.
+**Check `git rev-list --count origin/main..main` rather than trusting the paragraph
+above** — it was wrong for two commits before this one was corrected. A batch of
+verified-but-unpushed commits is the easiest way for local and CI to drift apart —
+slice 1 sat in the working tree, uncommitted, for a whole session — and CI is the
+only thing that tests a clean machine with no `.env`, no Docker and no API key.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`,
 `mypy app`, `pytest -q`, then `npm ci`/`typecheck`/`lint`/`build`. It has no
