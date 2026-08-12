@@ -4,6 +4,7 @@ Everything is re-exported here so Alembic's autogenerate sees the full metadata
 from a single import.
 """
 
+from app.models.application import Application, ApplicationEvent, ApplicationState
 from app.models.base import Base
 from app.models.core import (
     Candidate,
@@ -22,6 +23,9 @@ from app.models.matching import (
 )
 
 __all__ = [
+    "Application",
+    "ApplicationEvent",
+    "ApplicationState",
     "Base",
     "Candidate",
     "ExtractedProfileRow",

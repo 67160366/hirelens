@@ -26,7 +26,8 @@ from app.api.deps import (
 )
 from app.config import Settings
 from app.jobs import is_stalled
-from app.models import Candidate, Resume, ResumeStatus
+from app.models import Candidate, Job, Resume, ResumeStatus, Role
+from app.models.application import Application
 from app.services import resume_service
 
 logger = logging.getLogger(__name__)
@@ -206,18 +207,46 @@ async def _owned_resume(
     resume_id: uuid.UUID,
     candidate: Candidate,
     with_profile: bool = False,
+    must_own: bool = True,
 ) -> Resume:
-    """One candidate's resume, or 404.
+    """A resume the caller may see, or 404.
 
-    404 rather than 403 for someone else's resume: the response should not confirm
-    that the id exists.
+    404 rather than 403 for one they may not: the response should not confirm that
+    the id exists.
+
+    Two ways to be allowed, and the second is what M4 slice 3 adds. Your own resume,
+    always — or, when `must_own` is relaxed, somebody else's **that was applied to a
+    job you own**. A recruiter cannot read a resume off the street; they can read one
+    that was put in front of them, which is the whole point of an application
+    existing. Widened here rather than at each call site so ownership stays settled
+    in one place, exactly as `_owned_job` does.
+
+    `must_own` stays **on** for anything that acts on the document rather than reads
+    it. Replaying an extraction spends a model call billed to the resume and belongs
+    to whoever uploaded it; being shown a CV is not the same as being handed the
+    controls for it.
     """
     query = select(Resume).where(Resume.id == resume_id)
     if with_profile:
         query = query.options(selectinload(Resume.profile))
 
     resume = (await session.execute(query)).scalar_one_or_none()
-    if resume is None or resume.candidate_id != candidate.id:
+    if resume is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
+    if resume.candidate_id == candidate.id or candidate.role is Role.ADMIN:
+        return resume
+    if must_own:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
+
+    applied_to_mine = (
+        await session.execute(
+            select(Application.id)
+            .join(Job, Job.id == Application.job_id)
+            .where(Application.resume_id == resume.id, Job.owner_id == candidate.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if applied_to_mine is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
     return resume
 
@@ -261,7 +290,7 @@ async def get_resume_profile(
     resume_id: uuid.UUID, candidate: CandidateDep, session: SessionDep, settings: SettingsDep
 ) -> ProfileOut:
     resume = await _owned_resume(
-        session, resume_id=resume_id, candidate=candidate, with_profile=True
+        session, resume_id=resume_id, candidate=candidate, with_profile=True, must_own=False
     )
     return ProfileOut(
         resume=ResumeOut.of(resume, settings),
@@ -376,7 +405,7 @@ async def stream_resume_progress(
     Ownership is settled here rather than inside the stream, so an unknown resume
     is a 404 instead of an error event inside a 200 response.
     """
-    await _owned_resume(session, resume_id=resume_id, candidate=candidate)
+    await _owned_resume(session, resume_id=resume_id, candidate=candidate, must_own=False)
     return StreamingResponse(
         _resume_events(sessionmaker, settings, request, resume_id),
         media_type="text/event-stream",

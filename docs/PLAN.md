@@ -484,10 +484,37 @@ match the pattern already in the codebase.
   a silent failure mode were confirmed load-bearing by mutation: answering 403 on
   ownership fails 7 cases, dropping the implicit admin fails 1. Verified live in the
   containers and through a Postgres round-trip with `alembic check` clean.
-- [ ] 3. **The application and its state machine** (migration `0008`). Also fixes the
-  two things RBAC breaks, both named in HANDOFF §9: `_owned_resume` widens to a resume
-  applied to a job you own, and `GET /jobs/{id}/candidates` stops joining filenames
-  client-side on the assumption that every screened resume belongs to the caller.
+- [x] 3. **The application and its state machine** (2026-08-12). `Application` and an
+  append-only `ApplicationEvent` (migration `0008`), the rules as a **pure** module
+  (`app/applications.py`, no session — the shape `decide_retry` and `rank_screenings`
+  established), `app/services/application_service.py` as the only writer of `state`,
+  and five routes.
+  The idea, with a body: **the state is a projection of the log**, written only in the
+  same transaction as the event that caused it, and replaying the log has to reproduce
+  it. Two rules fall out rather than being bolted on — **a shortlist is reachable only
+  from `screened` and records the screening id it rests on**, and **a rejection needs a
+  reason**. `screening` and `screened` are set by the worker from the `Screening` row,
+  which is the "derived from something checkable" clause; every other move is somebody's
+  decision, and an illegal one is **refused with its reason (409)**, never ignored.
+  Also closes the two things RBAC broke, both named in HANDOFF §9: `_owned_resume`
+  widens to a resume applied to a job you own — for **reads only**, since replaying an
+  extraction belongs to whoever uploaded it — and the ranking serves `resume_filename`
+  instead of leaving the client to join it from `GET /resumes`, which returns the
+  caller's own and no longer covers the list.
+  Two things the live run found that the suite did not:
+  **every recruiter decision was being logged as the system's.** `Actor` derived the
+  account id from the mover, and the job owner's id is not on the application, so
+  `actor_id` came back null. The test asserted `actor_role`, which was correct. `Actor`
+  carries the id now, and the assertion names *who*.
+  And **the log came back shuffled**: SQLite's `CURRENT_TIMESTAMP` has one-second
+  granularity, so every event in a fast journey shares a timestamp and the tiebreak was
+  a random UUID. Ordering is a stored `position` with a unique constraint behind it.
+  Pinned by `tests/test_applications.py` (39 cases; suite 469 → 508), with six decisions
+  confirmed load-bearing by mutation. Verified live in the containers against Gemini:
+  404-then-200 on the applicant's resume, 409 on both guarded moves, the four-row audit
+  log read out of `psql` with its actors and evidence, a Thai requirement at 36 chars /
+  90 bytes, and a ranking naming a resume the recruiter's own `GET /resumes` returns
+  zero of. Migration round-trips on Postgres and SQLite with `alembic check` clean.
 - [ ] 4. **PDPA: consent, export, delete** (migration `0009`). `DELETE /me` removes
   **blobs first, then rows, and aborts without deleting anything if a blob cannot
   go** — so "deleted" is never a lie. The other order leaves an object in MinIO that

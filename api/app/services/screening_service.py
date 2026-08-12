@@ -32,6 +32,7 @@ from app.pipeline.parse import ParsedDocument
 from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
 from app.pipeline.ranking import ScreeningView
 from app.schemas.judgment import Judgment, RequirementSpec
+from app.services import application_service
 
 if TYPE_CHECKING:
     # Import-time only, for the same reason `resume_service` does it: `app.queue`
@@ -71,7 +72,7 @@ def requirement_specs(job: Job) -> list[RequirementSpec]:
     ]
 
 
-def screening_view(screening: Screening) -> ScreeningView:
+def screening_view(screening: Screening, *, resume_filename: str | None = None) -> ScreeningView:
     """A screening as `pipeline/ranking.py` sees it.
 
     The second seam of the same kind as `requirement_specs`: rows go in, plain value
@@ -80,6 +81,7 @@ def screening_view(screening: Screening) -> ScreeningView:
     return ScreeningView(
         id=str(screening.id),
         resume_id=str(screening.resume_id),
+        resume_filename=resume_filename,
         status=str(screening.status),
         completed=screening.status is ScreeningStatus.COMPLETED,
         requirements_hash=screening.requirements_hash,
@@ -138,6 +140,10 @@ async def request_screening(
         screening = Screening(job_id=job.id, resume_id=resume.id, status=ScreeningStatus.PENDING)
         session.add(screening)
         try:
+            # The row has to exist before the application can point an event at it,
+            # so this flush happens before the application move rather than after.
+            await session.flush()
+            await application_service.follow_screening(session, screening=screening)
             await session.commit()
         except IntegrityError:
             # Two requests raced past the lookup; the loser's INSERT hit
@@ -159,6 +165,7 @@ async def request_screening(
     screening.status = ScreeningStatus.PENDING
     screening.failed_attempts = 0
     screening.failure_reason = None
+    await application_service.follow_screening(session, screening=screening)
     await session.commit()
 
     await queue.enqueue_screening(screening.id, attempt=screening.attempts)
@@ -216,6 +223,10 @@ async def process_screening(
 
     _record_usage(session, screening=screening, outcome=outcome)
     _record_result(session, screening=screening, outcome=outcome, requirements=requirements)
+    # In this transaction, not a later one: the application saying "screened" and the
+    # screening actually being completed have to land together, or the log claims a
+    # result that does not exist. `commit=False` because the job owns the boundary.
+    await application_service.follow_screening(session, screening=screening, commit=False)
 
     judgment = outcome.judgment
     logger.info(

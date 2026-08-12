@@ -61,6 +61,16 @@ class ScreeningView:
     prompt_version: str | None
     judgment: Judgment | None
 
+    resume_filename: str | None = None
+    """Display only, and last because nothing here reads it — the same standing as
+    `status`, which is carried purely to report it back on an exclusion.
+
+    It exists for one reason: the web client used to join the filename from
+    `GET /resumes`, which returns the *caller's* resumes. True while every screened
+    resume was theirs, and wrong the moment an application puts somebody else's in
+    the list. Optional so a caller that does not need it — every test of the
+    ordering — is not made to supply one."""
+
 
 def rank_screenings(
     screenings: Sequence[ScreeningView],
@@ -96,6 +106,7 @@ def rank_screenings(
             ExcludedEntry(
                 screening_id=screening.id,
                 resume_id=screening.resume_id,
+                resume_filename=screening.resume_filename,
                 status=screening.status,
                 # A missing judgment is the only way to arrive here without a
                 # reason, and `_exclusion_reason` already calls that malformed.
@@ -183,6 +194,7 @@ def _score(
         rank=0,
         screening_id=screening.id,
         resume_id=screening.resume_id,
+        resume_filename=screening.resume_filename,
         # Vacuously true for a job with no must-haves, which is the right answer:
         # nothing was required, so nothing is missing.
         gate_passed=len(must_haves_met) == len(must_haves),

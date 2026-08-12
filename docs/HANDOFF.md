@@ -120,6 +120,13 @@ system is unchanged. That is what makes it safe for it to be approximate.
 | **Roles, live in the containers** | `api` and `worker` rebuilt first, then asked directly (`'role' in Candidate.__table__.c` → True). A recruiter and a candidate registered; `GET /auth/me` reports each. The candidate gets **403** on `POST /jobs` and on `PATCH` of the recruiter's job, **404** on `GET` of it, and **200** on `GET /jobs` — the two refusals staying apart on real data, and reads staying open so slice 3 can have candidates see a posting (2026-08-12) |
 | Roles are stored as enum **names** | `psql` shows `RECRUITER` / `CANDIDATE`, not the lower-case values the API serializes — the §7 split, and what migration `0007` declares (2026-08-12) |
 | Migration `0007` on Postgres | `downgrade -1` drops the column (`information_schema` says 0), `upgrade head` puts it back and re-runs the backfill; `alembic check` finds no drift, and the column lands **NOT NULL with no server default left behind** — the default exists only to fill existing rows (2026-08-12) |
+| **The application journey, end to end in the containers** | `api` and `worker` rebuilt first, `/openapi.json` lists all five application routes. Then, against live Gemini: a recruiter posts a job whose second requirement is Thai, a candidate uploads `resume_th.pdf` and applies (**201**, then **200** on applying again). The recruiter reads that resume — **404 before the application, 200 after** — and is still refused `POST /resumes/{id}/retry` with **404**, because being shown a CV is not being handed the controls for it (2026-08-12) |
+| **A shortlist that cannot be made without evidence** | `POST /transitions {shortlisted}` before any screening answers **409**: *"An application can only be shortlisted once it has been screened, so there is cited evidence behind the decision."* Screening it moves the application `applied → screening → screened` with nobody asking, and only then does the shortlist succeed (2026-08-12) |
+| A rejection cannot be made silently | `{rejected}` with no reason answers **409** — *"Moving an application to rejected needs a reason."* The same instinct as `dropped` and `excluded`, at the level of a decision about a person (2026-08-12) |
+| **The audit log, read from `psql`** | Four rows in `position` order: `→ APPLIED` by the seeker (role `CANDIDATE`), `APPLIED → SCREENING` and `SCREENING → SCREENED` by **(system)** with the screening id attached, `SCREENED → SHORTLISTED` by the hirer (role `RECRUITER`) with the same evidence. The system's moves are anonymous and the people's are not (2026-08-12) |
+| The ranking names a resume the recruiter cannot list | `GET /jobs/{id}/ranking` returns `resume_filename=resume_th.pdf`, 2/2 met, gate passed — while `GET /resumes` for that same recruiter returns **0**. That gap is exactly what the client-side join used to fall into (2026-08-12) |
+| Thai survived the whole thing | The job's second requirement reads back from Postgres at **36 characters / 90 bytes** — sent from a `.json` file rather than a shell literal, per §10 (2026-08-12) |
+| Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
 | The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
 
 ### Repository state
@@ -245,6 +252,13 @@ api/app/
                        llm_call_logs
   models/matching.py   M3: jobs, the requirements they are screened by, and a
                        screening — one resume judged against one job
+  models/application.py  M4: an application, and the append-only log of every
+                       move it made. `state` is a projection of that log
+  applications.py    ★ M4: which moves are allowed and who may make them. Pure,
+                       like `decide_retry` — and the one place the rule lives that
+                       a shortlist needs evidence and a rejection needs a reason
+  services/application_service.py  M4: the only writer of `Application.state`,
+                       and it never writes it without the event that caused it
   services/screening_service.py  M3: request one (idempotent on the fingerprint),
                        and do the work from a worker
   storage.py           LocalStorage / MinioStorage behind one interface
@@ -510,6 +524,37 @@ Worth reading once, because the request no longer does the work.
 - **`require_role` grants `ADMIN` implicitly** (M4 slice 2). A role system where
   every route has to remember to list the superuser grows a hole the first time
   someone forgets. Mutation-tested: removing it fails 1 case.
+- **An application's state is a projection of an append-only event log** (M4 slice 3).
+  `application_events` is the record; `Application.state` is written only in the same
+  transaction as the event that caused it, and replaying the log has to reproduce it.
+  This is §9's request with a body — a state transition is a claim about a person, so
+  it is derived from something checkable or not asserted. Two rules fall out rather
+  than being bolted on: **a shortlist is reachable only from `screened` and records
+  the screening id it rests on**, and **a rejection requires a reason**. Both are
+  enforced in `app/applications.py`, which is pure. Mutation-tested six ways.
+- **An illegal transition is refused with its reason (409), never ignored** (M4 slice
+  3). A state machine that quietly drops a move it dislikes produces a system where
+  nobody can tell a decision from a bug. 409 rather than 400 or 404: the request is
+  well formed and the caller is entitled to both the route and the row — the answer
+  is about the move.
+- **The event log is ordered by a stored `position`, not by `created_at`** (M4 slice
+  3). Timestamps looked sufficient and were not: SQLite's `CURRENT_TIMESTAMP` has
+  one-second granularity, so a journey taking milliseconds writes every event with an
+  identical time and the tiebreak falls through to a *random UUID*. The log came back
+  shuffled in a test. `uq_application_events_application_position` makes the sequence
+  a fact rather than a probability.
+- **`Actor` carries the account id rather than deriving it** (M4 slice 3). The first
+  version worked it out from the mover — the applicant's id is on the application, and
+  the job owner's is not — so **every recruiter decision was logged as though the
+  system had made it**. The test that should have caught it asserted `actor_role`,
+  which was correct, and not `actor_id`. Found by reading a live audit log, not by the
+  suite. `actor_id` is null for the system and only for the system.
+- **A recruiter may read a resume applied to a job they own, but not act on it**
+  (M4 slice 3). `_owned_resume` widens for reads and keeps `must_own` for
+  `POST /retry`: replaying an extraction spends a model call billed to the resume and
+  belongs to whoever uploaded it. Being shown a CV is not being handed the controls
+  for it. Screening is scoped to the *one* posting applied to — applying somewhere is
+  not blanket consent to be judged against everything the same recruiter has open.
 - **The role is read from the row, never carried in the token** (M4 slice 2).
   Putting it in the JWT would mean a demotion did nothing until the access token
   expired — a window in which a permission you removed is still live. Every check
@@ -889,18 +934,17 @@ than a reconstruction. **M5–M6 are still a draft**; review each the same way.
 |---|---|---|
 | 1 | The visibility timeout | **done** — `jobs.reclaim_stalled` + the arq cron in `worker.py`, `can_retry` as a predicate; **no migration**; `tests/test_retry.py` |
 | 2 | RBAC: a role on the one actor | **done** — `Role` on `models/core.py`, `require_role` in `api/deps.py`, migration `0007` with a derived backfill, `tests/test_rbac.py` |
-| 3 | The application and its state machine | migration `0008` |
+| 3 | The application and its state machine | **done** — `models/application.py`, `applications.py` (pure), `services/application_service.py`, `api/routes/applications.py`, migration `0008`; widened `_owned_resume` and moved the ranking's filename server-side; `tests/test_applications.py` |
 | 4 | PDPA: consent, export, delete | migration `0009` |
 | 5 | A thin UI for the journey | cuttable |
 
-**Three things to know before slice 3:**
+**Three things to know before slice 4:**
 
-1. **The one actor is still `Candidate`.** M3's rule is "you may screen a resume you
-   own against a job you own", enforced in `_owned_job` / `_owned_resume` with 404
-   rather than 403 throughout. Slice 2 widens *who* without changing the tables —
-   and `GET /jobs/{id}/candidates` joins resume filenames client-side on the
-   assumption that every screened resume belongs to the caller, which is exactly the
-   assumption RBAC breaks. Slice 3 is where both of those get fixed.
+1. **PDPA's erasure has to face `application_events.actor_id`.** It is `SET NULL`
+   rather than `CASCADE` on purpose: deleting an account must not delete the record
+   of what happened to *other people's* applications. Slice 4 should confirm that
+   deliberately rather than discover it — and decide what a deleted applicant's own
+   application history becomes, which cascade currently answers by removing it.
 2. **Keep the two kinds of refusal apart.** A wrong *role* for a route is **403** —
    the route is in `/docs` and saying so leaks nothing. Not *your* resource stays
    **404**, because a 403 there is an id-probing oracle. Mixing them is the easiest

@@ -43,7 +43,7 @@ from app.models import Job, Resume, ResumeStatus, Screening, ScreeningStatus
 from app.models.base import utcnow
 from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
 from app.pipeline.parse import ParseError
-from app.services import resume_service, screening_service
+from app.services import application_service, resume_service, screening_service
 from app.services.screening_service import NotScreenable
 from app.storage import ObjectNotFoundError, Storage
 
@@ -439,6 +439,10 @@ async def _record_screening_failure(
             screening.status = ScreeningStatus.PENDING
 
     screening.failure_reason = decision.reason
+    # In the same transaction as the status it follows. An application left at
+    # `screening` after its screening gave up would be waiting on evidence that is
+    # never coming, with nothing in the log to say so.
+    await application_service.follow_screening(session, screening=screening, commit=False)
     await session.commit()
     logger.warning(
         "screening %s: attempt %d %s (%s)",

@@ -11,7 +11,13 @@ session: this file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.
 
 M4's governing rule, the same shape as the one below: **a state transition is a claim
 about a person, so it is derived from an append-only event log rather than asserted.**
-Nothing may write `Application.state` without appending the event that caused it.
+Nothing may write `Application.state` without appending the event that caused it —
+`app/services/application_service.py` is the only writer of both, and replaying
+`application_events` must reproduce the column. Two rules fall out and are enforced in
+`app/applications.py`: a shortlist is reachable only from `screened` and records the
+screening id it rests on, and a rejection requires a reason. The log is ordered by a
+stored `position`, never by `created_at` — SQLite's timestamps have one-second
+granularity and the tiebreak would be a random UUID.
 
 And M4's other rule, easy to undo by accident: **a role gates a route (403), while
 ownership gates a row (404).** Never merge them — a 403 on an id confirms the id

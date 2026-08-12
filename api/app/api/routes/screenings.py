@@ -36,6 +36,7 @@ from app.api.deps import (
 from app.config import Settings
 from app.jobs import is_stalled
 from app.models import Candidate, Job, Resume, Screening, ScreeningStatus
+from app.models.application import Application
 from app.pipeline.judge import requirements_fingerprint
 from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
 from app.pipeline.ranking import rank_screenings
@@ -185,6 +186,22 @@ async def _owned_screening(
     return screening, job
 
 
+async def _applied_to(session: SessionDep, job: Job, resume: Resume) -> bool:
+    """Whether this resume was put forward for *this* job.
+
+    Scoped to the one posting on purpose. Applying somewhere is not blanket consent
+    to be screened against everything the same recruiter has open.
+    """
+    found = (
+        await session.execute(
+            select(Application.id)
+            .where(Application.job_id == job.id, Application.resume_id == resume.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return found is not None
+
+
 def _fingerprint(job: Job) -> str:
     return requirements_fingerprint(screening_service.requirement_specs(job))
 
@@ -215,7 +232,7 @@ async def create_screening(
     settings: SettingsDep,
     response: Response,
 ) -> ScreeningOut:
-    """Screen one of the caller's resumes against one of their jobs.
+    """Screen a resume against one of your jobs.
 
     Idempotent in the way uploading is: asking twice for a screening that is already
     current returns it without spending a second model call. It *is* re-queued when
@@ -224,13 +241,21 @@ async def create_screening(
 
     Answers `202 Accepted` when work was queued and `200 OK` when the existing
     result already answers the question.
+
+    **Which resumes.** M3's rule was "one of your own", because the recruiter had
+    uploaded them. Slice 3 widens it exactly as `_owned_resume` is widened: your own,
+    or one that was *applied to this job*. Not "any resume applied to any job you
+    own" — a document put forward for one posting is not consent to be judged against
+    another.
     """
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
 
     resume = (
         await session.execute(select(Resume).where(Resume.id == payload.resume_id))
     ).scalar_one_or_none()
-    if resume is None or resume.candidate_id != candidate.id:
+    if resume is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
+    if resume.candidate_id != candidate.id and not await _applied_to(session, job, resume):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
 
     screening, queued = await screening_service.request_screening(
@@ -279,10 +304,22 @@ async def get_ranking(job_id: uuid.UUID, candidate: CandidateDep, session: Sessi
     job = await _owned_job(session, job_id=job_id, candidate=candidate)
     requirements = screening_service.requirement_specs(job)
 
-    result = await session.execute(select(Screening).where(Screening.job_id == job.id))
+    # Joined here rather than left to the client: `GET /resumes` returns only the
+    # caller's own, which stopped covering the list the moment an application could
+    # put somebody else's resume in it.
+    rows = (
+        await session.execute(
+            select(Screening, Resume)
+            .join(Resume, Resume.id == Screening.resume_id)
+            .where(Screening.job_id == job.id)
+        )
+    ).all()
 
     return rank_screenings(
-        [screening_service.screening_view(screening) for screening in result.scalars()],
+        [
+            screening_service.screening_view(screening, resume_filename=resume.filename)
+            for screening, resume in rows
+        ],
         requirements,
         requirements_hash=requirements_fingerprint(requirements),
         prompt_version=JUDGMENT_PROMPT_VERSION,

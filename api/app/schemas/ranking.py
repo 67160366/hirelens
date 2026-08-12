@@ -50,6 +50,7 @@ class ExcludedEntry(BaseModel):
 
     screening_id: str
     resume_id: str
+    resume_filename: str | None
     status: str
     reason: ExclusionReason
 
@@ -60,6 +61,10 @@ class RankedEntry(BaseModel):
     rank: int = Field(description="1-based, assigned after sorting.")
     screening_id: str
     resume_id: str
+    resume_filename: str | None
+    """Served rather than left to a client-side join against `GET /resumes`, which
+    only ever returns the caller's own. True while a recruiter screened resumes they
+    had uploaded; false as soon as an application puts somebody else's in the list."""
 
     gate_passed: bool
     """Every `must_have` requirement is met. A candidate missing one ranks below

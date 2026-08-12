@@ -143,6 +143,10 @@ credential endpoints. Full schema at `/docs`.
 | `POST` `GET` | `/jobs/{id}/screenings` | Judge a resume against the job. **202** when it queued work, **200** when the stored result already answers |
 | `GET` | `/jobs/{id}/ranking` | Candidates ordered, each entry carrying its verdicts *and* their citations. No model call |
 | `GET` | `/jobs/{id}/candidates` | Which resumes are worth paying to judge. A hint, never a gate — every resume is returned, ordered |
+| `POST` `GET` | `/jobs/{id}/applications` | Apply to a job (**201** new / **200** already applied); the owner's list of who applied |
+| `GET` | `/me/applications` | Everything you have applied for |
+| `GET` `POST` | `/applications/{id}[/transitions]` | One application, and moving it. **409** with the reason when the move is not allowed |
+| `GET` | `/applications/{id}/events` | The append-only log the state is derived from |
 | `GET` | `/screenings/{id}` | One screening, with the text its citations index into |
 | `POST` | `/screenings/{id}/retry` | Replay a stopped screening |
 | `GET` | `/health` | Liveness, and which provider is active |
