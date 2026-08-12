@@ -130,6 +130,9 @@ system is unchanged. That is what makes it safe for it to be approximate.
 | **Export carries the substance** | `GET /auth/me/export` for that account: 1 resume with its **382 characters of `document_text`**, the verified profile (`สมชาย ใจดี`), the consent version and timestamp, and the one `extract-v1` call it cost. A summary would have made the right to a copy decorative (2026-08-12) |
 | **Erasure, watched in the bucket** | `DELETE /auth/me` reported 1 stored file removed; the token then answered **401**; `psql` shows 0 candidate rows and 0 resume rows; and `mc ls` shows **0 objects** under that account's prefix. Run on `STORAGE_BACKEND=minio` on purpose — a filesystem cannot show "the object outlived the row" the way a bucket can, and that orphan is the failure the blobs-first order exists to prevent (2026-08-12) |
 | SQLite was ignoring every `ON DELETE` clause | Found by writing the cascade test and watching it fail for the wrong reason: SQLite does not enforce foreign keys unless asked, so `CASCADE` and `SET NULL` were inert there and live on Postgres — **and the whole suite runs on SQLite**. `PRAGMA foreign_keys=ON` now, in `db.build_engine` and in the test engine. Mutation-tested: turning it off fails 4 cases (2026-08-12) |
+| **The application journey's data, panel by panel** | Every call each new screen makes, against the containers and live Gemini: `/applications` gets `role=candidate` and one application (`Backend Engineer · resume_th.pdf · applied`); `/jobs/{id}` gets one applicant. Shortlisting before a screening is **refused by the server with the same sentence the UI disables the button with**; after screening it succeeds. The timeline reads `#0 The candidate applied / #1 The system moved it to screening [cited evidence] / #2 The system moved it to screened / #3 The employer moved it to shortlisted` — matching `describeEvent` exactly (2026-08-12) |
+| The bundle a browser would load | `npm run build` clean, `/applications` a 200 from the container, and the container's own `.next/static/chunks` carry the new strings. Note the honest limit: the pages return `null` until the client auth hook is ready, so **fetching the HTML proves nothing** — that probe came back empty and the instrument was wrong, not the code (2026-08-12) |
+| ⚠️ **Nobody has watched slice 5 in a browser** | The Chrome extension was not connected this session. Every gate is green, the data behind every panel is verified above, and that is **not the same thing** — this project has twice shipped a feature no human had seen render. It is the first check to run next session (2026-08-12) |
 | Migration `0009` on both dialects | Postgres round-trip with `alembic check` clean, `consented_at` landing as `timestamp with time zone` and both columns nullable; SQLite `upgrade head` → `downgrade base` (2026-08-12) |
 | Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
 | The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
@@ -299,6 +302,12 @@ web/
   components/Evidence.tsx, ProfileView.tsx, DocumentPane.tsx (citation highlighting)
   components/RankingTable.tsx, JudgmentView.tsx, RequirementEditor.tsx,
                        RequirementFields.tsx, AuthPanel.tsx
+  app/applications/page.tsx  M4: the candidate's half — apply, follow, withdraw
+  lib/applications.ts  M4: which moves to *offer*, and how the log reads. It
+                       deliberately does not decide what is allowed — the server
+                       does, and a second copy of those rules is the one that
+                       drifts unnoticed
+  components/ApplicationTimeline.tsx, ApplicationActions.tsx
 ```
 
 `DocumentPane` takes `references: EvidenceRef[]`, **not** a profile. That change is
@@ -968,7 +977,7 @@ than a reconstruction. **M5–M6 are still a draft**; review each the same way.
 | 2 | RBAC: a role on the one actor | **done** — `Role` on `models/core.py`, `require_role` in `api/deps.py`, migration `0007` with a derived backfill, `tests/test_rbac.py` |
 | 3 | The application and its state machine | **done** — `models/application.py`, `applications.py` (pure), `services/application_service.py`, `api/routes/applications.py`, migration `0008`; widened `_owned_resume` and moved the ranking's filename server-side; `tests/test_applications.py` |
 | 4 | PDPA: consent, export, delete | **done** — `services/privacy_service.py`, `GET /auth/me/export`, `DELETE /auth/me`, `GET /resumes/consent`, migration `0009`, `PRAGMA foreign_keys=ON`; `tests/test_pdpa.py` |
-| 5 | A thin UI for the journey | cuttable |
+| 5 | A thin UI for the journey | **done** — `web/app/applications/`, the applicants panel on `/jobs/[id]`, `lib/applications.ts`, `components/{ApplicationTimeline,ApplicationActions}.tsx`; **no API change and no migration**; `lib/applications.test.ts` |
 
 **Three things to know before slice 5:**
 

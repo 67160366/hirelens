@@ -6,13 +6,13 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-12 (latest) — M4 is scoped, and four of its five slices land
+## 2026-08-12 (latest) — M4 is scoped, and closes
 
-Nine commits. The first fixes documentation that had gone wrong, the second records
-the scope review M4 was gated on, and the rest ship slices 1 to 4 — the visibility
-timeout, RBAC, the application state machine, and PDPA.
+Eleven commits. The first fixes documentation that had gone wrong, the second records
+the scope review M4 was gated on, and the rest ship all five slices — the visibility
+timeout, RBAC, the application state machine, PDPA, and a thin UI for the journey.
 
-Suite **439 → 529**, vitest **28 → 30**, four migrations, all pushed and green.
+Suite **439 → 529**, vitest **28 → 43**, four migrations, all pushed and green.
 
 ### The docs were lying about the docs
 
@@ -207,13 +207,42 @@ The first one is a different lesson. `actor_role` was set correctly and `actor_i
 was null, so the assertion that existed passed while the log was useless. **Assert
 *who*, not what kind.**
 
+### Slice 5, and the check it could not run
+
+The candidate's half (`/applications`) and an applicants panel on `/jobs/[id]`. **No
+API change and no migration** — `ApplicationOut` already carried `job_title` and
+`resume_filename`, so a list needs no second request per row, which is the same thing
+slice 5 of M3 noticed about `GET /jobs/{id}/ranking`. Twice now, the slice that puts a
+face on a milestone has been cheap because the earlier slices stored the right things.
+
+The decision worth keeping: **the client offers moves, it does not decide them.** The
+rules live in `app/applications.py`, and a second copy in TypeScript would be the one
+that drifts without anyone noticing. `availableMoves` mirrors the table; when the two
+disagree the server's 409 wins and its sentence — written for a person — is what gets
+shown. The corollary is that a move which is not available yet is **disabled with the
+reason rather than hidden**: a missing button is indistinguishable from a bug, while
+one that says "screen this candidate first, so the decision rests on cited evidence"
+teaches the rule.
+
+**And the check that did not happen: nobody has watched it in a browser.** The Chrome
+extension was not connected. Every gate is green, and every call each screen makes was
+exercised against the containers and live Gemini — the timeline came back reading
+exactly what `describeEvent` produces, and the shortlist the UI disables is refused by
+the server with the same sentence. That is a good deal of evidence and it is **not the
+same** as somebody looking at it, which this project has learned twice. It is written
+into `HANDOFF.md` §1 as the first thing to do next session rather than left implied.
+
+One instrument note from trying: fetching `/applications` and grepping the HTML for its
+headings found nothing, because the page returns `null` until the client auth hook is
+ready. The probe was wrong, not the page — the fifth time this session that the first
+answer came from a badly aimed instrument.
+
 ### Still open, in order
 
-1. **Slice 5 — a thin UI** for the application journey, and the plan marks it
-   cuttable. M4's backend is complete and green without it; the argument for doing it
-   is M3's, that two M2 features shipped without a human ever seeing them rendered.
+1. **Watch the journey in a browser.** The one M4 check that did not run.
 2. `next@16` for the 3 high advisories. An isolated commit, not tangled into a slice.
-3. Refresh `HANDOFF.md` §1–§3 when M4 closes, the way M3's close did.
+3. **M5's scope is still a draft** reconstructed from the README. M3's and M4's scope
+   reviews both paid for themselves; do it again.
 4. Next 15 → 16 for the postcss and sharp advisories, **now 3 high**. An isolated
    commit, not tangled into a slice.
 5. M6's evaluation stays out of the critical path.

@@ -40,16 +40,19 @@ points at a parser problem rather than hiding one.
 
 ## Status
 
-**M3 complete.** Upload a PDF, get back a profile in which every field is traceable
+**M4 complete.** Upload a PDF, get back a profile in which every field is traceable
 to the source — then post a job, and see every candidate ranked by requirements they
-can be shown to meet, each verdict citing the line it rests on.
+can be shown to meet, each verdict citing the line it rests on. Candidates apply, and
+every move an application makes is recorded with who made it and what it rested on:
+**you cannot shortlist somebody who has not been screened, and you cannot reject them
+without a reason.**
 
 | Milestone | Scope |
 |---|---|
 | **M1 ✅** | Parse (PDF, offsets, Thai), extract, verify evidence, retry on rejection, auth, upload API, web UI |
 | **M2 ✅** | Async worker + queue, OCR for scans, DOCX, two-column layout fix, MinIO, evidence viewer |
 | **M3 ✅** | Job requirements, retrieval, requirement-level judging, ranking, a screening UI |
-| M4 | Application state machine, idempotency, race conditions, RBAC, PDPA |
+| **M4 ✅** | Visibility timeout, RBAC, the application state machine, PDPA (export and erasure) |
 | M5 | Full recruiter UI, observability, deploy |
 
 Picking the project up after a break: **[docs/HANDOFF.md](docs/HANDOFF.md)** — what

@@ -2,12 +2,15 @@
 
 HireLens — resume screening where every claim the system makes cites the exact text
 it came from. FastAPI (`api/`) + Next.js (`web/`). Thai and English resumes.
-Current milestone: **M4** (M3 closed 2026-08-12). **M4's scope was reviewed with the
-owner on 2026-08-12**, so `docs/PLAN.md`'s M4 holds commitments, not a reconstruction
-— four decisions and five slices, in dependency order. **M5–M6 are still a draft**;
-review each with the owner before building to it, the way M3's and M4's were. The
-authoritative per-item status is the table in `docs/PLAN.md`. Orientation for a new
-session: this file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
+Current milestone: **M5** (M4 closed 2026-08-12, M3 the same day). **M5–M6 are still
+a draft** reconstructed from the README — review each with the owner before building
+to it, the way M3's and M4's were; both paid for themselves. The authoritative
+per-item status is the table in `docs/PLAN.md`. Orientation for a new session: this
+file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
+
+**One M4 check never ran: nobody has watched the application journey in a browser.**
+`HANDOFF.md` §1 records it. It is the cheapest outstanding item and this project has
+twice shipped a feature no human had seen render.
 
 M4's governing rule, the same shape as the one below: **a state transition is a claim
 about a person, so it is derived from an append-only event log rather than asserted.**

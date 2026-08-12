@@ -17,7 +17,7 @@ commitments.
 | M1 | Parse (PDF, offsets, Thai), extract, verify evidence, retry, auth, upload API, web UI | ✅ done (2026-07-30) |
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
 | M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | ✅ done (2026-08-12) |
-| M4 | Visibility timeout, RBAC, the application state machine, PDPA | in progress (scoped 2026-08-12) |
+| M4 | Visibility timeout, RBAC, the application state machine, PDPA | ✅ done (2026-08-12) |
 | M5 | Full recruiter UI, observability, deploy | draft |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
 
@@ -544,12 +544,42 @@ match the pattern already in the codebase.
   Verified live **on `STORAGE_BACKEND=minio`** on purpose — a filesystem cannot show
   "the object outlived the row" the way a bucket can: `mc ls` reports **0 objects**
   under the account's prefix afterwards, `psql` 0 rows, and the token 401.
-- [ ] 5. **A thin UI** for the journey, cuttable. The same call M3 made: enough for a
-  person to drive it in a browser, with the full recruiter UI still M5.
+- [x] 5. **A thin UI for the journey** (2026-08-12). `web/app/applications/` is the
+  candidate's half — apply, follow, withdraw — and `/jobs/[id]` gains an applicants
+  panel grouped by state. **No API change and no migration**: `ApplicationOut` already
+  carried `job_title` and `resume_filename`, so a list needs no second request per row,
+  exactly as `GET /jobs/{id}/ranking` did for M3's slice 5. `lib/applications.ts` keeps
+  the logic pure so `npm test` still needs no DOM.
+  Two decisions inside it:
+  **the client offers moves; it does not decide them.** The rules live on the server
+  and a second copy here would be the one that drifts unnoticed, so `availableMoves`
+  mirrors the table without re-deriving its reasoning — and when the two disagree the
+  409 wins and its sentence is what gets shown.
+  **A move that is not available yet is disabled with the reason, not hidden.** A
+  missing button is indistinguishable from a bug; one that says "screen this candidate
+  first, so the decision rests on cited evidence" is what teaches the rule.
+  Pinned by `lib/applications.test.ts` (vitest 30 → 43), and four decisions confirmed
+  load-bearing by mutation — hiding the blocked shortlist, dropping the reason
+  requirement, not treating an admin as the owner, and attributing the system's moves
+  to a person each fail a case.
+  **Verified as far as it can be without a browser, and not further.** Every call each
+  screen makes was exercised against the containers and live Gemini; the timeline text
+  matches `describeEvent` exactly; the container serves the new bundle. **Nobody has
+  watched it render** — the Chrome extension was not connected — and that gap is
+  recorded in `HANDOFF.md` §1 rather than glossed over.
 
 Deliberately **not** in M4: `next@16` (3 high advisories, all transitive through
 Next — an isolated commit, not tangled into a slice), the refresh-token denylist and
 httpOnly cookies (below), and M6's evaluation.
+
+**M4 is complete** (2026-08-12). A dead worker's row is reclaimed through the retry
+policy it already had; an account has a role, and a role gates a route while ownership
+still gates a row; a candidate applies, and every move that application makes is an
+entry in an append-only log that the state is merely a projection of; and a person can
+take a copy of what is held about them or have it erased, files before rows. Two of the
+five slices needed no migration and none needed a new idea about evidence — the
+guardrail generalised to state transitions the same way it generalised to verdicts in
+M3.
 
 ## M5 — recruiter UI, observability, ship (draft)
 

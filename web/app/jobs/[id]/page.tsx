@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ApplicationActions } from "@/components/ApplicationActions";
+import { ApplicationTimeline } from "@/components/ApplicationTimeline";
 import { AuthPanel } from "@/components/AuthPanel";
 import { DocumentPane, EvidenceSelectionProvider } from "@/components/DocumentPane";
 import { JudgmentView } from "@/components/JudgmentView";
@@ -16,6 +18,10 @@ import {
   POLL_TIMEOUT_MS,
   api,
   isScreeningSettled,
+  type Account,
+  type Application,
+  type ApplicationEvent,
+  type ApplicationState,
   type Job,
   type Ranking,
   type Requirement,
@@ -26,6 +32,7 @@ import {
   type ScreeningDetail,
 } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
+import { STATE_LABELS, groupByState } from "@/lib/applications";
 import { collectJudgmentEvidence } from "@/lib/screening";
 
 const BLANK_REQUIREMENT: RequirementInput = {
@@ -43,6 +50,10 @@ export default function JobPage() {
   const { token, ready, authenticate, signOut, authorized } = useAuth();
 
   const [job, setJob] = useState<Job | null>(null);
+  const [me, setMe] = useState<Account | null>(null);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [openApplicationId, setOpenApplicationId] = useState<string | null>(null);
+  const [applicationEvents, setApplicationEvents] = useState<ApplicationEvent[]>([]);
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [screenings, setScreenings] = useState<Screening[]>([]);
   const [ranking, setRanking] = useState<Ranking | null>(null);
@@ -56,25 +67,77 @@ export default function JobPage() {
   const [busyResumeId, setBusyResumeId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  /** Everything this screen reads. Four queries, none of which bills a model call. */
+  /** Everything this screen reads. Six queries, none of which bills a model call. */
   const load = useCallback(async () => {
     try {
       await authorized(async (accessToken) => {
-        const [loadedJob, loadedResumes, loadedScreenings, loadedRanking] = await Promise.all([
+        const [
+          loadedJob,
+          loadedResumes,
+          loadedScreenings,
+          loadedRanking,
+          loadedApplications,
+          account,
+        ] = await Promise.all([
           api.getJob(jobId, accessToken),
           api.listResumes(accessToken),
           api.listScreenings(jobId, accessToken),
           api.getRanking(jobId, accessToken),
+          api.listJobApplications(jobId, accessToken),
+          api.me(accessToken),
         ]);
         setJob(loadedJob);
         setResumes(loadedResumes);
         setScreenings(loadedScreenings);
         setRanking(loadedRanking);
+        setApplications(loadedApplications);
+        setMe(account);
       });
     } catch (caught) {
       setError(errorMessage(caught, "Could not load this job"));
     }
   }, [authorized, jobId]);
+
+  /** Move an applicant through the pipeline. No model call — a row and an event. */
+  async function moveApplication(
+    applicationId: string,
+    to: ApplicationState,
+    reason?: string,
+  ) {
+    setError(null);
+    setPending(true);
+    try {
+      await authorized((t) => api.moveApplication(applicationId, to, t, reason));
+      setApplications(await authorized((t) => api.listJobApplications(jobId, t)));
+      if (openApplicationId === applicationId) {
+        setApplicationEvents(
+          await authorized((t) => api.listApplicationEvents(applicationId, t)),
+        );
+      }
+    } catch (caught) {
+      // The server answers 409 with a sentence written for a person — "an
+      // application can only be shortlisted once it has been screened, so there is
+      // cited evidence behind the decision". Showing it beats guessing.
+      setError(errorMessage(caught, "Could not move the application"));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function toggleApplicationHistory(applicationId: string) {
+    if (openApplicationId === applicationId) {
+      setOpenApplicationId(null);
+      return;
+    }
+    setOpenApplicationId(applicationId);
+    try {
+      setApplicationEvents(
+        await authorized((t) => api.listApplicationEvents(applicationId, t)),
+      );
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not load the history"));
+    }
+  }
 
   useEffect(() => {
     if (token) void load();
@@ -300,6 +363,69 @@ export default function JobPage() {
               Add
             </button>
           </form>
+        </section>
+
+        {/* Applicants ------------------------------------------------------ */}
+        <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
+          <header className="border-b border-stone-200 px-4 py-2.5 dark:border-stone-800">
+            <h2 className="text-sm font-semibold">Applicants ({applications.length})</h2>
+            <p className="mt-0.5 text-[11px] text-stone-400 dark:text-stone-500">
+              Every move is recorded with who made it and what it rested on. Shortlisting
+              needs a completed screening behind it; rejecting needs a reason.
+            </p>
+          </header>
+
+          {applications.length === 0 ? (
+            <p className="px-4 py-4 text-sm text-stone-500 dark:text-stone-400">
+              Nobody has applied yet.
+            </p>
+          ) : (
+            <div className="divide-y divide-stone-100 dark:divide-stone-800">
+              {groupByState(applications).map((group) => (
+                <div key={group.state} className="px-4 py-3">
+                  <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500">
+                    {STATE_LABELS[group.state]} ({group.applications.length})
+                  </p>
+                  <ul className="space-y-2.5">
+                    {group.applications.map((application) => (
+                      <li key={application.id}>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <p className="text-sm font-medium">
+                            {application.resume_filename}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void toggleApplicationHistory(application.id)}
+                            className="text-xs text-stone-500 underline dark:text-stone-400"
+                          >
+                            {openApplicationId === application.id ? "Hide history" : "History"}
+                          </button>
+                        </div>
+                        {me && job ? (
+                          <div className="mt-1.5">
+                            <ApplicationActions
+                              application={application}
+                              viewer={{ id: me.id, role: me.role }}
+                              jobOwnerId={me.id}
+                              busy={pending}
+                              onMove={(to, reason) =>
+                                void moveApplication(application.id, to, reason)
+                              }
+                            />
+                          </div>
+                        ) : null}
+                        {openApplicationId === application.id ? (
+                          <div className="mt-2 rounded-md bg-stone-50 p-3 dark:bg-stone-800/50">
+                            <ApplicationTimeline events={applicationEvents} />
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Screening ------------------------------------------------------- */}

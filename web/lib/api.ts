@@ -106,6 +106,17 @@ export interface ProfileResponse {
   document_text: string | null;
 }
 
+export type Role = "candidate" | "recruiter" | "admin";
+
+export interface Account {
+  id: string;
+  email: string;
+  display_name: string | null;
+  /** Which routes this account may reach. Read from the row on every request, not
+   * carried in the token, so a change takes effect immediately. */
+  role: Role;
+}
+
 export interface TokenPair {
   access_token: string;
   refresh_token: string;
@@ -115,6 +126,43 @@ export interface TokenPair {
 /* -------------------------------------------------------------------------- */
 /* M3: jobs, screenings and ranking                                            */
 /* -------------------------------------------------------------------------- */
+
+export type ApplicationState =
+  | "applied"
+  | "screening"
+  | "screened"
+  | "shortlisted"
+  | "rejected"
+  | "withdrawn";
+
+export interface Application {
+  id: string;
+  job_id: string;
+  job_title: string;
+  candidate_id: string;
+  resume_id: string;
+  /** Served by the API, not joined from `GET /resumes` — that returns the caller's
+   * own, which stopped covering the list the moment somebody else could apply. */
+  resume_filename: string;
+  state: ApplicationState;
+  created_at: string;
+}
+
+export interface ApplicationEvent {
+  id: string;
+  position: number;
+  from_state: ApplicationState | null;
+  to_state: ApplicationState;
+  /** Null means the system moved it — a worker following a screening is not a
+   * person, and the UI must not draw one. */
+  actor_id: string | null;
+  actor_role: Role | null;
+  reason: string | null;
+  /** What the move rested on, where it rested on anything. */
+  screening_id: string | null;
+  note: string | null;
+  created_at: string;
+}
 
 export type RequirementKind = "skill" | "experience" | "education" | "language" | "other";
 
@@ -422,7 +470,48 @@ export const api = {
   /* Jobs and their requirements                                             */
   /* ---------------------------------------------------------------------- */
 
+  /** The signed-in account, including its role — which is what lets the UI show a
+   * candidate their applications and a recruiter their postings, instead of
+   * offering both and letting one of them 403. */
+  me: (token: string) => request<Account>("/auth/me", {}, token),
+
   listJobs: (token: string) => request<Job[]>("/jobs", {}, token),
+
+  /* ---------------------------------------------------------------------- */
+  /* Applications                                                            */
+  /* ---------------------------------------------------------------------- */
+
+  /** Apply to a job. 201 when created, 200 when you had already applied — the
+   * natural key carrying the idempotency, so calling it twice is safe. */
+  applyToJob: (jobId: string, resumeId: string, token: string) =>
+    request<Application>(
+      `/jobs/${jobId}/applications`,
+      { method: "POST", body: JSON.stringify({ resume_id: resumeId }) },
+      token,
+    ),
+
+  listJobApplications: (jobId: string, token: string) =>
+    request<Application[]>(`/jobs/${jobId}/applications`, {}, token),
+
+  listMyApplications: (token: string) => request<Application[]>("/me/applications", {}, token),
+
+  /** Move an application. The server answers **409 with the reason** when the move
+   * is not allowed, which surfaces here as an `ApiError` carrying that sentence —
+   * it is written for a person to read, so show it rather than replacing it. */
+  moveApplication: (
+    applicationId: string,
+    toState: ApplicationState,
+    token: string,
+    reason?: string,
+  ) =>
+    request<Application>(
+      `/applications/${applicationId}/transitions`,
+      { method: "POST", body: JSON.stringify({ to_state: toState, reason: reason ?? null }) },
+      token,
+    ),
+
+  listApplicationEvents: (applicationId: string, token: string) =>
+    request<ApplicationEvent[]>(`/applications/${applicationId}/events`, {}, token),
 
   getJob: (id: string, token: string) => request<Job>(`/jobs/${id}`, {}, token),
 
