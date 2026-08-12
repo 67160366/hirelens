@@ -5,18 +5,19 @@ agent — can see where the project is and what comes next. Update the status
 column and checklists as work lands; refresh `docs/HANDOFF.md` when a milestone
 completes.
 
-M1–M2 reflect decisions already made and verified, and so does **M3** — its scope
-was reviewed with the owner on 2026-08-08, so the four decisions and six slices
-below are commitments rather than a reconstruction. **M4–M6 are still a draft**
-reconstructed from the README milestone table and HANDOFF scope notes — review each
-of them the same way before treating the details as commitments.
+M1–M2 reflect decisions already made and verified, and so do **M3** and **M4** —
+their scopes were reviewed with the owner (M3 on 2026-08-08, M4 on 2026-08-12), so
+the decisions and slices below are commitments rather than a reconstruction.
+**M5–M6 are still a draft** reconstructed from the README milestone table and HANDOFF
+scope notes — review each of them the same way before treating the details as
+commitments.
 
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | Parse (PDF, offsets, Thai), extract, verify evidence, retry, auth, upload API, web UI | ✅ done (2026-07-30) |
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
 | M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | ✅ done (2026-08-12) |
-| M4 | Application state machine, idempotency, race conditions, RBAC, PDPA | draft |
+| M4 | Visibility timeout, RBAC, the application state machine, PDPA | in progress (scoped 2026-08-12) |
 | M5 | Full recruiter UI, observability, deploy | draft |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
 
@@ -192,7 +193,9 @@ page with the object in the bucket and **absent** from the uploads volume.
   the obvious approach, produces `(cid:N)` placeholders instead, which is a different
   defect.
 - [ ] **The visibility timeout** for a worker that dies mid-job, the last §11
-  follow-up. Still scheduled with M5's observability work.
+  follow-up. **Moved out of M5 and into M4 as slice 1** (2026-08-12): it is the only
+  open item that can strand a user's data with no way back through the API, which
+  makes it a correctness item rather than an observability one.
 
 ## M3 — matching engine
 
@@ -382,14 +385,65 @@ the worker under the shared retry policy, screenings are ordered into a ranking,
 a UI a person can drive, and retrieval says where to spend the next model call. Three of
 the six slices cost no model call and no migration at all.
 
-## M4 — backend depth (draft)
+## M4 — backend depth
 
-- Application state machine (applied → screened → shortlisted → …) with
-  transitions enforced server-side.
-- Idempotency keys on submission endpoints; fix remaining check-then-act races.
-- RBAC: candidate vs recruiter vs admin roles.
-- PDPA compliance: consent capture at upload, data-retention policy, delete/export
-  endpoints (the user-journeys spec calls for this explicitly).
+Scope reviewed and agreed with the owner on 2026-08-12, replacing the draft
+reconstructed from the README. Four calls were made before any code:
+
+| Question | Decision |
+|---|---|
+| Whether an `Application` is a row | **Yes, a first-class one.** Today the system has no notion of who applied to what: a screening is `(job × resume)` that the job's owner pushes through. "applied → screened → shortlisted" only means something once applying does |
+| RBAC shape | **A `role` column on `Candidate`** — candidate / recruiter / admin. HANDOFF §5 already promised M4 widens *who* may own a job without changing the table, and this keeps that promise |
+| PDPA depth | **Delete and export first**, with consent captured as a flag at upload. A retention *scheduler* is a new piece of infrastructure and is deliberately not in this milestone |
+| Where the visibility timeout goes | **Pulled forward to slice 1**, out of M5. It is the only open item that can strand a user's data with no way back through the API, and "fix remaining check-then-act races" is M4's own line — a row stuck at `processing` is that family |
+
+**The idea that carries the guardrail into this milestone:** HANDOFF §9 asked that
+anything M4 adds which *makes a claim* — a state transition, a shortlist decision —
+get the same treatment as a verdict: derived from something checkable, or not
+asserted. Applied here, **an application's state is never asserted, it is derived
+from an append-only log of transitions.** `Application.state` is a projection written
+in the same transaction as the event that caused it, and replaying the events has to
+reproduce it. Two rules fall out, and they are the point rather than a side effect:
+
+- **You may not shortlist someone who has not been screened.** A shortlist is a claim
+  about a person, so it must rest on evidence that exists; the event records the
+  screening id it rests on.
+- **A rejection requires a reason.** Nothing about a person disappears silently — the
+  same instinct as `dropped` and `excluded`.
+
+And one call taken by default: **idempotency stays a natural key, not an
+`Idempotency-Key` table.** `uq_applications_job_candidate` is the same move as
+`uq_resumes_candidate_content` and `uq_screenings_job_resume`, and 201-vs-200 carries
+the answer the way 202-vs-200 already does on screenings. A key table would be a
+second mechanism for something the schema already guarantees. The draft's wording was
+"idempotency keys on submission endpoints"; this is the narrower reading, chosen to
+match the pattern already in the codebase.
+
+- [ ] 1. **The visibility timeout** — a worker that dies mid-job. No migration.
+  Reclaims a row stuck at `processing` through the *existing* retry policy rather
+  than a second one, so a row that keeps killing its worker dead-letters instead of
+  looping reap → retry → die. Also makes `POST /resumes/{id}/retry` accept a stalled
+  `processing` row, which is what actually closes "no way back through the API" —
+  including under `QUEUE_BACKEND=inline`, where no reaper runs.
+- [ ] 2. **RBAC: a role on the one actor** (migration `0007`). Wrong role for a route
+  is **403**; not your resource stays **404**, unchanged from M3. The migration
+  backfills `RECRUITER` from `jobs.owner_id` rather than guessing a default —
+  existing accounts genuinely do both, and who owns a job is checkable.
+- [ ] 3. **The application and its state machine** (migration `0008`). Also fixes the
+  two things RBAC breaks, both named in HANDOFF §9: `_owned_resume` widens to a resume
+  applied to a job you own, and `GET /jobs/{id}/candidates` stops joining filenames
+  client-side on the assumption that every screened resume belongs to the caller.
+- [ ] 4. **PDPA: consent, export, delete** (migration `0009`). `DELETE /me` removes
+  **blobs first, then rows, and aborts without deleting anything if a blob cannot
+  go** — so "deleted" is never a lie. The other order leaves an object in MinIO that
+  no row points at, which is the actual PDPA failure; a row pointing at a missing
+  blob is already a handled state.
+- [ ] 5. **A thin UI** for the journey, cuttable. The same call M3 made: enough for a
+  person to drive it in a browser, with the full recruiter UI still M5.
+
+Deliberately **not** in M4: `next@16` (3 high advisories, all transitive through
+Next — an isolated commit, not tangled into a slice), the refresh-token denylist and
+httpOnly cookies (below), and M6's evaluation.
 
 ## M5 — recruiter UI, observability, ship (draft)
 
@@ -420,7 +474,10 @@ the six slices cost no model call and no migration at all.
   `/auth/logout`. The limitation is pinned by a characterization test in
   `tests/test_api.py::TestChangePassword` rather than left to be discovered.
 - [ ] Refresh-token denylist, which would unlock a real `/auth/logout` and let a
-  password change revoke outstanding sessions. Belongs with M4's RBAC work.
+  password change revoke outstanding sessions. Considered for M4's scope review on
+  2026-08-12 and deliberately left out — it is a storage decision (where a denylist
+  lives, and how it is swept) rather than an authorization one, and none of M4's four
+  commitments need it. Raise it again if PDPA's delete path makes it cheap.
 
 ## M6 — optional evaluation (draft, one-week timebox)
 
