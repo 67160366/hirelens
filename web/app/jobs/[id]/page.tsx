@@ -33,15 +33,8 @@ import {
 } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
 import { STATE_LABELS, groupByState } from "@/lib/applications";
+import { BLANK_REQUIREMENT } from "@/lib/requirements";
 import { collectJudgmentEvidence } from "@/lib/screening";
-
-const BLANK_REQUIREMENT: RequirementInput = {
-  kind: "skill",
-  label: "",
-  detail: null,
-  must_have: false,
-  weight: 1,
-};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -12,14 +12,7 @@ import {
   type RequirementInput,
 } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
-
-const BLANK_REQUIREMENT: RequirementInput = {
-  kind: "skill",
-  label: "",
-  detail: null,
-  must_have: false,
-  weight: 1,
-};
+import { BLANK_REQUIREMENT } from "@/lib/requirements";
 
 export default function JobsPage() {
   const { token, ready, authenticate, signOut, authorized } = useAuth();

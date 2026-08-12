@@ -1,6 +1,7 @@
 "use client";
 
 import type { RequirementInput, RequirementKind } from "@/lib/api";
+import { WEIGHT_BOUNDS } from "@/lib/requirements";
 
 /**
  * The five inputs that describe one requirement.
@@ -26,6 +27,7 @@ const KIND_LABELS: Record<RequirementKind, string> = {
 
 const field =
   "rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950";
+
 
 export function RequirementFields({
   value,
@@ -89,9 +91,9 @@ export function RequirementFields({
 
       <input
         type="number"
-        min={0.1}
-        max={100}
-        step={0.5}
+        min={WEIGHT_BOUNDS.min}
+        max={WEIGHT_BOUNDS.max}
+        step={WEIGHT_BOUNDS.step}
         value={value.weight}
         disabled={disabled}
         onChange={(event) => patch({ weight: Number(event.target.value) })}
