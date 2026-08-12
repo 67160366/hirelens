@@ -3,8 +3,9 @@
 Written 2026-07-30 at the end of M1, rewritten 2026-08-07 after the Postgres
 cutover, again 2026-08-08 when M2 completed, and updated the same day when M3's
 scope was agreed and its first slice landed. Updated 2026-08-12 when slice 5 put a
-face on the matching engine and closed the last two M2 checks, and again when
-slice 6 closed **M3**. Read this first when picking the project back up — then
+face on the matching engine, again when slice 6 closed **M3**, and again the same
+day when all five slices of **M4** landed. Read this first when picking the project
+back up — then
 `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
 
@@ -55,11 +56,37 @@ them being re-implemented. §5 says why `not_met` is deliberately not available.
 a list and produces no claim about anyone; delete the module and every verdict in the
 system is unchanged. That is what makes it safe for it to be approximate.
 
+**M4 — backend depth — is complete** (2026-08-12). Its scope was reviewed with the
+owner the same day, the way M3's was, and all five slices shipped against the agreed
+shape: a row whose worker died is reclaimed rather than stranded, an account has a
+role, a candidate applies and their application moves through states somebody can
+account for, a person can take a copy of what is held about them or have it erased,
+and there is a UI for the journey.
+
+**The idea that carried the guardrail into it:** §9 of the previous handoff asked that
+anything making a *claim about a person* get the same treatment as a verdict. A
+shortlist is such a claim. So **an application's state is never asserted — it is a
+projection of an append-only log of transitions**, and replaying the log has to
+reproduce it. Two rules fall out rather than being bolted on: you cannot shortlist
+somebody who has not been screened (and the event records the screening it rests on),
+and you cannot reject them without a reason. That is the same move as never asking the
+model for offsets, and never asking it for a verdict, applied a third time.
+
+**Two of the five slices needed no migration**, and the UI needed no API change at
+all — `ApplicationOut` already carried what a list view renders, exactly as
+`GET /jobs/{id}/ranking` did for M3's slice 5. Twice running, the slice that makes a
+milestone visible has been cheap because the slices before it stored the right things.
+
+**One M4 check never ran: nobody has watched the journey in a browser.** The Chrome
+extension was not connected. Everything else is verified below, and that is not the
+same thing — it is the first item in §9.
+
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 439 passed, 38 skipped, **no xfail** — 270 at the close of M2, plus 25 for M3 slice 1, 12 for `page_spans`, 32 for judging, 40 for screening, 32 for ranking and 28 for retrieval. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `pytest -q` | 529 passed, 38 skipped, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `npm test` | **43** in `web/` (28 at the close of M3): 13 for `lib/applications.ts` and 2 for the upload's consent field. Still no DOM and no React testing library |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -139,15 +166,15 @@ system is unchanged. That is what makes it safe for it to be approximate.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>, and **all six M3
-slices are pushed and green on CI** (run `31528127553`, 2026-08-12 — both the `api`
-and `web` jobs, including `Verify migrations apply and reverse`, the step that caught
-migration `0006`). A local run reports **439 passed, 38 skipped**, and the runner —
-no Tesseract, no database, no MinIO, no API key — reports the same, which is the
-opt-in test design doing its job. Plus the vitest cases in `web/`, now **28** (9
-before slice 5). Recent runs carry **no annotations at all**, which is new: earlier
-green runs still emitted Node deprecations from inside `actions/setup-node`. Read
-them anyway — §1's `setup-uv` story is why.
+`main` is on GitHub at <https://github.com/67160366/hirelens>, and **all of M3 and
+all of M4 are pushed and green on CI** (run `31598781577`, 2026-08-12 — both the
+`api` and `web` jobs, including `Verify migrations apply and reverse`, the step that
+caught migration `0006`). A local run reports **529 passed, 38 skipped**, and the
+runner — no Tesseract, no database, no MinIO, no API key — reports the same, which is
+the opt-in test design doing its job. Plus **43** vitest cases in `web/`. Recent runs
+carry **no annotations at all**, which is new: earlier green runs still emitted Node
+deprecations from inside `actions/setup-node`. Read them anyway — §1's `setup-uv`
+story is why.
 
 **Check `git rev-list --count origin/main..main` rather than trusting the paragraph
 above** — it was wrong for two commits before this one was corrected. A batch of
@@ -199,7 +226,8 @@ need a server is the wrong change; add an opt-in module like
 
 ## 3. Read these files first, in this order
 
-Roughly 30 minutes to get oriented on the pipeline, plus 15 for the job layer.
+Roughly 30 minutes to get oriented on the pipeline, 15 for the job layer, and 15
+more for M4's application layer (12–14).
 
 | Order | File | Why |
 |---|---|---|
@@ -214,7 +242,10 @@ Roughly 30 minutes to get oriented on the pipeline, plus 15 for the job layer.
 | 9 | **`api/app/jobs.py`** | The background half: claiming a resume, and the whole retry policy |
 | 10 | `api/app/queue.py` | The inline/arq seam, and why the two behave differently on retry |
 | 11 | `docs/llm-providers.md` | Provider choice, `FAKE_MODE`, real cost figures |
-| 12 | `docs/PLAN.md` | Milestones M2–M6 and the reasoning behind the scope calls |
+| 12 | **`api/app/applications.py`** | M4's heart, and short: which moves an application may make and who may make them. Pure, like `decide_retry`. The two rules worth reading twice — a shortlist needs the screening it rests on, a rejection needs a reason — are enforced here and nowhere else |
+| 13 | `api/app/services/application_service.py` | The only writer of `Application.state`, and it never writes it without the event that caused it. That pairing is the design |
+| 14 | `api/app/services/privacy_service.py` | Export and erasure. Read the deletion order and why it is that way round |
+| 15 | `docs/PLAN.md` | Milestones M2–M6 and the reasoning behind the scope calls |
 
 Skim only when needed: `api/app/api/routes/*`, `api/app/security.py`,
 `api/app/storage.py`, `api/app/worker.py` (it is a thin adapter), `web/*`.
@@ -967,9 +998,9 @@ free.
 | 5 | A thin web UI | **done** — `web/app/jobs/`, `lib/auth.ts`, `lib/screening.ts`, `components/{RankingTable,JudgmentView,RequirementEditor,RequirementFields,AuthPanel}.tsx`; **no API change, no migration**; `lib/screening.test.ts` |
 | 6 | Retrieval — the pre-filter | **done** — `pipeline/retrieval.py`, `GET /jobs/{id}/candidates`, `RETRIEVAL_BACKEND`; no model call, no migration; `tests/test_retrieval.py` |
 
-**M3 is closed, and M4 is under way.** Its scope was reviewed with the owner on
-2026-08-12 — four decisions and five slices, in `docs/PLAN.md`, commitments rather
-than a reconstruction. **M5–M6 are still a draft**; review each the same way.
+**M3 and M4 are both closed**, each after a scope review with the owner rather than
+a reconstruction. **M5–M6 are still a draft**; review each the same way — it has now
+paid for itself twice.
 
 | # | Work | Status |
 |---|---|---|
@@ -979,23 +1010,24 @@ than a reconstruction. **M5–M6 are still a draft**; review each the same way.
 | 4 | PDPA: consent, export, delete | **done** — `services/privacy_service.py`, `GET /auth/me/export`, `DELETE /auth/me`, `GET /resumes/consent`, migration `0009`, `PRAGMA foreign_keys=ON`; `tests/test_pdpa.py` |
 | 5 | A thin UI for the journey | **done** — `web/app/applications/`, the applicants panel on `/jobs/[id]`, `lib/applications.ts`, `components/{ApplicationTimeline,ApplicationActions}.tsx`; **no API change and no migration**; `lib/applications.test.ts` |
 
-**Three things to know before slice 5:**
+**Four things to know before starting M5:**
 
-1. **The web client is the only part of M4 without a face.** Slice 5 is the thin UI
-   for applying, listing and moving an application. `web/lib/` must stay pure so
-   `npm test` needs no DOM — the same property as the Python suite needing no server.
-   `ApplicationOut` already carries `job_title` and `resume_filename`, so a list view
-   needs no second request per row, the way `GET /jobs/{id}/ranking` did for slice 5
-   of M3.
+1. **Watch the application journey in a browser — it is the one M4 check that never
+   ran**, because the Chrome extension was not connected. Everything else is verified
+   in §1, including every call each screen makes, and this project has twice shipped
+   a feature no human had seen render. It is twenty minutes and it goes first.
 2. **Keep the two kinds of refusal apart.** A wrong *role* for a route is **403** —
    the route is in `/docs` and saying so leaks nothing. Not *your* resource stays
    **404**, because a 403 there is an id-probing oracle. Mixing them is the easiest
    way to undo M3's whole ownership story.
-3. **Retrieval is the only part of the system allowed to be approximate**, because it
-   makes no claim about anyone. Anything M4 adds that *does* make a claim — a state
-   transition, a shortlist decision — needs the same treatment as a verdict: derived
-   from something checkable, or not asserted. That is why an application's state is
-   a projection of an append-only event log rather than a column anyone may set.
+3. **Retrieval is still the only part of the system allowed to be approximate**,
+   because it makes no claim about anyone. Everything M4 added that *does* make a
+   claim went through the same treatment as a verdict, which is why an application's
+   state is a projection of an append-only log rather than a column anyone may set.
+   Hold that line in M5: an observability dashboard reports, and a recruiter UI must
+   not start asserting what the API refuses to.
+4. **`next@16` is still owed.** Three high advisories, all transitive through Next,
+   and it is a framework major — an isolated commit, not folded into a slice.
 
 M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 
