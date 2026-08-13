@@ -17,7 +17,22 @@ green, and where every call each screen makes had been verified against live Gem
 Suite **529 → 534**, vitest **43 → 62**, **eight** commits, none pushed. All seven are
 fixed and re-watched.
 
+### Start here next session
+
+1. Read this entry, then `HANDOFF.md` §1 and §9, then `PLAN.md`.
+2. **Nothing is half-done.** Working tree clean, all seven fixes committed with their
+   tests, `pytest -q` 534 / vitest 62 / typecheck / lint / container build all green.
+   **9 commits sit ahead of `origin/main` and none are pushed** — ask before pushing.
+3. Next two items, in the owner's own order: **`next@16`**, then the **M5 scope
+   review**. Neither has been started. §"Still open" below has the detail.
+4. The dev database still holds `m4b.candidate` / `m4b.recruiter` from the first
+   walkthrough, with one job and one shortlisted application. Left deliberately.
+
 ### What was actually broken
+
+Seven defects. The first four made the journey unusable; the last three made it lie or
+go stale. Each was fixed as its own commit with a test that fails without it — except
+the last, which says in its message why it has none.
 
 | Defect | Why nothing caught it |
 |---|---|
@@ -25,12 +40,10 @@ fixed and re-watched.
 | **`Create job` would not submit.** The weight input had `min=0.1 step=0.5` while every new requirement starts at `weight: 1`, and a browser needs `(value - min)` to be a whole multiple of `step`. `(1 - 0.1) / 0.5` is 1.8 | The rule lived in JSX attributes and `npm test` has no DOM. There was nowhere for it to be checked |
 | **A recruiter could not screen an applicant.** The picker was built from `GET /resumes`, which returns only the caller's own — zero for a recruiter — so the disabled Shortlist could never unlock | `NOTES.md` **predicted this exactly** on 2026-08-12: "`GET /resumes` … stops being true when M4's RBAC lets a recruiter screen someone else's resume." Slice 3 fixed the ranking-filename half of that sentence and left this half |
 | **Every transition answered 422.** `moveApplication` and `applyToJob` hand-built their `RequestInit` instead of using `json()`, so neither sent `Content-Type` and Starlette never parsed the body | The 13 cases covering `lib/applications.ts` pin the **pure logic** — which moves to offer, how the log reads — and nothing exercised the wiring beneath them |
-
-Three more were not blocking, and are now closed too, one commit each: registration
-could not choose a role in the web client (so the browser could only ever create
-candidates), the blocked-Shortlist sentence still read "Screen this candidate first"
-once already shortlisted, and the applicants panel did not refresh when a screening
-completed.
+| **The ranking showed a UUID prefix, not the filename.** `resume_filename` was already on the wire and the client was still joining it against a list it did not have | Nothing renders in `npm test`, and the API test asserted the field was *present*, not that anything used it |
+| **Registration could not choose a role.** `SelfServiceRole` had been a registration field on the server since M4 slice 2 — the only way to become a recruiter — and `api.register` sent `{email, password}`. So a browser could create nothing but candidates, and every recruiter screen was unreachable without `curl` | No test asserted the *body* of a write, only its effect. The server's own tests posted the role directly and passed |
+| **The blocked-Shortlist sentence was wrong once shortlisted.** One message for everything-but-`screened` meant an already-screened, already-shortlisted application was told "Screen this candidate first" | The test asserted the button was *blocked with a reason*, not which reason. A disabled button exists to teach the rule, so teaching the wrong one is worse than none |
+| **The applicants panel never refreshed.** `applications` was read once on mount; the poll after a screening re-read only the screenings, so the panel and the panel below it showed two versions of one fact until a reload | A component effect, and `web/` has vitest with **no DOM** by design. There is nowhere for it to be checked — see "the fix that ships without a test" below |
 
 ### The shape they share
 
@@ -131,14 +144,57 @@ At that moment two finished, fully green fixes were sitting uncommitted with not
 disk explaining them. Hence: **commit each finished piece the moment its gates are
 green**, and treat a tool that died on a quota limit as having produced no coverage.
 
+### Things to watch, and to improve
+
+- **`web/` has one untestable region, and it is now load-bearing.** Four of the seven
+  defects and the whole of the seventh live in code `npm test` cannot reach: JSX
+  attributes, component effects, and the `RequestInit` a call builds. Two of the three
+  were closed by moving the logic *out* — `lib/requirements.ts` for the weight bounds,
+  a table over every JSON write in `lib/api.test.ts`. That is the pattern to keep
+  reaching for. The one left is the panel refresh, and if a fourth of these appears it
+  is probably time to talk about jsdom rather than keep paying the browser tax.
+- **Driving this UI from the browser tools has one real trap.** `form_input` sets the
+  DOM value but does **not** always reach React's state — the consent checkbox looked
+  ticked and the upload still went out with `consent=false` (the server correctly
+  refused it, which is slice 4 working). Coordinate clicks were also unreliable here:
+  the screenshot is 1568 px wide while the viewport reports 2133, and clicks landed
+  somewhere else. What worked every time was `javascript_tool` calling `el.click()`,
+  and the React-native value setter plus an `input` event for text fields. Use that.
+- **`describeEvent` reads slightly oddly for one state.** The timeline says "The system
+  moved it to **being screened**" because `STATE_LABELS.screening` is "Being screened"
+  and the sentence lowercases it. Not wrong, not a defect, but if anyone touches that
+  file it is worth a nicer phrasing.
+- **`page.tsx` shadows `screenable`**: the memo of screenable resumes, and a
+  per-row boolean inside its own `.map`. ESLint is happy and it reads badly.
+- **Two `refresh*` callbacks now exist** — `refreshAfterEdit` (job, screenings,
+  ranking) and `refreshAfterScreening` (screenings, ranking, applications). They are
+  genuinely different sets, but a third one is a smell; if one appears, model "what
+  this action moves" properly instead.
+
 ### Still open, in order
 
 1. `next@16` for the 3 high advisories. Deferred *again* this session, deliberately —
    the browser check outranked it. All four route files are `"use client"` and
    `/jobs/[id]` uses `useParams()`, so the async-`params` migration does not apply.
+   `output: "standalone"` is load-bearing for `web/Dockerfile`, so check the standalone
+   build still emits what the Dockerfile copies before rebuilding the container — and
+   then re-walk the journey against it, which is now cheap because the acceptance test
+   is written down two sections above.
 2. **M5's scope is still a draft.** Its review is now worth more than it was: roughly
-   two of the four "full recruiter UI" items are already shipped, and this session
-   showed the real gap is not features.
+   two of the four "full recruiter UI" items are already shipped, so the UI half of M5
+   is about **two** items (the dropped-claims audit view, and the parked pdf.js
+   overlay), not "a full UI". Six questions to bring, each with a recommendation
+   rather than a blank slate: what is actually left of the recruiter UI; whether the
+   pdf.js overlay justifies a route serving **raw PII bytes** (and note an OCR'd page
+   has no bbox geometry to overlay onto at all); observability as an in-app dashboard
+   over `llm_call_logs` (bounded, no new infrastructure) versus shipping logs
+   somewhere (breaks "every dependency has a no-server default" unless it goes behind
+   a seam); httpOnly cookies now or later (they drag in the twice-deferred
+   refresh-token denylist, but would make `EventSource` viable again — a
+   simplification as well as a hardening); what "deploy" means; and M5's organizing
+   idea. The proposal for the last one, to confirm rather than assume: **every number
+   on an observability screen is a query over rows the system already wrote, and can
+   name the rows it came from.** Cite your source, applied to metrics.
 3. M6's evaluation stays out of the critical path.
 4. Two throwaway accounts from the *first* walkthrough (`m4b.candidate`,
    `m4b.recruiter`) are still in the dev database with one job and one shortlisted
@@ -164,6 +220,34 @@ green**, and treat a tool that died on a quota limit as having produced no cover
   read as coverage in a review and defended nothing. The gap is written into the
   commit message so the next person can close it properly if the harness ever grows a
   DOM.
+
+### How to run a session on this project
+
+Written down because the same four things have paid off repeatedly, and because a new
+session starts cold.
+
+- **Open with what is running, not just what to build.** "Docker is up, the browser is
+  connected" changed what was worth doing this session more than any instruction did —
+  the browser check had been blocked for two sessions and became the cheapest item in
+  the project the moment the extension connected. Saying which of Docker, the browser
+  and the Gemini key are available is worth more than a paragraph of direction.
+- **Expect a design fork to come back as a question, and answer it.** Opening
+  `GET /jobs` broke a test that was deliberately written with its reasoning attached.
+  Two coherent answers existed and one of them quietly violated M4's own rule, so it
+  went to the owner. That is the right shape: a test written on purpose is never
+  flipped silently. The answer ("a posting is public to read") took thirty seconds and
+  is now pinned by a test of its own.
+- **Say when to stop, and the order.** "Fix the four blocking ones first", then "finish
+  the remaining three before moving on" both kept a session that could have sprawled
+  into `next@16` and M5 on one thread. Ordering beats scoping here.
+- **Nothing is pushed without being asked.** Nine commits are sitting on `main` locally.
+  That is deliberate and has been confirmed twice; keep asking.
+- **A budget worth knowing:** the Gemini free tier is 20 requests/day. A full journey
+  costs about 2 (one extraction, one judging). Re-walking with the *same* data costs 0,
+  which is why the re-walk after `next@16` is nearly free.
+- **And the rule this session bought** (now `CLAUDE.md` #7): finished work gets
+  committed the moment its gates are green, and a tool that died on a quota limit
+  produced no coverage — its empty result is not a clean result.
 
 ---
 
