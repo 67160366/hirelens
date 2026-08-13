@@ -190,22 +190,59 @@ export default function JobPage() {
   );
 
   /**
+   * Re-read everything a screening moves. Three queries, still no model call.
+   *
+   * **The applications are in this set because a screening moves them.** The worker
+   * writes `Application.state` in the *same transaction* as the screening's status —
+   * `follow_screening`, called with `commit=False` from both `screening_service` and
+   * `jobs` — so the two are one fact. A page that re-read the screenings and not the
+   * applications held two copies of it and showed them side by side: "Screened ·
+   * completed" in the panel below, and the same person still under **Applied** with a
+   * Shortlist disabled saying "Screen this candidate first". Only a reload agreed
+   * with the server. Watched in a browser 2026-08-13.
+   *
+   * One callback rather than three call sites, so the next list this screen grows has
+   * an obvious home instead of a fourth place to be forgotten.
+   *
+   * The screenings are read **first and alone**, and the rest only after that answer
+   * is in hand. Issued together they could straddle the worker's commit — a screening
+   * read as `completed` beside an application read a moment before it moved — which is
+   * the stale render this whole function exists to stop, arriving by a narrower door.
+   */
+  const refreshAfterScreening = useCallback(
+    () =>
+      authorized(async (accessToken) => {
+        const loadedScreenings = await api.listScreenings(jobId, accessToken);
+        const [loadedRanking, loadedApplications] = await Promise.all([
+          api.getRanking(jobId, accessToken),
+          api.listJobApplications(jobId, accessToken),
+        ]);
+        setScreenings(loadedScreenings);
+        setRanking(loadedRanking);
+        setApplications(loadedApplications);
+        return loadedScreenings;
+      }),
+    [authorized, jobId],
+  );
+
+  /**
    * Wait for the worker to finish judging.
    *
-   * Screenings have no progress stream — only resumes do — so this polls the list
-   * rather than each row: one request covers every screening on the job, however
-   * many are in flight.
+   * Screenings have no progress stream — only resumes do — so this polls rather than
+   * subscribing: one round covers every screening on the job, however many are in
+   * flight. It refreshes the applicants alongside them, which is what lets that panel
+   * move **Applied → Being screened → Screened** on its own while the worker runs,
+   * rather than sitting still and then being right after a reload.
    */
   const waitForScreenings = useCallback(async () => {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     for (;;) {
-      const list = await authorized((accessToken) => api.listScreenings(jobId, accessToken));
-      setScreenings(list);
+      const list = await refreshAfterScreening();
       if (list.every((item) => isScreeningSettled(item.status))) return;
       if (Date.now() >= deadline) return;
       await sleep(POLL_INTERVAL_MS);
     }
-  }, [authorized, jobId]);
+  }, [refreshAfterScreening]);
 
   /**
    * Screen one resume — the only thing on this page that spends money.
@@ -228,11 +265,12 @@ export default function JobPage() {
           ? `Judging ${resumeName(resumeId)} — one model call.`
           : `${resumeName(resumeId)} is already screened against these requirements. Nothing was spent.`,
       );
+      // The queued branch refreshes on its way out of the poll, once per round. The
+      // other one changed nothing on the server — `start` returns before it touches
+      // the application — but this page's copy can still be older than the last thing
+      // the worker did, and re-reading it costs three queries and no model call.
       if (queued) await waitForScreenings();
-      await authorized(async (accessToken) => {
-        setRanking(await api.getRanking(jobId, accessToken));
-        setScreenings(await api.listScreenings(jobId, accessToken));
-      });
+      else await refreshAfterScreening();
     } catch (caught) {
       setError(errorMessage(caught, "Could not screen this resume"));
     } finally {
