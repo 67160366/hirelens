@@ -5,7 +5,8 @@ cutover, again 2026-08-08 when M2 completed, and updated the same day when M3's
 scope was agreed and its first slice landed. Updated 2026-08-12 when slice 5 put a
 face on the matching engine, again when slice 6 closed **M3**, and again the same
 day when all five slices of **M4** landed, and again on 2026-08-13 when slice 5 was
-finally watched in a browser and turned out not to work. Read this first when picking
+finally watched in a browser, turned out not to work, and had all seven of its defects
+fixed. Read this first when picking
 the project back up — then
 `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
@@ -86,8 +87,8 @@ same thing — it is the first item in §9.
 
 | Check | Result |
 |---|---|
-| `pytest -q` | 529 passed, 38 skipped, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
-| `npm test` | **43** in `web/` (28 at the close of M3): 13 for `lib/applications.ts` and 2 for the upload's consent field. Still no DOM and no React testing library |
+| `pytest -q` | **534** passed, 38 skipped, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `npm test` | **62** in `web/` (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -165,6 +166,8 @@ same thing — it is the first item in §9.
 | **The journey, browser-only, after the fixes** | Against the containers and live Gemini, with no `curl` anywhere: a recruiter authors a job leaving both weights at the **default**, a candidate uploads `resume_th.pdf` with consent (10/10 claims verified, 1 model call), sees `Backend Engineer` in *Apply to a job*, applies, and the recruiter screens that applicant from their own panel — 100.0%, 2/2 met including the Thai requirement — then shortlists. `psql` afterwards: `#0 → APPLIED` by `CANDIDATE` **with** `actor_id`, `#1`/`#2` by **(system)** with `actor_id` null and a screening attached, `#3 → SHORTLISTED` by `RECRUITER` with both. The Thai label reads back at **36 characters / 90 bytes**, typed through the browser (2026-08-13) |
 | Consent, watched rather than inferred | The box is **unticked on load** (`useState(false)`) and the file picker is **disabled until it is ticked** — so an upload cannot assert an agreement nobody made. The earlier ticked state in this session was a stray click of mine, not a default (2026-08-13) |
 | Erasure, through the API | Both throwaway accounts erased with `DELETE /auth/me`: `stored_files_removed: 1`, the token then 401, and `psql` reports 0 rows. The blobs-before-rows order exercised for real rather than only in tests (2026-08-13) |
+| **The other three defects, fixed and watched** | The whole journey re-walked a second time on the rebuilt container against live Gemini, browser-only. A **recruiter account created from the browser** — impossible before, since `AuthPanel` sent no role — with the "nothing here verifies that you represent an employer" note showing on the recruiter choice. Then, with the applicants panel sampled every 400 ms and **nothing reloaded**: `t=0.0s APPLIED (1)` with Shortlist disabled reading *"Screen this candidate first…"*, `t=0.4s BEING SCREENED (1)` reading *"A screening is running."*, `t=20.5s SCREENED (1)` with Shortlist **enabled**. After shortlisting, the disabled button reads **"Already shortlisted."** — the sentence that was wrong. Timeline: *The candidate applied / The system moved it to being screened / …to screened / The employer moved it to shortlisted*, the last three carrying `cited evidence`. Ranking names `resume_th.pdf`, no console errors, both accounts erased (2026-08-13) |
+| The Thai requirement, and what it proves | `ภาษาไทย` typed as a `language` requirement came back **not met** against a resume written entirely in Thai — because the document never *states* a language proficiency, so no quote can be located for it. That is `not_evidenced` doing its job, not a miss: the alternative is inferring a claim about a person from the fact that their CV is in Thai (2026-08-13) |
 | Migration `0009` on both dialects | Postgres round-trip with `alembic check` clean, `consented_at` landing as `timestamp with time zone` and both columns nullable; SQLite `upgrade head` → `downgrade base` (2026-08-12) |
 | Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
 | The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
@@ -1026,6 +1029,16 @@ paid for itself twice.
    wrong endpoint, an input whose bounds rejected its own default — and none of
    them are the kind of thing a test of pure logic can see. Whatever M5 ships,
    somebody drives it in a browser *inside* the slice, not after it.
+   **All seven are closed** as of the same day, one commit each. The last of them —
+   the applicants panel not re-reading itself when a screening moves it — is the one
+   worth remembering, because it is the first fix here that **ships without a unit
+   test on purpose**. It lives in a component effect, and `web/` has vitest with no
+   DOM by design (§5). The two tests that could have been written were both refused:
+   an "applications agree with screenings" invariant needs the server's `_ALLOWED`
+   table re-implemented on the client, which is exactly what `lib/applications.ts`
+   exists to refuse, and asserting the refresh set restates the line above it. When
+   the only available test would be decorative, say so in the commit and let the
+   browser be the check.
 2. **Keep the two kinds of refusal apart.** A wrong *role* for a route is **403** —
    the route is in `/docs` and saying so leaks nothing. Not *your* resource stays
    **404**, because a 403 there is an id-probing oracle. Mixing them is the easiest

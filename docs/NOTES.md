@@ -14,7 +14,8 @@ predicted — and it found **seven defects, four of them blocking**, in a slice 
 `pytest -q`, `mypy`, `npm run typecheck`, `lint`, `build` and 43 vitest cases were all
 green, and where every call each screen makes had been verified against live Gemini.
 
-Suite **529 → 534**, vitest **43 → 57**, four commits, none pushed.
+Suite **529 → 534**, vitest **43 → 62**, **eight** commits, none pushed. All seven are
+fixed and re-watched.
 
 ### What was actually broken
 
@@ -25,10 +26,11 @@ Suite **529 → 534**, vitest **43 → 57**, four commits, none pushed.
 | **A recruiter could not screen an applicant.** The picker was built from `GET /resumes`, which returns only the caller's own — zero for a recruiter — so the disabled Shortlist could never unlock | `NOTES.md` **predicted this exactly** on 2026-08-12: "`GET /resumes` … stops being true when M4's RBAC lets a recruiter screen someone else's resume." Slice 3 fixed the ranking-filename half of that sentence and left this half |
 | **Every transition answered 422.** `moveApplication` and `applyToJob` hand-built their `RequestInit` instead of using `json()`, so neither sent `Content-Type` and Starlette never parsed the body | The 13 cases covering `lib/applications.ts` pin the **pure logic** — which moves to offer, how the log reads — and nothing exercised the wiring beneath them |
 
-Three more are open and not blocking: registration cannot choose a role in the web
-client (so the browser can only ever create candidates), the blocked-Shortlist sentence
-still reads "Screen this candidate first" once already shortlisted, and the applicants
-panel does not refresh when a screening completes.
+Three more were not blocking, and are now closed too, one commit each: registration
+could not choose a role in the web client (so the browser could only ever create
+candidates), the blocked-Shortlist sentence still read "Screen this candidate first"
+once already shortlisted, and the applicants panel did not refresh when a screening
+completed.
 
 ### The shape they share
 
@@ -85,17 +87,63 @@ Consent was watched too, and it is right: unticked on load, with the file picker
 disabled until it is ticked. Both throwaway accounts were erased through
 `DELETE /auth/me` — `stored_files_removed: 1`, token then 401, 0 rows in `psql`.
 
+### The other three, and a walkthrough that watched the clock
+
+The remaining three were fixed the same day and the journey walked a **third** time on
+the rebuilt container. The interesting one is the applicants panel. With the panel
+sampled every 400 ms and nothing reloaded:
+
+```
+t= 0.0s  APPLIED (1)         Shortlist disabled — "Screen this candidate first…"
+t= 0.4s  BEING SCREENED (1)  Shortlist disabled — "A screening is running."
+t=20.5s  SCREENED (1)        Shortlist enabled
+```
+
+Three renders that were previously one frozen render plus a reload. The middle line is
+the second fix showing up in the same trace — before it, that state said "Screen this
+candidate first" about a screening that was already running.
+
+### The fix that ships without a test, on purpose
+
+The panel fix has **no unit test**, and that was a decision rather than an oversight.
+`web/` has vitest with no DOM and no React testing library — the same property the
+Python suite protects by needing no server — and the bug lives in a component effect.
+Two tests were available and both were refused:
+
+- An `applicationsFollow(applications, screenings)` invariant would have to know when
+  the system's move is *refused* (terminal, or `shortlisted` + `completed`), which
+  means re-implementing the server's `_ALLOWED` table on the client. That is precisely
+  what `lib/applications.ts` says never to do: "a second place for them to be wrong,
+  and the client's copy would be the one nobody notices drifting."
+- Asserting the refresh set is `[screenings, ranking, applications]` restates the line
+  above it and fails only when somebody edits both together. A tautology.
+
+So the commit says there is no test and names the browser as the check. **A decorative
+test is worse than an honest gap** — it is the "test that could not fail" in yet another
+costume, and this session has now met five of those.
+
+### The standing rule this session bought
+
+Written into `CLAUDE.md` ("How to work here" #7) and worth repeating: a five-agent
+background audit died on a session limit and returned `{"confirmed": []}` — an empty
+result from a run that never happened, which looks exactly like a clean bill of health.
+At that moment two finished, fully green fixes were sitting uncommitted with nothing on
+disk explaining them. Hence: **commit each finished piece the moment its gates are
+green**, and treat a tool that died on a quota limit as having produced no coverage.
+
 ### Still open, in order
 
-1. **Three non-blocking defects** from the walkthrough: the missing role selector, the
-   wrong blocked-Shortlist sentence, and the applicants panel not refreshing.
-2. `next@16` for the 3 high advisories. Deferred *again* this session, deliberately —
+1. `next@16` for the 3 high advisories. Deferred *again* this session, deliberately —
    the browser check outranked it. All four route files are `"use client"` and
    `/jobs/[id]` uses `useParams()`, so the async-`params` migration does not apply.
-3. **M5's scope is still a draft.** Its review is now worth more than it was: roughly
+2. **M5's scope is still a draft.** Its review is now worth more than it was: roughly
    two of the four "full recruiter UI" items are already shipped, and this session
    showed the real gap is not features.
-4. M6's evaluation stays out of the critical path.
+3. M6's evaluation stays out of the critical path.
+4. Two throwaway accounts from the *first* walkthrough (`m4b.candidate`,
+   `m4b.recruiter`) are still in the dev database with one job and one shortlisted
+   application between them. This session's two (`m4c.*`) were erased; those were
+   left alone rather than deleted unasked.
 
 ### Advice for the owner
 
@@ -110,6 +158,12 @@ disabled until it is ticked. Both throwaway accounts were erased through
 - **When a green test guards a feature nobody has used, ask what it asserts.** Three of
   this session's four blocking defects had a test sitting next to them that passed for a
   reason unrelated to the behaviour anyone wanted.
+- **"No test, and here is why" is an acceptable commit — a decorative test is not.**
+  The seventh fix ships without one because the only two available would either fork
+  the server's rules onto the client or restate the line above them. Both would have
+  read as coverage in a review and defended nothing. The gap is written into the
+  commit message so the next person can close it properly if the harness ever grows a
+  DOM.
 
 ---
 

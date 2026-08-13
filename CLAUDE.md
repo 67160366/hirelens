@@ -131,6 +131,13 @@ From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm te
 6. **Scope discipline.** Milestones live in `docs/PLAN.md`. In particular, the
    baseline-ranking evaluation is M6 with a one-week timebox — do not quietly pull
    it into earlier milestones.
+7. **Leave the session readable.** Commit each finished slice the moment its gates
+   are green rather than batching — a session that ends early should never hold work
+   that only a diff explains. If a run is cut short, the dated `docs/NOTES.md` entry
+   names the uncommitted files, the gate numbers actually run, and the next step. And
+   a tool that died on a quota limit produced no coverage: its empty result is not a
+   clean result, and reporting it as one is the same mistake as a test that cannot
+   fail.
 
 ## Map
 

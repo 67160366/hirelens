@@ -578,9 +578,16 @@ match the pattern already in the codebase.
   `applyToJob` skipped the `json()` helper and sent no `Content-Type`.
   All four are fixed, each as its own commit with a test that fails without it, and the
   whole journey was then re-walked in a browser with no `curl` anywhere.
-  Three remain open and are not blocking: registration cannot choose a role in the web
-  client, the blocked-Shortlist sentence is wrong once already shortlisted, and the
-  applicants panel does not refresh when a screening completes.
+  **The remaining three are closed too**, same day, one commit each: registration now
+  offers the two self-service roles (and says plainly that nothing verifies an
+  employer), the blocked-Shortlist sentence has one reason per state instead of one for
+  everything-but-`screened`, and the applicants panel re-reads itself when a screening
+  moves it. Only the third has no unit test, and deliberately: it is a component
+  effect, `web/` has vitest with no DOM by design, and the two candidate tests were
+  rejected as a re-implementation of the server's `_ALLOWED` table and as a tautology.
+  The check for it is the browser, where the panel was watched moving
+  `APPLIED → BEING SCREENED → SCREENED` on its own and the Shortlist enabling without a
+  reload. Gates: vitest **43 → 62**, `pytest` **529 → 534**.
   **The lesson is the one the slice's own note asked for:** verifying every call a
   screen makes is not the same as using the screen, and the four blocking defects were
   all wiring — invisible to a suite that tests pure logic, which is what
