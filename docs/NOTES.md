@@ -22,7 +22,14 @@ fixed and re-watched.
 1. Read this entry, then `HANDOFF.md` §1 and §9, then `PLAN.md`.
 2. **Nothing is half-done.** Working tree clean, all seven fixes committed with their
    tests, `pytest -q` 534 / vitest 62 / typecheck / lint / container build all green.
-   **9 commits sit ahead of `origin/main` and none are pushed** — ask before pushing.
+   ~~**9 commits sit ahead of `origin/main` and none are pushed** — ask before pushing.~~
+   **Corrected 2026-08-13:** those nine were pushed before the session ended.
+   `git rev-list --count origin/main..main` answers **0**, `git ls-remote` puts the real
+   remote on `c683b3d`, and CI run `31678374829` is green on it. The standing rule that
+   produced the original sentence is unchanged — **nothing is pushed without being
+   asked** — but this paragraph was reporting a state that no longer existed, which is
+   the exact failure the 2026-08-12 entry opens with. Re-derive the count; do not read
+   it here.
 3. Next two items, in the owner's own order: **`next@16`**, then the **M5 scope
    review**. Neither has been started. §"Still open" below has the detail.
 4. The dev database still holds `m4b.candidate` / `m4b.recruiter` from the first

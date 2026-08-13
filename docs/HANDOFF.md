@@ -174,15 +174,16 @@ same thing — it is the first item in §9.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>, and **all of M3 and
-all of M4 are pushed and green on CI** (run `31598781577`, 2026-08-12 — both the
-`api` and `web` jobs, including `Verify migrations apply and reverse`, the step that
-caught migration `0006`). A local run reports **529 passed, 38 skipped**, and the
-runner — no Tesseract, no database, no MinIO, no API key — reports the same, which is
-the opt-in test design doing its job. Plus **43** vitest cases in `web/`. Recent runs
-carry **no annotations at all**, which is new: earlier green runs still emitted Node
-deprecations from inside `actions/setup-node`. Read them anyway — §1's `setup-uv`
-story is why.
+`main` is on GitHub at <https://github.com/67160366/hirelens>, and **all of M3, all of
+M4 and all seven of the 2026-08-13 walkthrough fixes are pushed and green on CI** (run
+`31678374829`, 2026-08-13 — both the `api` and `web` jobs, including
+`Verify migrations apply and reverse`, the step that caught migration `0006`). A local
+run reports **534 passed, 38 skipped**, and the runner — no Tesseract, no database, no
+MinIO, no API key — reports the same, which is the opt-in test design doing its job.
+Plus **62** vitest cases in `web/`. Recent runs carry **no annotations at all**, which
+is new: earlier green runs still emitted Node deprecations from inside
+`actions/setup-node`. Read them anyway — §1's `setup-uv` story is why, and both jobs of
+`31678374829` were re-checked for annotations rather than assumed clean from the tick.
 
 **Check `git rev-list --count origin/main..main` rather than trusting the paragraph
 above** — it was wrong for two commits before this one was corrected. A batch of
