@@ -2,11 +2,19 @@
 
 HireLens — resume screening where every claim the system makes cites the exact text
 it came from. FastAPI (`api/`) + Next.js (`web/`). Thai and English resumes.
-Current milestone: **M5** (M4 closed 2026-08-12, M3 the same day). **M5–M6 are still
-a draft** reconstructed from the README — review each with the owner before building
-to it, the way M3's and M4's were; both paid for themselves. The authoritative
+Current milestone: **M5**, scoped with the owner on 2026-08-13 (M4 closed 2026-08-12,
+M3 the same day). Its five slices are commitments in `docs/PLAN.md`: the
+dropped-claims audit view, a cost and quality dashboard, word geometry at parse time,
+the pdf.js overlay on top of it, and production compose. **M6 is still a draft**
+reconstructed from the README — review it with the owner before building to it, the
+way M3's, M4's and M5's were; all three paid for themselves. The authoritative
 per-item status is the table in `docs/PLAN.md`. Orientation for a new session: this
 file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
+
+M5's organizing idea, the same shape as the two below: **every number on an
+observability screen is a query over rows the system already wrote, and can name the
+rows it came from.** A dashboard reports; it never re-asks, and nothing on it spends
+a model call.
 
 **That check ran on 2026-08-13 and found seven defects, four of them blocking** — in a
 slice where every gate was green and every API call had been verified. `HANDOFF.md` §1

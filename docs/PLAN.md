@@ -5,12 +5,14 @@ agent — can see where the project is and what comes next. Update the status
 column and checklists as work lands; refresh `docs/HANDOFF.md` when a milestone
 completes.
 
-M1–M2 reflect decisions already made and verified, and so do **M3** and **M4** —
-their scopes were reviewed with the owner (M3 on 2026-08-08, M4 on 2026-08-12), so
-the decisions and slices below are commitments rather than a reconstruction.
-**M5–M6 are still a draft** reconstructed from the README milestone table and HANDOFF
-scope notes — review each of them the same way before treating the details as
-commitments.
+M1–M2 reflect decisions already made and verified, and so do **M3**, **M4** and now
+**M5** — their scopes were each reviewed with the owner (M3 on 2026-08-08, M4 on
+2026-08-12, M5 on 2026-08-13), so the decisions and slices below are commitments
+rather than a reconstruction. **M6 is still a draft** reconstructed from the README
+milestone table and HANDOFF scope notes — review it the same way before treating the
+details as commitments. Three reviews, three times it paid: M5's turned a one-line
+"recruiter views" bullet into three items, two of which were already shipped, and
+caught a load-bearing claim about the codebase that was false.
 
 | Milestone | Scope | Status |
 |---|---|---|
@@ -18,7 +20,7 @@ commitments.
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
 | M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | ✅ done (2026-08-12) |
 | M4 | Visibility timeout, RBAC, the application state machine, PDPA | ✅ done (2026-08-12) |
-| M5 | Full recruiter UI, observability, deploy | draft |
+| M5 | Dropped-claims view, cost dashboard, word geometry + pdf.js overlay, production compose | scoped 2026-08-13 |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
 
 ---
@@ -160,11 +162,20 @@ commitments.
   nothing written to the uploads volume, and a re-upload deduped to the same row
   without billing a second extraction.
 - [x] 8. Evidence viewer, text-layer only (`web/components/DocumentPane.tsx`).
-  The true pdf.js overlay needs bbox geometry. #6 now extracts that geometry per
+  The true pdf.js overlay needs bbox geometry. ~~#6 now extracts that geometry per
   page, so the remaining work is an endpoint serving the original file and a pdf.js
-  canvas — it is a frontend slice now, not a parser one. Left for M5's recruiter UI.
+  canvas — it is a frontend slice now, not a parser one.~~
+  **Corrected 2026-08-13, during M5's scope review: that was wrong.** `layout.py`
+  computes bounding boxes to *crop* columns and discards them inside the same
+  function; nothing persists them. `PageSpan` holds
+  `page_number`/`char_start`/`char_end` and `EvidenceRef` holds
+  `char_start`/`char_end`/`page`, so **no stored row can say where on a page a
+  character range sits** — and a two-column page's `document_text` is in reading
+  order rather than the PDF's internal order, so a client cannot re-derive it either.
+  The overlay is therefore a **parser slice plus a frontend slice**, with a migration
+  between them; it is M5 slices 3 and 4.
   *(M3 slice 5 generalized this component from `ExtractedProfile` to `EvidenceRef[]`,
-  so it now highlights judgment citations too. The pdf.js overlay is still M5's.)*
+  so it now highlights judgment citations too.)*
 
 **Both M2 renders nobody had watched are now closed** (2026-08-12, with M3 slice 5):
 a two-column resume reads CONTACT/SKILLS through before EXPERIENCE in `DocumentPane`
@@ -607,12 +618,96 @@ five slices needed no migration and none needed a new idea about evidence — th
 guardrail generalised to state transitions the same way it generalised to verdicts in
 M3.
 
-## M5 — recruiter UI, observability, ship (draft)
+## M5 — recruiter UI, observability, ship
 
-- Recruiter views: job list, candidate list per job, requirement-level match
-  breakdown with citation highlighting, dropped-claims audit view.
-- Observability: structured logs shipped somewhere queryable, request metrics,
-  cost dashboard from `llm_call_logs`.
+Scope reviewed and agreed with the owner on 2026-08-13, replacing the draft
+reconstructed from the README. The review paid for itself immediately: the draft's
+one-line "recruiter views" bullet was **two thirds already shipped**, and its
+remaining third turned out to rest on a claim about the codebase that is false.
+
+| Question | Decision |
+|---|---|
+| What is actually left of the recruiter UI | **Three things.** Job list, candidate list per job and the requirement-level breakdown with citation highlighting all shipped in M3 slice 5 and M4 slice 5. What remains is the **dropped-claims audit view**, a **cost and quality dashboard**, and the **pdf.js overlay** parked since M2 #8 |
+| Whether the overlay justifies a route serving raw PII bytes | **Yes, on the ownership rule that already exists.** `_owned_resume` — the uploader, and a recruiter the candidate applied to — 404 rather than 403, `no-store`, and no filename in any log. A page that came from OCR has no geometry to overlay onto, so it falls back to the text pane **and says why**, rather than silently rendering nothing |
+| Where the overlay's geometry comes from | **Stored at parse time, in its own slice with its own migration.** See below — this is the answer that changed the shape of the milestone |
+| Observability shape | **An in-app dashboard over `llm_call_logs`.** Bounded, no new table, no new infrastructure, and it keeps "every dependency has a no-server default" intact. Shipping logs to something queryable would need a seam like `Storage`/`OCREngine`/`Retriever`, and nothing in M5 needs it yet |
+| httpOnly cookies instead of localStorage | **Deferred again**, with the refresh-token denylist it drags in. It is a storage decision, and none of M5's commitments need it |
+| What "deploy" means | **A production compose profile on this machine, plus a runbook.** Secrets out of `.env`, restart policies, Postgres and Redis not published to the host. A real cloud host is a bigger question than this milestone |
+| jsdom in `web/` | **Not yet.** The `next@16` browser check caught everything jsdom would have and several things it could not — whether the stylesheet actually loaded, whether SSE still streams. The no-DOM property stays, and driving the browser *inside* the slice stays the check |
+
+**The organizing idea, confirmed rather than assumed:** *every number on an
+observability screen is a query over rows the system already wrote, and can name the
+rows it came from.* Cite your source, applied to metrics. That is the same move as
+M3's "a verdict is derived from a located quote" and M4's "a state is a projection of
+an event log", a third time — and the schema is already shaped for it, which is the
+sign it is the right idea rather than a slogan. `llm_call_logs` carries `provider`,
+`model`, `prompt_version`, `attempt`, the three token counts, `latency_ms` and a
+**nullable** `cost_usd` (null when the price is unknown, never a misleading zero);
+`extracted_profiles` lifts `claims_verified`, `claims_dropped` and
+`hallucination_rate` into real columns *specifically* so the metrics query is a
+`GROUP BY` and not a JSON walk. `models/core.py` has said so in a docstring since M1.
+
+**And the correction the review turned up.** M2 #8 and HANDOFF §9 both said the
+pdf.js overlay was nearly free — that #6 "now extracts the bbox geometry it needs, so
+the remaining work is an endpoint serving the original file and a pdf.js canvas".
+**That is wrong.** `layout.py` computes bounding boxes to *crop* columns and discards
+them inside the same function; `PageSpan` stores `page_number`/`char_start`/`char_end`
+and `EvidenceRef` stores `char_start`/`char_end`/`page`. **No geometry is persisted
+anywhere**, so nothing can say where on a page a character range sits. Worse, for a
+two-column page `document_text` is in *reading* order, which is not the PDF's internal
+order, so the mapping cannot be re-derived in a client either. Doing the matching in
+pdf.js was considered and refused: the client would have to reproduce the server's NFC
+normalization, NUL strip and column reordering, and when it drifted it would highlight
+the wrong region — a visual claim nobody can verify, which is the one thing this
+project refuses. So the geometry is measured where the offsets are measured, and the
+overlay waits for it.
+
+- [ ] 1. **The dropped-claims audit view.** The guardrail's own evidence, which the
+  system produces on every document and has never shown anyone. What the model said,
+  why the quote could not be located, and the hallucination rate beside it.
+  **No API change and no migration** — checked rather than assumed, the same way this
+  section's correction was found: `ProfileOut.profile` is the stored `ExtractedProfile`
+  serialized whole and already carries `dropped`, and `GET /screenings/{id}` returns
+  the stored `Judgment` verbatim, `dropped` included — a route `/jobs/[id]` already
+  calls for `document_text`. `RankedEntry` deliberately does not carry it.
+  The rule to hold: this view **reports**, it never re-asks. Nothing on it may spend a
+  model call.
+- [ ] 2. **The cost and quality dashboard.** A read route aggregating `llm_call_logs`
+  and `extracted_profiles`, and a screen for it. **No migration.** Scoped to the
+  caller's own rows, for the reason export is a subject-access request rather than a
+  dump of everything visible; `ADMIN` sees everything, via `require_role`.
+  Two things it must do: **`cost_usd IS NULL` renders as "unknown", never as 0** — a
+  stale or missing price silently corrupting a cost figure is a named hazard in
+  `CLAUDE.md` — and every figure can name the rows behind it, per the organizing idea.
+  The extraction/judging split (`resume_id` xor `screening_id`) is what makes "what did
+  this document cost" and "what did this screening cost" separately answerable, so the
+  dashboard must not collapse it.
+- [ ] 3. **Word geometry, measured where the offsets are measured.** The slice the
+  correction above created. Per-word boxes keyed to char ranges, written in
+  `_assemble` in the same pass that already measures page spans — the same placement
+  as the NUL strip and the OCR substitution, and for the same reason: anything that
+  runs *after* offsets are fixed cannot shift them.
+  **Not backfilled**, exactly like `page_spans` in `0005`: filling it in would mean
+  re-parsing every stored file under the identical OCR configuration. Pre-migration
+  resumes fall back to the text pane.
+  This touches `parse.py`, the most load-bearing module in the project, so it is its
+  own slice and its own commit. The property to pin: **every existing fixture's
+  `document_text` and page spans are byte-identical before and after** — the M2 #6
+  discipline, which is what keeps every citation already shown to a user pointing where
+  it did.
+- [ ] 4. **The pdf.js overlay**, on slice 3's geometry. `GET /resumes/{id}/file` behind
+  `_owned_resume` (404 not 403, `no-store`, no filename logged) plus a pdf.js canvas.
+  A page from OCR, or a resume written before slice 3's migration, falls back to
+  `DocumentPane` **with the reason shown** — a silent fallback is indistinguishable
+  from a bug, which is M4 slice 5's disabled-button lesson in a new place.
+- [ ] 5. **Production compose and a runbook.** A compose profile with secrets out of
+  `.env`, restart policies, and Postgres/Redis not published to the host. Plus the
+  runbook: how to bring it up, how to run migrations, what to check, how to erase an
+  account on request.
+
+Each slice is driven in a browser *inside* the slice, not after it. That rule cost
+seven defects to learn and the `next@16` check confirmed it is cheap to keep.
+
 - [x] **Containerize API + web; compose runs the whole stack** (2026-08-08 — pulled
   forward from M5 because a course deliverable required Docker Compose to manage the
   containers). `api/Dockerfile` builds one image for both the API and the ARQ worker,

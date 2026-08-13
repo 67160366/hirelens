@@ -1008,8 +1008,10 @@ free.
 | 6 | Retrieval — the pre-filter | **done** — `pipeline/retrieval.py`, `GET /jobs/{id}/candidates`, `RETRIEVAL_BACKEND`; no model call, no migration; `tests/test_retrieval.py` |
 
 **M3 and M4 are both closed**, each after a scope review with the owner rather than
-a reconstruction. **M5–M6 are still a draft**; review each the same way — it has now
-paid for itself twice.
+a reconstruction. **M5 was reviewed the same way on 2026-08-13** and `docs/PLAN.md`
+now holds its commitments; **M6 is still a draft**, so review it the same way before
+building to it — the practice has now paid for itself three times, and M5's review
+found a claim in these very docs that was false (see #8 below).
 
 | # | Work | Status |
 |---|---|---|
@@ -1081,7 +1083,7 @@ M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.m
 | 5 | ~~DOCX parser~~ **done** | `parse_docx` in `parse.py` reads paragraphs and tables in document order; a `.docx` has no pages so it is reported as one. The upload gate keeps a magic-byte signature per type. Pinned by `tests/test_docx.py` |
 | 6 | ~~Two-column fix~~ **done** | `app/pipeline/layout.py` — a bounded XY-cut. `None` for anything it is unsure of, which is the pre-M2 code path, so single-column output is byte-identical. Pinned by `tests/test_layout.py` |
 | 7 | ~~MinIO storage backend~~ **done** | `MinioStorage` in `app/storage.py`; the API and the worker build storage independently so both pick it up. The contract in `tests/storage_contract.py` runs against both backends |
-| 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay is still not done, but #6 now extracts the bbox geometry it needs, so what remains is an endpoint serving the original file and a pdf.js canvas — a frontend slice, parked with M5's recruiter UI |
+| 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay is still not done. **This row used to claim #6 already extracts the bbox geometry it needs, leaving "an endpoint and a pdf.js canvas" — that was wrong, corrected 2026-08-13.** `layout.py` computes boxes to *crop* columns and discards them in the same function; `PageSpan` and `EvidenceRef` carry char offsets and a page number and nothing else, so **no stored row can say where on a page a character range sits**, and a two-column page's text is in reading order rather than the PDF's, so a client cannot re-derive it. The overlay is a parser slice **plus** a frontend slice with a migration between them — M5 slices 3 and 4 |
 
 The browser walkthrough was re-done on 2026-08-08 and covered the whole journey
 including the retry path (§1); the OCR banner was checked in a real browser once

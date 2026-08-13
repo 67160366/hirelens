@@ -17,15 +17,19 @@ Three commits. Suite unchanged at **534 / 38 skipped** (nothing in `api/` was
 touched, which is the point), vitest **62**, typecheck / lint / build clean,
 container healthy, journey walked in a browser.
 
+Then **M5 was scoped with the owner** and is no longer a draft. Its five slices are
+commitments in `PLAN.md`, and the review found a false claim in these docs — details
+at the end of this entry.
+
 ### Start here next session
 
-1. Read this entry, then `HANDOFF.md` §1 and §9, then `PLAN.md`.
+1. Read this entry, then `HANDOFF.md` §1 and §9, then `PLAN.md`'s M5 section.
 2. **Nothing is half-done.** Working tree clean. Re-derive the push state with
    `git rev-list --count origin/main..main` rather than reading it here — the
    paragraph that said otherwise was wrong last session and is the first commit of
    this one.
-3. **The M5 scope review is now the only thing in front of M5.** Six questions with
-   recommendations are in the previous entry's §"Still open"; nothing else blocks it.
+3. **Start M5 slice 1: the dropped-claims audit view.** No API change and no
+   migration — that was checked, not assumed. Drive it in a browser inside the slice.
 4. `m4b.candidate` / `m4b.recruiter` are still in the dev database with one job and
    one shortlisted application. Left deliberately, again. This session's two
    throwaways (`n16.*`) were erased.
@@ -160,6 +164,62 @@ rebuilt container and live Gemini, **2 model calls**:
   nothing.** That is the right outcome to expect most of the time, and it is still
   worth doing: the thing it was actually checking — that a bundler swap did not break
   SSE streaming, citation offsets or Tailwind — has no other instrument.
+
+### M5 is scoped, and the review paid for itself in its first hour
+
+Third scope review, third time it earned its keep. The draft's entire recruiter-UI
+scope was one line — "job list, candidate list per job, requirement-level match
+breakdown with citation highlighting, dropped-claims audit view" — and **three of
+those four shipped in M3 slice 5 and M4 slice 5**. What is actually left is three
+things, not "a full UI".
+
+Seven decisions, in `PLAN.md` with their reasoning. The organizing idea, confirmed
+rather than assumed: **every number on an observability screen is a query over rows
+the system already wrote, and can name the rows it came from.** Cite your source,
+applied to metrics — the same move as "a verdict is derived from a located quote"
+(M3) and "a state is a projection of an event log" (M4), a third time. The sign it is
+right rather than a slogan: the schema already fits it, and `models/core.py` has said
+so in a docstring since M1 — the counters were lifted out of the profile JSON
+*specifically* so the metrics query is a `GROUP BY`.
+
+The five slices: the dropped-claims audit view; the cost and quality dashboard; word
+geometry at parse time; the pdf.js overlay on top of it; production compose and a
+runbook.
+
+### The claim that was false, and how it was caught
+
+`PLAN.md` M2 #8 and `HANDOFF.md` §9 both said the pdf.js overlay was nearly free —
+that M2 #6 "now extracts the bbox geometry it needs, so the remaining work is an
+endpoint serving the original file and a pdf.js canvas". It has been written down
+that way since 2026-08-08 and repeated in three documents.
+
+**Nothing persists any geometry.** `layout.py` computes bounding boxes to *crop*
+columns and discards them inside the same function. `PageSpan` holds
+`page_number`/`char_start`/`char_end`; `EvidenceRef` holds
+`char_start`/`char_end`/`page`. No row anywhere can say where on a page a character
+range sits. And for a two-column document `document_text` is in *reading* order,
+which is not the PDF's internal order, so a client cannot re-derive it either.
+
+Doing the matching in pdf.js was considered and refused: the client would have to
+reproduce the server's NFC normalization, NUL strip and column reordering, and when
+it drifted it would highlight the wrong region — a **visual claim nobody can
+verify**, which is the one thing this project exists to refuse. So the geometry gets
+measured where the offsets are measured, in `_assemble`, with a migration; the
+overlay is two slices, not a frontend afternoon.
+
+It was caught by checking a claim before writing it into a plan, which is the same
+habit that produced this session's first commit. Both documents are corrected.
+
+### Advice for the owner, on the review
+
+- **The scope review keeps finding that the docs are optimistic about work not yet
+  done.** M4's found four false statements in HANDOFF §1; M5's found a two-slice
+  parser change described as an endpoint and a canvas. A claim about *shipped* code
+  gets corrected the moment someone reads the code; a claim about *unshipped* code can
+  sit unchallenged for months, because nobody has had a reason to look. Those are the
+  ones to distrust.
+- **Two of the four drafted recruiter-UI items were already built.** Worth doing the
+  review before the estimate, not after.
 
 ---
 
