@@ -25,6 +25,7 @@ from app.jobs import JobContext, RetryVerdict, decide_retry, run_resume_job, run
 from app.llm.base import LLMConfigError, LLMUnavailableError
 from app.llm.fake import FakeExtractor, FakeMode
 from app.models import LLMCallLog, Resume, Screening, ScreeningStatus
+from app.pipeline.evidence import RejectReason
 from app.pipeline.judge import requirements_fingerprint
 from app.pipeline.parse import ParseError
 from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
@@ -560,6 +561,68 @@ class TestTheJob:
 
     async def test_a_screening_deleted_before_pickup_is_not_an_error(self, context: JobContext):
         await run_screening_job(context, uuid.uuid4())
+
+
+class TestWhatTheJudgeCouldNotCite:
+    """The dropped list, through the route a client actually reads it from.
+
+    `GET /screenings/{id}` serves the stored `Judgment` as an untyped dict, so
+    nothing above the service *can* strip `dropped` — and equally, nothing would
+    have failed if something did. Extraction's twin of this has existed since M1
+    (`test_api.py::TestHallucinationSurfacedThroughTheApi`); judging's did not, so
+    the payload a UI is built on was true by accident rather than by test.
+    """
+
+    @pytest.fixture
+    def fake_mode(self) -> FakeMode:
+        return FakeMode.HALLUCINATING
+
+    async def test_a_fabricated_quote_is_reported_rather_than_discarded(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+    ):
+        job_id, resume_id = await _job_and_resume(authed_client, context)
+        created = await authed_client.post(
+            f"/jobs/{job_id}/screenings", json={"resume_id": resume_id}
+        )
+        screening_id = created.json()["id"]
+        await run_screening_job(context, uuid.UUID(screening_id))
+
+        judgment = (await authed_client.get(f"/screenings/{screening_id}")).json()["judgment"]
+
+        assert judgment["dropped"], "expected the fabricated quote to be reported"
+        dropped = judgment["dropped"][0]
+        # Every field the audit view renders, named here so removing one fails.
+        assert dropped["field"] and dropped["quote"]
+        assert dropped["reason"] in {reason.value for reason in RejectReason}
+        assert judgment["stats"]["hallucination_rate"] > 0
+
+    async def test_no_requirement_is_met_on_the_strength_of_a_quote_that_was_dropped(
+        self,
+        authed_client: AsyncClient,
+        queue: RecordingQueue,
+        context: JobContext,
+    ):
+        """The reason the list is worth showing: it is what the verdict excluded."""
+        job_id, resume_id = await _job_and_resume(authed_client, context)
+        created = await authed_client.post(
+            f"/jobs/{job_id}/screenings", json={"resume_id": resume_id}
+        )
+        screening_id = created.json()["id"]
+        await run_screening_job(context, uuid.UUID(screening_id))
+
+        judgment = (await authed_client.get(f"/screenings/{screening_id}")).json()["judgment"]
+        fabricated = {item["quote"] for item in judgment["dropped"]}
+
+        # Without this the loop below passes against an empty set, which is to say
+        # against a system that never dropped anything at all.
+        assert fabricated, "the fake provider produced nothing to exclude"
+
+        for requirement in judgment["requirements"]:
+            cited = {reference["quote"] for reference in requirement["evidence"]}
+            assert not (cited & fabricated), requirement["label"]
 
 
 class TestFailureAndReplay:

@@ -8,6 +8,8 @@ import { ApplicationActions } from "@/components/ApplicationActions";
 import { ApplicationTimeline } from "@/components/ApplicationTimeline";
 import { AuthPanel } from "@/components/AuthPanel";
 import { DocumentPane, EvidenceSelectionProvider } from "@/components/DocumentPane";
+import { DroppedClaims } from "@/components/DroppedClaims";
+import { EvidenceStatsBar } from "@/components/EvidenceStatsBar";
 import { JudgmentView } from "@/components/JudgmentView";
 import { RankingTable } from "@/components/RankingTable";
 import { RequirementEditor } from "@/components/RequirementEditor";
@@ -324,9 +326,13 @@ export default function JobPage() {
     setSelectedId(screeningId);
     setDetail(null);
     try {
-      // Read for `document_text` only. The verdicts come from the ranking entry,
-      // whose `must_have`/`weight` are re-keyed against the job's current
-      // requirements — this route returns them frozen at judging time.
+      // Read for `document_text`, and for what the judging call could *not* cite —
+      // `judgment.dropped` and `judgment.stats`, which `RankedEntry` does not carry.
+      // The verdicts still come from the ranking entry, whose `must_have`/`weight`
+      // are re-keyed against the job's current requirements; this route returns
+      // those frozen at judging time. The distinction is not a rule about the
+      // route, it is a rule about which fields go stale: nothing re-keys a dropped
+      // claim, so it reads the same from either source.
       setDetail(await authorized((accessToken) => api.getScreening(screeningId, accessToken)));
     } catch (caught) {
       setError(errorMessage(caught, "Could not load the screening"));
@@ -569,7 +575,16 @@ export default function JobPage() {
         {selected && (
           <EvidenceSelectionProvider>
             <div className="grid items-start gap-5 lg:grid-cols-2">
-              <JudgmentView entry={selected} resumeName={resumeName(selected.resume_id)} />
+              <div className="space-y-4">
+                {/* The guardrail's own evidence for this screening, in the same
+                    order the resume view shows it: what the counters say, what was
+                    kept, then what was refused. A recruiter reading a rank of #1
+                    should be able to see that the judgment behind it threw a
+                    fabricated quote away. */}
+                {detail?.judgment?.stats && <EvidenceStatsBar stats={detail.judgment.stats} />}
+                <JudgmentView entry={selected} resumeName={resumeName(selected.resume_id)} />
+                <DroppedClaims dropped={detail?.judgment?.dropped ?? []} />
+              </div>
               {detail?.document_text ? (
                 <DocumentPane
                   text={detail.document_text}

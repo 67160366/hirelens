@@ -277,8 +277,17 @@ export interface ScreeningDetail {
    * The stored `Judgment` verbatim, with `must_have` and `weight` **frozen at
    * judging time**. Ranking re-keys both against the job's current requirements, so
    * render verdicts from a `RankedEntry` and use this route for `document_text`.
+   *
+   * `dropped` and `stats` are the exception, and safely so: ranking re-keys nothing
+   * about them and `RankedEntry` does not carry them at all. They are facts about
+   * the judging call that produced this row — what the model claimed and could not
+   * cite — and no weight edit can make them go out of date.
    */
-  judgment: { requirements?: RequirementJudgment[]; dropped?: DroppedClaim[] } | null;
+  judgment: {
+    requirements?: RequirementJudgment[];
+    dropped?: DroppedClaim[];
+    stats?: EvidenceStats;
+  } | null;
   document_text: string | null;
 }
 
