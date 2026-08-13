@@ -6,7 +6,94 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-13 (latest, second session) — next@16, and the codemod's two wrong answers
+## 2026-08-14 (latest) — M5 slice 1 is written and cannot be watched
+
+**Two commits, gates green, not pushed, and the slice is NOT done** — the browser
+check could not run. Both reasons are environmental and both need the owner.
+
+Before any of it, the five M5 slices were audited against the code rather than against
+the plan, because the last two sessions each found a document asserting something false
+about unwritten work. It found three more, and one live security problem.
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Give the dropped-claim vocabulary a home the screening side can reach | `web/lib/evidence.ts` + `components/{DroppedClaims,EvidenceStatsBar}.tsx`, `ProfileView` refactored onto them. No behaviour change |
+| 2 | Show what a screening dropped, beside the verdicts it kept | The actual slice: `/jobs/[id]` renders `judgment.dropped` + `judgment.stats`. No API change, no migration |
+
+Gates, each run rather than quoted: `pytest -q` **536 passed / 38 skipped** (534 + the
+two new screening cases), vitest **69** (62 + 7), `ruff check` / `ruff format --check` /
+`mypy app` clean, `npm run typecheck` / `lint` / `build` clean.
+
+### Start here next session
+
+1. **Unblock the two things below, then drive the browser.** The slice is code-complete
+   and unverified. Per this project's own rule that is not done, and `PLAN.md` still has
+   slice 1 unticked on purpose.
+2. Nothing is half-written. Working tree clean, both commits local, **nothing pushed**.
+3. Then: `PLAN.md` slice 1 → `[x]`, and pick up slice 2 — but read the cost finding below
+   first, because slice 2 as scoped cannot be built.
+
+### The two blockers
+
+- **`C:` is 100% full** — 114 MB free of 216 GB. Docker Desktop's containerd flipped its
+  metadata store to read-only, so `docker compose up -d` **builds the images and then
+  fails to recreate the containers**. The running containers are 9 hours old and serve the
+  code from before these commits. The command **exited 0** with the error on its last
+  line, which is the seventh instrument to tell a confident lie here — add it to §10's
+  list: *a compose build that could not swap the container still reports success.*
+- **The Chrome extension is not connected.** Same state as the M4 slice 5 session, which
+  is the one that shipped seven defects. Not repeating that: the slice stays open.
+
+Once both are fixed the walkthrough is cheap and spends **zero** Gemini quota:
+`export LLM_PROVIDER=fake FAKE_MODE=hallucinating && docker compose up -d --force-recreate api worker web`,
+then upload → screen → click the candidate. `fake.py` fabricates on the judging path too,
+which is the only way to make the panel non-empty (see the data finding below).
+
+### What the M5 audit found, and what it did not
+
+Six areas verified against the code. **The adversarial pass then died on a session
+limit**: 15 of 33 agents failed, so slice 1 and slice 4 carry a challenge round and
+**slices 2, 3, 5 and the environment survey do not**. Those are single-source and
+unconfirmed — a tool that died on a limit produced no coverage, and its findings are
+leads rather than facts.
+
+| # | The claim | The code |
+|---|---|---|
+| 1 | Slice 1 shows "evidence the system has never shown anyone" | **False.** The extraction half shipped in M1 — `ProfileView.tsx:14-71` has had the stat bar and the dropped panel all along. The unbuilt half was judging's, which is what these commits do |
+| 2 | Slice 3 writes geometry "in `_assemble`, the pass that already measures page spans" | **False.** The NUL strip runs *inside* the words — 8 of 11 words in `resume_broken_tounicode.pdf` carry a literal `\x00`, so a naive `find()` locates 3 of them. And NFC is not distributive across a concatenation. `_text_of` has to change too |
+| 3 | Slice 5 uses a compose `profiles:` | **False.** `profiles:` cannot strip `ports:` from a service. It wants `docker-compose.override.yml` |
+| 4 | Slice 2 is a **cost** dashboard | **There is no cost.** `gemini.py:37-46` maps every model to `FREE_TIER`, so `cost_usd` is `0.0` on all 22 rows — never `NULL`. The slice has to be respecified on tokens and `latency_ms`, or it charts a flat zero. **Raise with the owner before building it** |
+
+Three further leads worth checking before slice 2 (unchallenged, so treat as leads):
+`llm_call_logs` has no owner column at all, so "the caller's own rows" is **two** joins
+landing on different owners — `resumes.candidate_id` for extraction, `jobs.owner_id` for
+judging; the `resume_id`-xor-`screening_id` split is a docstring and not a constraint;
+and `require_role` is a 403 route gate that cannot widen a row scope, so using it for
+"ADMIN sees everything" would 403 the candidates who own the extraction rows.
+
+### The security finding, for the owner
+
+**Redis is published on `0.0.0.0:6379` with no password.** Verified live rather than
+inferred: a raw socket to `127.0.0.1:6379` answered `+PONG` and `CONFIG GET requirepass`
+came back empty. `docker-compose.yml:40-42` sets persistence flags only and publishes the
+port with no host-IP prefix, so Docker binds every interface — anyone on the same network
+can `CONFIG SET`. Postgres and MinIO are published the same way. This is the state of the
+dev machine now, not a hypothetical about a future deploy. **Not touched**, because it is
+slice 5's and nobody asked: the fix is three `127.0.0.1:` prefixes, and it should go in
+before the rest of the profile work.
+
+### The data finding that blocks demonstrating slice 1
+
+**There is not one dropped claim in the dev database** — 20 profiles, every `dropped`
+empty, `hallucination_rate` 0.0000 across the board. The view built this session would
+pass every gate and render nothing. That is not a defect in it; it is what a guardrail
+looks like when the provider behaves. `FAKE_MODE=hallucinating` is how to make it speak,
+and proving an *absence* needs a positive control — the same rule §10 already carries for
+`read_console_messages`.
+
+---
+
+## 2026-08-13 — next@16, and the codemod's two wrong answers
 
 The oldest item on the list, deferred three times. Three high advisories — four
 postcss CVEs and four libvips CVEs through sharp, all transitive through

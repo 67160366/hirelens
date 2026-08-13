@@ -672,6 +672,35 @@ overlay waits for it.
   calls for `document_text`. `RankedEntry` deliberately does not carry it.
   The rule to hold: this view **reports**, it never re-asks. Nothing on it may spend a
   model call.
+
+  **Written 2026-08-14, in two commits, and deliberately still unticked.** The audit
+  that preceded it corrected the description above: the *extraction* half shipped in
+  M1 — `ProfileView.tsx` has shown the stat bar and the excluded-claims panel all
+  along — so "has never shown anyone" was false, and the unbuilt half was **judging's**.
+  A recruiter could read a candidate ranked #1 with no sign that the judgment behind it
+  had thrown a fabricated quote away.
+  `web/lib/evidence.ts` now holds the reason vocabulary, the panel wording and the
+  stats formatting, with `components/DroppedClaims.tsx` and
+  `components/EvidenceStatsBar.tsx` shared by both screens — the same move the server
+  makes by importing `DroppedClaim` and `EvidenceStats` into `schemas/judgment.py`
+  rather than declaring its own. Moving them out of the component is what made them
+  testable: `unknown_requirement` is judging's reason and only judging's, and it sat
+  correct and unreachable inside the profile view for two milestones.
+  **No API change and no migration, as scoped** — `/jobs/[id]` already fetched the whole
+  `ScreeningDetail` on every candidate click and used one field of it. Verdicts still
+  come from the `RankedEntry`; that rule is about `must_have`/`weight` going stale, and
+  nothing re-keys a dropped claim.
+  Two server cases added (`pytest` 534 → 536) because the route was serving `dropped`
+  by accident rather than by test — it returns the stored `Judgment` as an untyped dict,
+  so nothing could strip it and nothing would have failed if something had. Plus 7
+  vitest cases (62 → 69), three of them on failures that are silent: a reason with no
+  label, an `isClean` derived from the rounded rate, and a model-call count read from
+  the identically-spelled *job* counter.
+  **What is missing is the only thing that closes it: nobody has watched it.** The
+  Chrome extension was not connected and `C:` was full, so Docker could build the images
+  and not recreate the containers. Per this milestone's own rule the slice is not done,
+  and this box stays empty until the walkthrough runs — `docs/NOTES.md` 2026-08-14 has
+  the command and why it costs no quota.
 - [ ] 2. **The cost and quality dashboard.** A read route aggregating `llm_call_logs`
   and `extracted_profiles`, and a screen for it. **No migration.** Scoped to the
   caller's own rows, for the reason export is a subject-access request rather than a
