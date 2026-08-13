@@ -108,6 +108,15 @@ export interface ProfileResponse {
 
 export type Role = "candidate" | "recruiter" | "admin";
 
+/**
+ * The roles an account may claim for itself, mirroring `SelfServiceRole`.
+ *
+ * `admin` is deliberately absent — an account that can grant itself admin is not a
+ * role system, and the server refuses it with a 422 from the schema. Keeping the
+ * narrower type here means the client cannot even ask.
+ */
+export type SelfServiceRole = Exclude<Role, "admin">;
+
 export interface Account {
   id: string;
   email: string;
@@ -439,8 +448,14 @@ export async function* readFrames(body: ReadableStream<Uint8Array>) {
 }
 
 export const api = {
-  register: (email: string, password: string) =>
-    request<TokenPair>("/auth/register", json("POST", { email, password })),
+  /** Create an account. `role` is a registration field because there is no other way
+   * to become a recruiter — `SelfServiceRole` on the server omits `admin`, which is
+   * granted out of band. Sending it was the missing half: the server has taken a
+   * role since M4 slice 2 and this client never offered one, so a browser could
+   * only ever produce candidates and the recruiter half of the UI was unreachable
+   * without curl. */
+  register: (email: string, password: string, role: SelfServiceRole = "candidate") =>
+    request<TokenPair>("/auth/register", json("POST", { email, password, role })),
 
   login: (email: string, password: string) =>
     request<TokenPair>("/auth/login", json("POST", { email, password })),

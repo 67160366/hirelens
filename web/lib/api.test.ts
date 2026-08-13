@@ -249,3 +249,48 @@ describe("every JSON write sets Content-Type", () => {
     expect(headers.get("Content-Type")).toBe("application/json");
   });
 });
+
+/**
+ * Registration carries the role, because there is no other way to become one.
+ *
+ * `SelfServiceRole` has been a registration field on the server since M4 slice 2 —
+ * "there is no other way to become a recruiter" is the reason it exists — and this
+ * client sent only `{email, password}`. So a browser could produce nothing but
+ * candidates, and every recruiter screen was unreachable without going around the
+ * UI with curl. The server was right and the client never asked.
+ *
+ * The default matters as much as the field: an omitted role must mean `candidate`,
+ * never `recruiter`.
+ */
+describe("register", () => {
+  function captureBody() {
+    const sent: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)));
+        return new Response(JSON.stringify({}), { status: 201 });
+      }),
+    );
+    return sent;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the role it was given", async () => {
+    const sent = captureBody();
+    await api.register("hirer@example.com", "a-good-password", "recruiter");
+    expect(sent[0]).toMatchObject({ email: "hirer@example.com", role: "recruiter" });
+  });
+
+  it("defaults to candidate rather than omitting the field", async () => {
+    const sent = captureBody();
+    await api.register("seeker@example.com", "a-good-password");
+    // Omitting it would let the server's own default decide, which happens to
+    // agree — but the request should say what it means, and a silent omission is
+    // how the field went missing in the first place.
+    expect(sent[0]).toMatchObject({ role: "candidate" });
+  });
+});
