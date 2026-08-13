@@ -1057,8 +1057,18 @@ paid for itself twice.
    state is a projection of an append-only log rather than a column anyone may set.
    Hold that line in M5: an observability dashboard reports, and a recruiter UI must
    not start asserting what the API refuses to.
-4. **`next@16` is still owed.** Three high advisories, all transitive through Next,
-   and it is a framework major — an isolated commit, not folded into a slice.
+4. ~~**`next@16` is still owed.**~~ **Done 2026-08-13**, as its own commit rather than
+   folded into a slice. `npm audit` is **0 high**. Four things to carry forward from
+   it: `next build` now runs **Turbopack** and rewrites `tsconfig.json` and
+   `next-env.d.ts` itself; `eslint-config-next` v16 exports flat config directly, so
+   `FlatCompat` is gone and **ESLint stays on 9** because the config's own
+   `eslint-plugin-react` has no ESLint 10 release; the new
+   `react-hooks/set-state-in-effect` rule is suppressed at four sites with reasons
+   rather than switched off, and `useAuth` still owes a `useSyncExternalStore` rewrite
+   as its own commit; and `web/Dockerfile` needed **no change**, which was verified by
+   assembling the standalone layout by hand rather than inferred from a green build —
+   Turbopack has a known regression (vercel/next.js#88844) in exactly the directory
+   that image copies.
 
 M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.md`):
 

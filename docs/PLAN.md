@@ -594,8 +594,9 @@ match the pattern already in the codebase.
   `lib/applications.ts`'s 13 cases do.
 
 Deliberately **not** in M4: `next@16` (3 high advisories, all transitive through
-Next — an isolated commit, not tangled into a slice), the refresh-token denylist and
-httpOnly cookies (below), and M6's evaluation.
+Next — an isolated commit, not tangled into a slice; **shipped 2026-08-13**, see the
+M5 section), the refresh-token denylist and httpOnly cookies (below), and M6's
+evaluation.
 
 **M4 is complete** (2026-08-12). A dead worker's row is reclaimed through the retry
 policy it already had; an account has a role, and a role gates a route while ownership
@@ -624,6 +625,35 @@ M3.
   Postgres + Redis + ARQ + real Gemini: `resume_th.pdf` 10/10 verified and
   `resume_scanned.pdf` 7/7 with `pages_from_ocr=[1]`, every span slicing back out of
   the stored text.
+- [x] **`next@16`** (2026-08-13 — an isolated commit, deliberately not folded into a
+  slice). Closes 3 high advisories: four postcss CVEs (XSS via an unescaped
+  `</style>`; path traversal reading arbitrary `.map` files through an
+  attacker-controlled `sourceMappingURL`) and four libvips CVEs through sharp, all
+  transitive through `next@15.5.23` and none reachable except by the framework major.
+  `npm audit` is 0.
+  Four decisions inside it:
+  **ESLint stays on 9.** The codemod bumped it to 10, and `eslint-config-next@16.3.0`
+  depends on `eslint-plugin-react@^7.37.0`, whose newest release still caps at
+  `eslint ^9.7` and dies on 10. The peer warning at install time was the whole answer.
+  **`eslint.config.mjs` drops `FlatCompat`** for the flat arrays v16 exports directly
+  — not a tidy-up: under ESLint 10 the old `compat.extends(...)` throws rather than
+  degrading, which reads as a bug in this repo instead of a removed API.
+  **`react-hooks/set-state-in-effect` is suppressed per site, not switched off.**
+  Three of the four are false positives (setState after an `await`, which the rule's
+  analysis does not follow); the fourth, in `useAuth`, is a real localStorage
+  hydration and owes a `useSyncExternalStore` rewrite as its own commit.
+  **`web/Dockerfile` is unchanged, and that was checked rather than assumed.**
+  Turbopack is the default builder in 16 and has a known regression dropping packages
+  from `.next/standalone/node_modules` (vercel/next.js#88844) — the exact directory
+  the image copies while shipping none of its own. Verified by assembling the layout
+  by hand and booting it, because a green `next build` cannot see this.
+  Verified in a browser inside the change, against the rebuilt container and live
+  Gemini for 2 model calls: upload → `10/10` verified with citation highlighting, the
+  SSE progress stream serving 200, the applicants panel self-refreshing
+  `APPLIED → BEING SCREENED → SCREENED` with nothing reloaded, 2/2 met including the
+  Thai requirement at 36 chars / 90 bytes, the four-row audit log with its attribution
+  intact, and zero console output on an instrument proven live first. Both throwaway
+  accounts erased afterwards.
 - Still open: run the compose stack in production mode, and httpOnly cookie auth
   instead of localStorage.
 

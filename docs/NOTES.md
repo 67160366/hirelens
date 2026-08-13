@@ -6,7 +6,164 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-13 (latest) — the browser check finally ran, and M4 slice 5 did not work
+## 2026-08-13 (latest, second session) — next@16, and the codemod's two wrong answers
+
+The oldest item on the list, deferred three times. Three high advisories — four
+postcss CVEs and four libvips CVEs through sharp, all transitive through
+`next@15.5.23` and none reachable except by the framework major. `npm audit` reports
+**0** now.
+
+Three commits. Suite unchanged at **534 / 38 skipped** (nothing in `api/` was
+touched, which is the point), vitest **62**, typecheck / lint / build clean,
+container healthy, journey walked in a browser.
+
+### Start here next session
+
+1. Read this entry, then `HANDOFF.md` §1 and §9, then `PLAN.md`.
+2. **Nothing is half-done.** Working tree clean. Re-derive the push state with
+   `git rev-list --count origin/main..main` rather than reading it here — the
+   paragraph that said otherwise was wrong last session and is the first commit of
+   this one.
+3. **The M5 scope review is now the only thing in front of M5.** Six questions with
+   recommendations are in the previous entry's §"Still open"; nothing else blocks it.
+4. `m4b.candidate` / `m4b.recruiter` are still in the dev database with one job and
+   one shortlisted application. Left deliberately, again. This session's two
+   throwaways (`n16.*`) were erased.
+
+### The upgrade was four changes, and the version number was the easy one
+
+| What | Why it was not optional |
+|---|---|
+| `next.config.ts` loses its `eslint` block | Next 16 removed the option with the `next lint` command. `next build` no longer lints at all, so the "lint is a separate CI step" intent it carried is the default, and stating it is now a config error |
+| `eslint.config.mjs` drops `FlatCompat` | `eslint-config-next` v16 exports flat arrays directly. Under ESLint 10 the old `compat.extends(...)` does not warn or degrade — it **throws** `Converting circular structure to JSON` from inside eslintrc's own validator |
+| ESLint pinned back to 9 | See below |
+| Four `react-hooks/set-state-in-effect` suppressions | A rule v16's config newly turns on |
+
+### The codemod was wrong twice, and both were worth catching
+
+`npx @next/codemod@canary upgrade latest` did the bulk correctly. Two of its choices
+were not right for this repo.
+
+**It bumped ESLint to 10.8.1.** `eslint-config-next@16.3.0` depends on
+`eslint-plugin-react@^7.37.0`, whose *newest published release* still caps at
+`eslint ^9.7`. So lint died with `contextOrFilename.getFilename is not a function` —
+ESLint 10 removed the context methods the plugin calls. The whole story was in the
+peer-dependency warning npm printed at install time and which is very easy to scroll
+past. `eslint-config-next` declares `eslint: ">=9.0.0"`; 9.39.5 is what it can
+actually run.
+
+**It added `export const instant = false` to `layout.tsx`** with a TODO pointing at
+the Cache Components migration. `cacheComponents` is not enabled in this project, so
+the opt-out guards nothing and the TODO points at work that is in no milestone.
+Reverted.
+
+It also pinned every version exact. Put back to carets: the lockfile is committed and
+both CI and the Dockerfile run `npm ci`, so reproducibility is untouched — while
+pinning `next` exactly means the next postcss fix *inside* it waits for a human to
+notice, which is the failure this whole commit exists to end.
+
+### The new lint rule, and why nothing was refactored to satisfy it
+
+`react-hooks/set-state-in-effect` flags four sites. **Three are false positives**:
+`load` is async and every `setState` in it runs after an `await`, so nothing is set
+synchronously in the effect body — the rule's analysis does not follow the await
+boundary. **The fourth, in `useAuth`, is real**: `localStorage` does not exist during
+SSR, so the session is hydrated on mount and `ready` is the flag every page waits on.
+
+Each is suppressed at its own site with its own reason rather than the rule being
+switched off, so it still guards new code. `useSyncExternalStore` is the proper fix
+for `useAuth`, it changes the hook every route depends on, and it therefore gets its
+own commit and its own browser check instead of riding along on a version bump.
+
+One mechanical trap worth knowing: **`// eslint-disable-next-line` in a multi-line
+`//` block applies to the next *comment* line, not to the code.** The first attempt
+looked right, changed nothing, and turned 4 errors into 4 errors plus 4
+unused-directive warnings. Put the reason above and the bare directive last.
+
+### The check that mattered: Turbopack × `output: "standalone"`
+
+Turbopack is the default builder in 16, and there is a known regression dropping
+packages from `.next/standalone/node_modules` (vercel/next.js#88844). `web/Dockerfile`
+copies exactly that directory and ships **no `node_modules` of its own**, so a green
+`next build` proves nothing about the image — which is the same shape as last
+session's lesson one layer down.
+
+So it was checked by assembling the image layout by hand before touching Docker:
+standalone still emits `server.js`, `package.json` and a `node_modules` carrying
+next/react/sharp; `.next/static` is still a separate copy the Dockerfile has to
+supply; the booted server answers 200 on `/`, `/jobs` and `/applications`; and the
+Tailwind chunk serves 31 KB with its reset intact. `web/Dockerfile` needed **no
+change** — but that was a finding, not an assumption.
+
+### Watched in a browser, inside the slice
+
+The rule the previous session bought, applied. Fresh throwaway accounts against the
+rebuilt container and live Gemini, **2 model calls**:
+
+- A recruiter registers *as a recruiter* and authors a job leaving both weights at
+  the default `1` — the two defects that used to make this impossible.
+- A candidate uploads `resume_th.pdf`: consent **unticked on load** with the file
+  picker disabled until it is ticked, then `10/10 claims verified, 0.0%
+  unverifiable, 1 model call`, and the document pane highlighting each citation —
+  emerald for exact, amber for the ambiguous `Python` and `PostgreSQL`.
+- The SSE path works: `GET /resumes/{id}/events` served 200 in the API log, so
+  `waitForProfile`'s `fetch` + `ReadableStream` survives the bundler change. It is
+  the most bundler-sensitive code in the client and the reason a fresh upload was
+  worth 1 call rather than reusing old data.
+- The applicants panel refreshes itself, sampled every 400 ms with **nothing
+  reloaded**: `t=0.0s` Shortlist disabled "Screen this candidate first…" → `t=0.4s`
+  "A screening is running." → `t=5.3s` **enabled**. That is last session's seventh
+  fix — the one that ships with no unit test *on purpose* and whose only check is the
+  browser — still working.
+- Both requirements **Met**, 100.0%, 2/2. The Thai requirement matched the resume's
+  own differently-worded `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ PostgreSQL` at
+  chars 161–214, and clicking that citation put the ring on exactly that span.
+- Shortlisting works and the disabled button then reads **"Already shortlisted."**
+- `psql`: the four-row log with `#0 → APPLIED` by `CANDIDATE` **with** `actor_id`,
+  `#1`/`#2` by (system) with `actor_id` null and a screening attached, `#3 →
+  SHORTLISTED` by `RECRUITER` with both. The Thai label reads back at **36 characters
+  / 90 bytes**, typed through the browser. Exactly two `llm_call_logs` rows —
+  `extract-v1` on the resume, `judge-v1` on the screening, neither crossed.
+- **Zero console output**, and the instrument was proven before the zero was believed
+  — `read_console_messages` only starts capturing when first called, so a probe
+  `console.log`/`console.error` pair was emitted and confirmed visible first. Without
+  that, "no errors" and "not listening" look identical.
+- Both throwaway accounts erased with `DELETE /auth/me`: `stored_files_removed: 1`
+  and `0`, tokens then 401, `psql` reports 0 rows and 0 jobs left behind.
+
+### Worth knowing next time
+
+- **`form_input` is still the wrong tool here** and coordinate clicks are still
+  unreliable (screenshot 1568 px vs a viewport reporting more). What worked every
+  time, again: `javascript_tool` with `el.click()` and the React-native value setter
+  plus an `input` event. That note from last session paid for itself immediately.
+- **`next build` rewrites `tsconfig.json` and `next-env.d.ts`.** `jsx: react-jsx` is
+  mandatory in 16 and `next dev` now emits types under `.next/dev`. Committed as
+  generated — fighting the formatter means a dirty tree after every build.
+- **`next dev` in 16 writes a managed block into `AGENTS.md`.** It did not appear
+  here because only `next build` was run. If anyone runs `next dev`, expect an
+  untracked file that `.gitignore` does not cover yet.
+- The codemod prints `WARNING: Git directory is not clean. Forcibly continuing.`
+  even on a clean tree. It means its own scratch state, not yours.
+
+### Advice for the owner
+
+- **A tool that automates a migration still has opinions, and two of them were wrong
+  here.** Both were recoverable in minutes and both would have shipped silently: an
+  ESLint major its own config cannot run on, and an opt-out for a feature this project
+  does not enable. Read the diff a codemod produces the way you would read a
+  colleague's.
+- **The peer-dependency warning was the entire answer**, printed before anything
+  broke, in the wall of text after `npm install`. This project's standing lesson is
+  "read a green run's annotations, not just its tick" — same shape, different tool.
+- **The browser check cost 2 model calls and twenty minutes, and this time it found
+  nothing.** That is the right outcome to expect most of the time, and it is still
+  worth doing: the thing it was actually checking — that a bundler swap did not break
+  SSE streaming, citation offsets or Tailwind — has no other instrument.
+
+---
+
+## 2026-08-13 — the browser check finally ran, and M4 slice 5 did not work
 
 The one M4 check that never ran was watching the application journey render. The
 Chrome extension connected for the first time this session. Twenty minutes, as
