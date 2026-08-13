@@ -84,6 +84,44 @@ describe("availableMoves", () => {
     expect(shortlist?.blockedBecause).toContain("cited evidence");
   });
 
+  it("does not claim an already-shortlisted candidate needs screening", () => {
+    // The disabled button exists to teach the rule, so a disabled button teaching
+    // the *wrong* rule is worse than none. It used to read "Screen this candidate
+    // first, so the decision rests on cited evidence" on an application that had
+    // already been screened *and* shortlisted. Watched in a browser 2026-08-13.
+    const shortlist = availableMoves(
+      application("shortlisted"),
+      viewer(OWNER_ID, "recruiter"),
+      OWNER_ID,
+    ).find((m) => m.to === "shortlisted");
+
+    expect(shortlist?.blockedBecause).toBeDefined();
+    expect(shortlist?.blockedBecause).not.toContain("Screen this candidate first");
+    // Mirrors the server's `to_state == current` refusal, which is neither an
+    // error nor a move.
+    expect(shortlist?.blockedBecause).toContain("Already shortlisted");
+  });
+
+  it("says a screening is in flight rather than asking for one that is running", () => {
+    const shortlist = availableMoves(
+      application("screening"),
+      viewer(OWNER_ID, "recruiter"),
+      OWNER_ID,
+    ).find((m) => m.to === "shortlisted");
+
+    expect(shortlist?.blockedBecause).toContain("running");
+    expect(shortlist?.blockedBecause).not.toContain("Screen this candidate first");
+  });
+
+  it("still offers Reject from every non-terminal state, as the server's table does", () => {
+    // `_ALLOWED` in app/applications.py lets JOB_OWNER reach `rejected` from
+    // applied, screening, screened and shortlisted alike.
+    for (const state of ["applied", "screening", "screened", "shortlisted"] as const) {
+      const moves = availableMoves(application(state), viewer(OWNER_ID, "recruiter"), OWNER_ID);
+      expect(moves.find((m) => m.to === "rejected"), `from ${state}`).toBeDefined();
+    }
+  });
+
   it("asks for a reason before a rejection, and not before anything else", () => {
     const moves = availableMoves(
       application("screened"),

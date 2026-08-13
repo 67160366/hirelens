@@ -84,17 +84,13 @@ export function availableMoves(
 
   if (asOwner) {
     const moves: Move[] = [];
-    if (application.state === "screened") {
-      moves.push({ to: "shortlisted", label: "Shortlist", needsReason: false });
-    } else {
-      moves.push({
-        to: "shortlisted",
-        label: "Shortlist",
-        needsReason: false,
-        blockedBecause:
-          "Screen this candidate first, so the decision rests on cited evidence.",
-      });
-    }
+    const blocked = shortlistBlockedBecause(application.state);
+    moves.push({
+      to: "shortlisted",
+      label: "Shortlist",
+      needsReason: false,
+      ...(blocked ? { blockedBecause: blocked } : {}),
+    });
     moves.push({ to: "rejected", label: "Reject", needsReason: true });
     return moves;
   }
@@ -111,6 +107,36 @@ export function availableMoves(
  * The system's moves say so. Attributing them to a person would be a small lie in
  * the one place that exists to be accurate about who did what.
  */
+/**
+ * Why Shortlist is unavailable from this state, or `undefined` when it is available.
+ *
+ * One reason per state rather than one reason for everything-but-`screened`. The
+ * single-message version said "Screen this candidate first, so the decision rests on
+ * cited evidence" on an application that had *already* been screened and
+ * shortlisted — which is false, and worse than saying nothing: a disabled button
+ * exists here to teach the rule, so a disabled button teaching the wrong rule is the
+ * one failure this design cannot afford.
+ *
+ * The wording mirrors `plan_transition` in `app/applications.py`, which refuses
+ * `to_state == current` with "This application is already {state}" and everything
+ * else with `_refusal`. It does not re-derive the rules — when the two disagree the
+ * server's 409 wins and its sentence is what gets shown.
+ */
+function shortlistBlockedBecause(state: ApplicationState): string | undefined {
+  switch (state) {
+    case "screened":
+      return undefined;
+    case "shortlisted":
+      // Mirrors the server's `to_state == current` refusal, which is not an error
+      // and not a move.
+      return "Already shortlisted.";
+    case "screening":
+      return "A screening is running. It can rest on that once it finishes.";
+    default:
+      return "Screen this candidate first, so the decision rests on cited evidence.";
+  }
+}
+
 export function describeEvent(event: ApplicationEvent): string {
   const to = STATE_LABELS[event.to_state].toLowerCase();
   const who = event.actor_id === null ? "The system" : actorName(event.actor_role);
