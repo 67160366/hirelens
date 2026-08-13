@@ -55,6 +55,14 @@ export function useAuth(): Auth {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    // `localStorage` does not exist during SSR, so the stored session can only be
+    // read after mount, and `ready` is the flag every page waits on before deciding
+    // it is signed out. The rule is right that this is a cascading render; it is one
+    // render, once, and the alternative is rendering a signed-out page to a signed-in
+    // user. `useSyncExternalStore` is the proper fix, and it changes the hook every
+    // route depends on — so it is its own commit with its own browser check, not a
+    // passenger on a version bump.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setToken(localStorage.getItem(TOKEN_KEY));
     setReady(true);
   }, []);

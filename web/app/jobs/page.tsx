@@ -33,6 +33,10 @@ export default function JobsPage() {
   }, [authorized]);
 
   useEffect(() => {
+    // A false positive: `load` is async and every `setState` in it runs after an
+    // `await`, so nothing is set synchronously in this effect body — the rule's
+    // analysis does not follow the await boundary. Fetch-on-mount is the job here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (token) void load();
   }, [token, load]);
 

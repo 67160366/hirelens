@@ -1,9 +1,18 @@
-import { FlatCompat } from "@eslint/eslintrc";
-
-const compat = new FlatCompat({ baseDirectory: import.meta.dirname });
+// `eslint-config-next` v16 ships flat config directly — each subpath exports a
+// `Linter.Config[]` — so the `FlatCompat` shim that used to translate the legacy
+// shareable configs is gone, and `@eslint/eslintrc` with it.
+//
+// This is not a tidy-up. ESLint 10 drops legacy config support, and running the old
+// `compat.extends("next/core-web-vitals", "next/typescript")` under it does not warn
+// or degrade — it throws `Converting circular structure to JSON` from inside
+// eslintrc's config validator, which reads as a bug in this repo rather than a
+// removed API. Importing the flat arrays is the supported form.
+import coreWebVitals from "eslint-config-next/core-web-vitals";
+import typescript from "eslint-config-next/typescript";
 
 const config = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...coreWebVitals,
+  ...typescript,
   {
     ignores: [".next/**", "node_modules/**", "next-env.d.ts"],
   },
