@@ -1157,6 +1157,15 @@ also tracks the status of every item above.
   JSON body as Latin-1 when the server names no charset, and (2026-08-12) two more
   from one script. In each case the data was fine and the question was wrong. Go to
   the store that cannot lie — `psql`, and byte counts rather than eyeballs.
+- **A quiet instrument and a clean result look identical, so prove it can speak.**
+  `read_console_messages` only starts capturing when it is first called, so a page
+  that loaded before that returns "no messages" whether or not the page was clean.
+  The 2026-08-13 `next@16` walkthrough emitted a probe `console.log`/`console.error`
+  pair and confirmed both were visible **before** reporting zero errors. The general
+  form, and the reason this belongs beside the five above: every one of those was a
+  tool answering the wrong question, while this one is a tool answering *nothing* in
+  a way that reads as good news. Any check whose passing result is an **absence** —
+  no errors, no rows, no diff, no annotations — needs a positive control first.
 - **A `.ps1` without a BOM is read in the ANSI codepage, so Thai in a script literal
   is corrupted before it is ever sent** (2026-08-12). A live check "verified" a Thai
   requirement round-trip against text the script itself had already broken —

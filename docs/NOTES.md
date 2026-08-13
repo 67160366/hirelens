@@ -11,15 +11,22 @@ advice for the owner. Newest entry first. The detailed records stay in
 The oldest item on the list, deferred three times. Three high advisories — four
 postcss CVEs and four libvips CVEs through sharp, all transitive through
 `next@15.5.23` and none reachable except by the framework major. `npm audit` reports
-**0** now.
+**0** now. Then **M5 was scoped with the owner** and is no longer a draft.
 
-Three commits. Suite unchanged at **534 / 38 skipped** (nothing in `api/` was
-touched, which is the point), vitest **62**, typecheck / lint / build clean,
-container healthy, journey walked in a browser.
+**Four commits, all pushed, CI green with 0 annotations on both jobs** (run
+`31683438474`).
 
-Then **M5 was scoped with the owner** and is no longer a draft. Its five slices are
-commitments in `PLAN.md`, and the review found a false claim in these docs — details
-at the end of this entry.
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Correct what the notes claim about the repository state | A doc fix. `NOTES.md` said nine commits were unpushed; they were not |
+| 2 | Move to next@16 and close the three high advisories | The upgrade, isolated. Nothing else rides along |
+| 3 | Record the upgrade, and what a codemod got wrong | `PLAN.md` / `HANDOFF.md` / this entry |
+| 4 | Scope M5 with the owner, and correct what it found | M5 draft → commitments, plus the bbox correction |
+
+Gates, each run rather than quoted: `pytest -q` **534 passed / 38 skipped**
+(unchanged — nothing in `api/` was touched, which is the point), vitest **62**,
+`ruff check` / `ruff format --check` / `mypy app` clean, `npm run typecheck` / `lint`
+/ `build` clean, `npm audit` **0**, container healthy, journey walked in a browser.
 
 ### Start here next session
 
@@ -33,6 +40,26 @@ at the end of this entry.
 4. `m4b.candidate` / `m4b.recruiter` are still in the dev database with one job and
    one shortlisted application. Left deliberately, again. This session's two
    throwaways (`n16.*`) were erased.
+
+### Everything that was found broken, in one table
+
+**None of it was application code**, and that is worth stating plainly rather than
+letting a long list imply otherwise. The browser walkthrough found **zero** defects in
+`web/` or `api/` — which is the outcome to expect from a bundler swap and is still not
+the same as not having looked. What was broken was two documents and two of a
+codemod's choices.
+
+| # | What | Where it came from | Fixed |
+|---|---|---|---|
+| 1 | **`NOTES.md` said nine commits were unpushed.** They were pushed; `git rev-list --count origin/main..main` answers 0 and CI was green on the tip | Written at the end of a session, true when written, false by the next morning | Commit 1. The instruction to re-derive the count rather than read it stays, and is now right twice running |
+| 2 | **The codemod bumped ESLint to 10.8.1**, which `eslint-config-next@16.3.0` cannot run on — its `eslint-plugin-react@^7.37.0` dependency has no ESLint 10 release and dies with `contextOrFilename.getFilename is not a function` | `@next/codemod upgrade latest` taking "latest" literally across the whole devDependency set | Commit 2, pinned to `^9.39.5`. The peer-dependency warning at install time was the entire diagnosis |
+| 3 | **The codemod added `export const instant = false`** to `layout.tsx` with a TODO pointing at the Cache Components migration — an opt-out for a feature this project does not enable, and a TODO for work in no milestone | Same codemod, applying a defensive transform unconditionally | Commit 2, reverted |
+| 4 | **`eslint-disable-next-line` placed at the top of a multi-line `//` block does nothing.** "Next line" means the next *comment* line. The first attempt looked correct and turned 4 errors into 4 errors **plus** 4 unused-directive warnings | My mistake, caught by re-running lint rather than assuming the edit worked | Commit 2. Reason above, bare directive last |
+| 5 | **`PLAN.md` M2 #8 and `HANDOFF.md` §9 claimed the pdf.js overlay was nearly free** — that M2 #6 already extracts the bbox geometry, leaving "an endpoint and a canvas". Nothing persists any geometry at all | Written 2026-08-08 and repeated into three documents. A plausible reading of #6, never checked against the code | Commit 4, both corrected. It turned a frontend afternoon into two slices and a migration |
+
+Two of those five (#1 and #5) are the same failure: **a document asserting something
+about the repository that nobody re-derived.** This project already had a standing rule
+for the first kind and now has evidence for the second.
 
 ### The upgrade was four changes, and the version number was the easy one
 
@@ -135,35 +162,24 @@ rebuilt container and live Gemini, **2 model calls**:
 - Both throwaway accounts erased with `DELETE /auth/me`: `stored_files_removed: 1`
   and `0`, tokens then 401, `psql` reports 0 rows and 0 jobs left behind.
 
-### Worth knowing next time
+### Driving this UI from the browser tools — what worked, again
 
-- **`form_input` is still the wrong tool here** and coordinate clicks are still
-  unreliable (screenshot 1568 px vs a viewport reporting more). What worked every
-  time, again: `javascript_tool` with `el.click()` and the React-native value setter
-  plus an `input` event. That note from last session paid for itself immediately.
-- **`next build` rewrites `tsconfig.json` and `next-env.d.ts`.** `jsx: react-jsx` is
-  mandatory in 16 and `next dev` now emits types under `.next/dev`. Committed as
-  generated — fighting the formatter means a dirty tree after every build.
-- **`next dev` in 16 writes a managed block into `AGENTS.md`.** It did not appear
-  here because only `next build` was run. If anyone runs `next dev`, expect an
-  untracked file that `.gitignore` does not cover yet.
-- The codemod prints `WARNING: Git directory is not clean. Forcibly continuing.`
-  even on a clean tree. It means its own scratch state, not yours.
+Last session's note paid for itself immediately, so it is repeated rather than
+pointed at. **`form_input` sets the DOM value but does not reliably reach React
+state**, and coordinate clicks land wrong (the screenshot is 1568 px wide while the
+viewport reports more). What worked every time: `javascript_tool` with `el.click()`
+and the React-native value setter plus an `input` event.
 
-### Advice for the owner
+New this session, and the same class of trap: **`read_console_messages` only starts
+capturing when it is first called.** A page that loaded before that returns "no
+messages", which is indistinguishable from a clean page. A probe
+`console.log`/`console.error` pair was emitted and confirmed visible *before* the
+zero was believed. Without that step the headline "zero console errors" would have
+been an instrument reporting its own silence — the sixth instrument lie on this
+project, caught before it lied.
 
-- **A tool that automates a migration still has opinions, and two of them were wrong
-  here.** Both were recoverable in minutes and both would have shipped silently: an
-  ESLint major its own config cannot run on, and an opt-out for a feature this project
-  does not enable. Read the diff a codemod produces the way you would read a
-  colleague's.
-- **The peer-dependency warning was the entire answer**, printed before anything
-  broke, in the wall of text after `npm install`. This project's standing lesson is
-  "read a green run's annotations, not just its tick" — same shape, different tool.
-- **The browser check cost 2 model calls and twenty minutes, and this time it found
-  nothing.** That is the right outcome to expect most of the time, and it is still
-  worth doing: the thing it was actually checking — that a bundler swap did not break
-  SSE streaming, citation offsets or Tailwind — has no other instrument.
+One harmless red herring: the codemod prints `WARNING: Git directory is not clean.
+Forcibly continuing.` even on a clean tree. It means its own scratch state.
 
 ### M5 is scoped, and the review paid for itself in its first hour
 
@@ -210,16 +226,92 @@ overlay is two slices, not a frontend afternoon.
 It was caught by checking a claim before writing it into a plan, which is the same
 habit that produced this session's first commit. Both documents are corrected.
 
-### Advice for the owner, on the review
+### Still open, in order
 
+1. **M5 slice 1 — the dropped-claims audit view.** The guardrail's own evidence, which
+   the system has produced on every document since M1 and shown nobody. **No API change
+   and no migration**, checked rather than assumed: `ProfileOut.profile` is the stored
+   `ExtractedProfile` serialized whole and already carries `dropped`, and
+   `GET /screenings/{id}` returns the stored `Judgment` verbatim including `dropped` —
+   a route `/jobs/[id]` already calls for `document_text`. `RankedEntry` deliberately
+   does not carry it. The rule to hold: this view reports, it never re-asks, and
+   nothing on it spends a model call.
+2. **M5 slice 2 — the cost and quality dashboard.** A read route over `llm_call_logs`
+   and `extracted_profiles`, no migration. Two things it must get right:
+   `cost_usd IS NULL` renders as "unknown" and never as 0, and the
+   `resume_id`-xor-`screening_id` split is not collapsed — it is what makes "what did
+   this document cost" and "what did this screening cost" separately answerable.
+3. **M5 slice 3 — word geometry at parse time.** A migration and a change to
+   `parse.py`, the most load-bearing module here. The property to pin before anything
+   else: every fixture's `document_text` and page spans **byte-identical** before and
+   after.
+4. **M5 slice 4 — the pdf.js overlay**, on slice 3's geometry.
+5. **M5 slice 5 — production compose and a runbook.**
+6. **`useAuth` owes a `useSyncExternalStore` rewrite.** It carries the one *genuine*
+   `react-hooks/set-state-in-effect` suppression. Its own commit and its own browser
+   check, because it is the hook every route depends on.
+7. **httpOnly cookies and the refresh-token denylist**, deferred a third time and
+   deliberately out of M5. Raise them again if a deploy decision makes them cheap.
+8. **M6's evaluation** stays out of the critical path with its one-week timebox.
+9. **jsdom** stays out. Revisit only if M5's UI work grows a fourth defect in the
+   region `npm test` cannot reach.
+10. `m4b.candidate` / `m4b.recruiter` and ~20 older throwaway accounts are still in
+    the dev database. Left alone rather than swept unasked.
+
+### Things to watch, and to improve
+
+- **`tsconfig.json` and `next-env.d.ts` are generated now.** `next build` rewrites
+  them — `jsx: react-jsx` is mandatory in 16 and `next dev` emits types under
+  `.next/dev`. Do not hand-format them; the build will undo it and leave a dirty tree.
+- **`next dev` in 16 writes a managed block into `AGENTS.md`.** It has not appeared
+  here because only `next build` has been run. The first person to run `next dev` gets
+  an untracked file `.gitignore` does not cover — decide then whether to commit or
+  ignore it, rather than being surprised.
+- **The lint suppressions are load-bearing documentation.** Four sites carry
+  `react-hooks/set-state-in-effect` disables with their reasons. Three say "false
+  positive, the setState is after an `await`"; if a future refactor makes one of them
+  synchronous, the comment becomes a lie and the rule stops protecting anything.
+- **`web/` still has the untestable region** — JSX attributes, component effects, and
+  the `RequestInit` a call builds. Two of the three ways in were closed by moving logic
+  out (`lib/requirements.ts`, the JSON-write table in `lib/api.test.ts`). Keep reaching
+  for that before reaching for jsdom.
+- **Three cosmetic smells, unchanged and still not worth a detour**: `screenable` is
+  shadowed inside its own `.map` in `web/app/jobs/[id]/page.tsx`, two `refresh*`
+  callbacks exist where a third would be a smell, and `describeEvent` renders "The
+  system moved it to being screened". Do them when already in the file.
+- **The Gemini free tier is 20 requests/day.** A full browser journey costs 2. Re-walking
+  with data already in the database costs 0 — but the `m4b.*` passwords are recorded
+  nowhere, so a walkthrough that needs a login means fresh accounts and 2 calls.
+
+### Advice for the owner
+
+- **A tool that automates a migration still has opinions, and two of them were wrong
+  here.** Both were recoverable in minutes and both would have shipped silently: an
+  ESLint major its own config cannot run on, and an opt-out for a feature this project
+  does not enable. Read a codemod's diff the way you would read a colleague's.
+- **The peer-dependency warning was the entire answer**, printed before anything broke,
+  in the wall of text after `npm install`. The standing rule here is "read a green run's
+  annotations, not just its tick" — same shape, different tool. Add: *read the noise a
+  successful command prints.*
 - **The scope review keeps finding that the docs are optimistic about work not yet
-  done.** M4's found four false statements in HANDOFF §1; M5's found a two-slice
-  parser change described as an endpoint and a canvas. A claim about *shipped* code
-  gets corrected the moment someone reads the code; a claim about *unshipped* code can
-  sit unchallenged for months, because nobody has had a reason to look. Those are the
-  ones to distrust.
-- **Two of the four drafted recruiter-UI items were already built.** Worth doing the
-  review before the estimate, not after.
+  done.** M4's found four false statements in HANDOFF §1; M5's found a two-slice parser
+  change described as an endpoint and a canvas, believed for five days across three
+  files. A claim about *shipped* code gets corrected the first time somebody reads the
+  code. A claim about *unshipped* code can sit for months, because nobody has had a
+  reason to look. **Those are the ones to check before planning against them** — and
+  the cheapest moment to check is the scope review, which is now 3 for 3.
+- **Two of the four drafted recruiter-UI items were already built.** Review before
+  estimating, not after.
+- **The browser check cost 2 model calls and twenty minutes and found nothing.** That
+  is the right outcome most of the time, and it is still the only instrument that
+  covers what a bundler swap can break: whether the stylesheet loaded, whether SSE
+  still streams, whether a citation still lands on the right characters. A check that
+  only pays off occasionally is not the same as a check that is not worth running.
+- **Say what is running at the start of a session.** "Docker is up, the browser is
+  connected" decided the shape of this session in one line, exactly as the previous
+  entry predicted it would. It is worth more than a paragraph of direction.
+- **Nothing is pushed without being asked** — asked and answered again this session.
+  Keep asking.
 
 ---
 
