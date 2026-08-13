@@ -1,74 +1,7 @@
+import { DroppedClaims } from "@/components/DroppedClaims";
 import { ClaimRow, Evidence } from "@/components/Evidence";
-import type { DroppedClaim, ExtractedProfile, RejectReason, Resume } from "@/lib/api";
-
-const REJECT_LABEL: Record<RejectReason, string> = {
-  not_found: "no matching text in the document",
-  too_short: "quote too short to identify a source",
-  empty: "no quote supplied",
-  // Judging's, and unreachable from an extraction: pointing at a requirement that
-  // does not exist is the same class of claim as quoting text that is not there,
-  // so it lands in the same `dropped` list and the same hallucination rate.
-  unknown_requirement: "aimed at a requirement that does not exist",
-};
-
-function StatsBar({ profile }: { profile: ExtractedProfile }) {
-  const { stats } = profile;
-  const clean = stats.dropped === 0;
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-stone-200 bg-white px-4 py-3 text-sm dark:border-stone-800 dark:bg-stone-900">
-      <span>
-        <strong className="tabular-nums">
-          {stats.verified}/{stats.total_claims}
-        </strong>{" "}
-        <span className="text-stone-500 dark:text-stone-400">claims verified</span>
-      </span>
-      <span
-        className={
-          clean ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"
-        }
-      >
-        <strong className="tabular-nums">{(stats.hallucination_rate * 100).toFixed(1)}%</strong>{" "}
-        unverifiable
-      </span>
-      <span className="text-stone-500 dark:text-stone-400">
-        {stats.attempts} model {stats.attempts === 1 ? "call" : "calls"}
-      </span>
-    </div>
-  );
-}
-
-function DroppedSection({ dropped }: { dropped: DroppedClaim[] }) {
-  return (
-    <section className="rounded-lg border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
-      <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">
-        Excluded — could not be traced to the document ({dropped.length})
-      </h3>
-      <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-400/80">
-        The model asserted these, but the text it cited is not in the file. They are shown here
-        rather than silently discarded.
-      </p>
-      <ul className="mt-3 space-y-2.5">
-        {dropped.map((claim, index) => (
-          <li key={`${claim.field}-${index}`} className="text-sm">
-            <span className="font-mono text-[11px] text-amber-700 dark:text-amber-500">
-              {claim.field}
-            </span>{" "}
-            <span className="font-medium">{claim.value || "(no value)"}</span>
-            <span className="ml-1.5 text-xs text-amber-700/80 dark:text-amber-500/80">
-              — {REJECT_LABEL[claim.reason]}
-            </span>
-            {claim.quote && (
-              <p className="evidence-quote mt-0.5 text-amber-800/70 line-through dark:text-amber-500/60">
-                claimed: &ldquo;{claim.quote}&rdquo;
-              </p>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
+import { EvidenceStatsBar } from "@/components/EvidenceStatsBar";
+import type { ExtractedProfile, Resume } from "@/lib/api";
 
 function Panel({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   if (count === 0) return null;
@@ -115,7 +48,7 @@ export function ProfileView({
 
   return (
     <div className="space-y-4">
-      <StatsBar profile={profile} />
+      <EvidenceStatsBar stats={profile.stats} />
 
       {resume.pages_from_ocr.length > 0 && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
@@ -207,7 +140,7 @@ export function ProfileView({
         ))}
       </Panel>
 
-      {profile.dropped.length > 0 && <DroppedSection dropped={profile.dropped} />}
+      <DroppedClaims dropped={profile.dropped} />
     </div>
   );
 }
