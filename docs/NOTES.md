@@ -26,12 +26,27 @@ two new screening cases), vitest **69** (62 + 7), `ruff check` / `ruff format --
 
 ### Start here next session
 
-1. **Unblock the two things below, then drive the browser.** The slice is code-complete
-   and unverified. Per this project's own rule that is not done, and `PLAN.md` still has
-   slice 1 unticked on purpose.
-2. Nothing is half-written. Working tree clean, both commits local, **nothing pushed**.
-3. Then: `PLAN.md` slice 1 → `[x]`, and pick up slice 2 — but read the cost finding below
-   first, because slice 2 as scoped cannot be built.
+Read this entry, then `HANDOFF.md` §1 and §9, then `PLAN.md`'s M5 section — the slice 1
+bullet there now carries what was built and what the audit corrected about it.
+
+1. **Nothing is half-written.** Working tree clean, three commits local, **nothing
+   pushed**. Re-derive the push state with `git rev-list --count origin/main..main`
+   rather than believing this line — it has been wrong here before.
+2. **Check free space on `C:` first.** If it is still full, nothing that rebuilds or
+   recreates a container will work, and it will not say so honestly (blocker 1 below).
+3. **Then finish slice 1 by watching it.** It is code-complete and unverified, which by
+   this project's own rule is not done, and `PLAN.md` has it unticked on purpose. The
+   walkthrough is below and costs no Gemini quota.
+4. **Then tick `PLAN.md` slice 1 → `[x]`** and refresh `HANDOFF.md` §1 with the result.
+5. **Do not start slice 2 as written.** It is specified as a cost dashboard and there is
+   no cost to show — item 4 in the table below. That needs the owner, not a decision made
+   while coding.
+6. If picking up something else instead, **slice 4's file route is the one thing that is
+   unblocked** — it has no dependency on slice 3 — but read item 14 first, because it
+   turns a read-access gap into raw PII bytes.
+7. `m4b.candidate` / `m4b.recruiter` and ~20 older throwaway accounts are still in the dev
+   database. Left alone rather than swept unasked, as before. Their passwords are recorded
+   nowhere, so a walkthrough needing a login means fresh accounts.
 
 ### The two blockers
 
@@ -90,6 +105,96 @@ pass every gate and render nothing. That is not a defect in it; it is what a gua
 looks like when the provider behaves. `FAKE_MODE=hallucinating` is how to make it speak,
 and proving an *absence* needs a positive control — the same rule §10 already carries for
 `read_console_messages`.
+
+### Everything that was found broken, in one table
+
+Four documents, one design assumption, three environment faults and eight code-level
+gaps. **Only one was in application code** — the missing test — and the rest are worth
+more than a long list implies, because every one of them would have been discovered by
+building on top of it instead.
+
+| # | What | Where it came from | State |
+|---|---|---|---|
+| 1 | **`PLAN.md` slice 1 said the dropped-claims evidence had "never been shown anyone".** The extraction half shipped in M1 and has been on the home page since | A scope review describing unbuilt work without reading the built work beside it | **Fixed** — `PLAN.md` corrected, and the slice narrowed to judging's half, which is what these commits build |
+| 2 | **`PLAN.md` slice 3 says geometry is written "in `_assemble`".** It cannot be: `_assemble` strips NUL *after* words are extracted, and 8 of 11 words in `resume_broken_tounicode.pdf` contain a literal `\x00`, so a naive `find()` locates 3 of 11 — on the fixture that exists to pin the NUL strip. NFC is also not distributive across a concatenation | The same habit as #1 — a plausible reading of `parse.py` never checked against it | **Open.** `_text_of` has to change too. Recorded here; `PLAN.md` slice 3 not yet rewritten |
+| 3 | **`PLAN.md` slice 5 commits to a compose `profiles:`.** `profiles:` cannot remove a published port from a service, and neither can a plain override merge | Naming a mechanism in a scope review without trying it | **Open.** Wants `docker-compose.override.yml` holding the dev port publishing |
+| 4 | **Slice 2 is specified as a *cost* dashboard and there is no cost.** `gemini.py:37-46` maps every model to `FREE_TIER`, so all 22 logged calls stored `cost_usd = 0.0` — not even `NULL`, which is the one behaviour the slice says it must get right | The schema supports cost, the provider does not charge, and nobody joined the two facts | **Open, and needs an owner decision** before any of it is built |
+| 5 | 🔴 **Redis published on `0.0.0.0:6379` with no password.** A socket to `127.0.0.1:6379` answered `+PONG`; `CONFIG GET requirepass` was empty. Postgres and MinIO are published the same way | `docker-compose.yml` publishing ports with no host-IP prefix, which binds every interface | **Open, untouched on purpose.** Belongs to slice 5 and should go first — three `127.0.0.1:` prefixes |
+| 6 | **`C:` is 100% full (114 MB free).** Docker's containerd metadata store went read-only, so `docker compose up -d --build` **built both images and failed to recreate the containers** — and still **exited 0** | The host, not the project | **Open.** Blocks the walkthrough; the running containers are nine hours stale |
+| 7 | **The Chrome extension is not connected**, so slice 1 cannot be watched | Same as the M4 slice 5 session | **Open.** The slice stays unticked because of it |
+| 8 | **Zero dropped claims exist in the dev database** — 20 profiles, all clean. Slice 1's view would pass every gate and render nothing | A guardrail with a provider that behaves | **Open**, and it is a walkthrough step rather than a code change: `FAKE_MODE=hallucinating` |
+| 9 | **`GET /screenings/{id}` served `dropped` with nothing testing that it did.** It returns the stored `Judgment` as an untyped dict, so nothing could strip it — and nothing would have failed if something had. Extraction's twin has existed since M1 | A route whose payload was true by accident | **Fixed** — two cases in `test_screening.py`, `pytest` 534 → 536 |
+| 10 | **`ScreeningDetail.judgment` omitted `stats`** on the client, and `RankedEntry`/`ExcludedEntry` omit the `resume_filename` the server actually serves — the page rebuilds names from a local map with an 8-char-id fallback | Hand-mirrored types drifting from the schemas they mirror | `stats` **fixed**; the filename gap **open** and cosmetic until a screened resume is not in the caller's own list, which is exactly when it shows |
+| 11 | **The worker container runs an image sha that no longer exists in the image store.** Content is identical today, so nothing is broken — but the next `docker compose up -d` moves it onto a different image with nobody asking | It was restarted rather than recreated after the 2026-08-13 rebuild | **Open**, harmless now, surprising later |
+| 12 | **`OCR_ENGINE=tesseract` is active**, contradicting `CLAUDE.md`'s "off by default" framing, and it resolves differently inside the container (bare name on `PATH`) than on the host (`OCR_COMMAND` at a portable install) | `.env` drifting from the docs that describe it | **Open** — a doc fix, but the two resolution mechanisms are worth knowing before debugging OCR |
+| 13 | **`RETRIEVAL_BACKEND` is in no `.env` at all** and silently defaults to `lexical` | Never added when the setting landed | **Open**, harmless, worth a line in `.env.example` |
+| 14 | **`_owned_resume`'s widening has no application-state predicate**, so a *withdrawn* or *rejected* application still grants the recruiter read access to the resume. Slice 4 would upgrade that from extracted text to **raw PII bytes** | The widening was written for the live case and terminal states were not considered | **Open, and it gates slice 4.** Decide before the file route ships, not after |
+| 15 | **`llm_call_logs.resume_id` xor `screening_id` is a docstring, not a constraint**, and there is no owner column at all — so "the caller's own rows" is two joins landing on different owners (`resumes.candidate_id` vs `jobs.owner_id`) | An invariant documented rather than enforced | **Open**, and it decides slice 2's shape: a row with both null is legal and would vanish from every total |
+| 16 | **`require_role` cannot widen a row scope** — it is a 403 route gate, so `PLAN.md`'s "ADMIN sees everything via `require_role`" would 403 the candidates who own the extraction rows | Reaching for the nearest-named mechanism | **Open.** `resumes.py:294` already has the right pattern |
+| 17 | **`_assemble` is the DOCX path too** (`parse.py:325`) and is imported and called bare by `test_parse.py` | Not a defect — a constraint on slice 3 | **Open**, and it means any new geometry parameter needs a default meaning "no geometry" |
+
+Items 2, 3, 4, 14, 15 and 16 come from the audit's **unchallenged** half and are **leads,
+not findings** — see the caveat above. 1, 5, 9, 10 and 11 were confirmed by a second pass
+or by running something.
+
+### Things to watch, and to improve
+
+- **The instrument-lie list in `HANDOFF.md` §10 gains a seventh.** `docker compose up -d
+  --build` printed its failure on the last line and **exited 0**. Every earlier entry was
+  a tool answering the wrong question or answering nothing; this one answers *the wrong
+  question about its own success*. The general form: a command that does two things
+  reports on one of them. Ask the container what it holds, always — checking the env vars
+  is what caught it, and it took one command.
+- **An inline `VAR=x docker compose up` did not reach compose at all** in this session's
+  shell. `FAKE_MODE` came back as the compose default and `LLM_PROVIDER` came back from
+  `.env`. `export` first, then run, and then **ask the container** — the 2026-08-12 note
+  says an override does not survive the next `up`; this adds that it may not survive the
+  *first* one.
+- **Disk space is now a project risk, not a machine detail.** Docker's failure mode when
+  `C:` fills is not "out of space", it is a read-only metadata store that lets builds
+  succeed and swaps fail. Check free space before a session that rebuilds anything.
+- **An audit whose adversarial pass died is half an audit.** 15 of 33 agents failed on a
+  session limit. The findings for slices 2, 3 and 5 have one source each and are written
+  down as leads on purpose — this is the same rule `CLAUDE.md` already states about a tool
+  that dies on a quota limit producing no coverage.
+- **The three cosmetic smells are unchanged** and still not worth a detour: `screenable`
+  shadowed inside its own `.map` in `web/app/jobs/[id]/page.tsx`, two `refresh*` callbacks
+  where a third would be a smell, and `describeEvent` rendering "The system moved it to
+  being screened". Do them when already in the file.
+- **`useAuth` still owes its `useSyncExternalStore` rewrite**, carrying the one genuine
+  `react-hooks/set-state-in-effect` suppression.
+- **The Gemini free tier is 20 requests/day and none were spent this session.** The whole
+  slice-1 walkthrough needs **zero** — `FAKE_MODE=hallucinating` produces better data for
+  it than a real provider can, because a real provider mostly does not hallucinate.
+- **`web/` gained two components and no way to test them**, which is the known untestable
+  region. The logic went into `lib/evidence.ts` where vitest can reach it, which is the
+  move to keep reaching for before reaching for jsdom.
+
+### Advice for the owner
+
+- **The scope review is 4 for 4 at finding false claims about unshipped work.** M4's found
+  four in `HANDOFF` §1, M5's found the geometry claim, and this session's audit found
+  three more inside M5's own newly-reviewed scope — written five days ago by the same
+  process. The lesson is narrower than "review scope": **a claim about code nobody has
+  built yet decays silently, and a scope review is not immune to producing them.** Check
+  the claims a plan rests on at the moment you build the slice, not only when you plan it.
+- **Two of this session's four blockers were environmental, and both were invisible until
+  something was attempted.** "Docker is up, the browser is connected" was worth a
+  paragraph of direction last session and it was half true this one — Docker was up and
+  could not recreate a container; the browser was open and the extension was not
+  connected. **Say what is running, then let the first command verify it.**
+- **Slice 2 needs a decision from you before anyone writes it.** There is no cost to put
+  on a cost dashboard. The honest versions are: build it on tokens and latency and call it
+  what it is, or wait until a paid provider exists. Building the specified version means
+  shipping a screen of zeroes that looks like a bug.
+- **Redis is open on this machine right now.** It is one line per service and it is not
+  worth deferring to the rest of slice 5, but it is your call whether it goes in now or
+  with the profile work.
+- **The work that pays here keeps being the check nobody scheduled.** This session spent
+  more time auditing five slices than writing one, and the audit is what stopped slice 1
+  from being built to the wrong shape — the "never shown anyone" framing would have
+  produced a second copy of a panel that already existed. Budget for the check.
+- **Nothing was pushed.** Three commits sit local, as asked.
 
 ---
 
