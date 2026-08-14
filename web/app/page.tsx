@@ -144,6 +144,12 @@ export default function Home() {
               >
                 Your applications →
               </Link>
+              <Link
+                href="/metrics"
+                className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
+              >
+                Usage and quality →
+              </Link>
               <button
                 type="button"
                 onClick={() => {

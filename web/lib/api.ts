@@ -322,6 +322,63 @@ export interface Ranking {
   excluded: ExcludedEntry[];
 }
 
+/** Which piece of work paid for a model call (M5 slice 2). */
+export type CallBucket = "extraction" | "judging" | "unattributed" | "ambiguous";
+
+/** Whose rows a usage report covers. `all` is ADMIN only. */
+export type UsageScope = "own" | "all";
+
+export interface CallTotals {
+  /** How many rows produced every figure here — the citation for the numbers. */
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens: number;
+  latency_ms_total: number;
+  /** Null when there are no calls: the mean of zero samples is not zero. */
+  latency_ms_mean: number | null;
+  /** How many of `calls` carry a known price, so a reader can see why cost is null. */
+  calls_priced: number;
+  /**
+   * Null unless **every** call in the group is priced. A partial sum would look
+   * complete and be wrong, which is the hazard `cost_usd`'s nullability exists for.
+   */
+  cost_usd: number | null;
+}
+
+export interface CallGroup {
+  provider: string;
+  model: string;
+  prompt_version: string;
+  bucket: CallBucket;
+  totals: CallTotals;
+}
+
+export interface QualitySummary {
+  profiles: number;
+  claims_verified: number;
+  claims_dropped: number;
+  /** Recomputed from the totals, not the mean of the per-profile rates. */
+  hallucination_rate: number | null;
+  extraction_attempts_total: number;
+}
+
+export interface ParseOutcome {
+  status: ResumeStatus;
+  resumes: number;
+}
+
+export interface UsageReport {
+  scope: UsageScope;
+  generated_at: string;
+  totals: CallTotals;
+  /** Every bucket is present, including the empty ones. */
+  by_bucket: Record<CallBucket, CallTotals>;
+  by_group: CallGroup[];
+  quality: QualitySummary;
+  parse_outcomes: ParseOutcome[];
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -630,6 +687,14 @@ export const api = {
    */
   getRanking: (jobId: string, token: string) =>
     request<Ranking>(`/jobs/${jobId}/ranking`, {}, token),
+
+  /**
+   * What this account's model calls consumed, and how well the guardrail held.
+   *
+   * Reports; never re-asks. Every figure is a query over rows the system already
+   * wrote, so refreshing this screen costs a query and **never a model call**.
+   */
+  getUsage: (token: string) => request<UsageReport>("/metrics/usage", {}, token),
 
   /**
    * Follow a resume over the progress stream until it reaches a resting state.
