@@ -6,7 +6,114 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-14 (latest) — M5 slice 1 is written and cannot be watched
+## 2026-08-15 (latest) — slice 1 closes, the ports close, and four leads become findings
+
+**M5 slice 1 is done.** Both of last session's blockers were gone before the first
+command: `C:` had **61 GB** free (it was 114 MB), and the Chrome extension connected.
+The stack was already sitting on `LLM_PROVIDER=fake` + `FAKE_MODE=hallucinating`, and
+the images had been built at 01:40 — **after** the 01:35 commit — so the containers
+served the slice-1 code once they were finally recreated. **Zero Gemini quota spent.**
+
+Three commits, gates run rather than quoted: `pytest -q` **536 passed / 38 skipped**,
+`ruff check` / `ruff format --check` / `mypy app` clean (51 files). Plus the two opt-in
+suites against real servers: `test_postgres.py` **5 passed**, `test_minio.py` **9 passed**.
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Bind the data services to the loopback interface only | The security finding below. `docker-compose.yml` only |
+| 2 | Repair the opt-in Postgres suite, which had rotted unnoticed | Two call sites; the module had been half-broken since 2026-08-12 |
+| 3 | Close M5 slice 1, and correct what the remaining slices must do | `PLAN.md` slice 1 ticked and slices 2/3/5 rewritten on confirmed findings; `HANDOFF.md` §1, §9 and §10 refreshed. One commit rather than two because the two halves interleave in the same three files |
+
+### What watching slice 1 proved
+
+It **worked** — worth saying plainly next to the 2026-08-13 row where the same check
+found seven defects. The rule was never "a browser check always finds something", it is
+that nothing else tells you either way.
+
+One recruiter account was enough, which the plan did not expect: `screenable`
+(`web/app/jobs/[id]/page.tsx:174-190`) merges the account's own uploads with the
+applicants', so a recruiter can screen a resume they uploaded and no application journey
+is needed to reach a screening. Extraction gave **10/11 verified, 9.1% unverifiable,
+2 model calls** and the M1 panel still rendered — the regression the shared-component
+refactor owed. Then the new half: **1/2 verified, 50.0% unverifiable**, `Python` **Met**
+citing the Thai line, `Kubernetes` "No citable evidence", and
+`Excluded — could not be traced to the document (1)` naming `requirements[1] Kubernetes`
+with the fabrication struck through.
+
+Two things the browser proved that no test had:
+
+- **The fabricated quote did not manufacture a verdict.** `hallucinating` attaches its
+  fabrication to a requirement the document does *not* evidence — the sharper test,
+  because there is nothing real beside it to hide behind — and the verdict stayed
+  unevidenced.
+- **The model-call count is read from the stats, not the row that spells it the same.**
+  `psql` shows the screening at `attempts = 1` while its stored stats say `2`, and the
+  screen said "2 model calls". Had the component read the row it would have said one and
+  nothing would have looked wrong.
+
+The console was clean **on an instrument proven to speak first** — a probe
+`console.log`/`console.error` pair, confirmed visible before the absence was believed.
+Both throwaway accounts erased: `stored_files_removed: 1`, token then 401, `psql` 0 rows.
+
+### The two things found on the way, neither of them planned
+
+- 🔴 **Redis, Postgres and MinIO were published on every interface**, Redis with no
+  password. Fixed first and separately, because it is the state of this machine rather
+  than a question about a future deploy: three `127.0.0.1:` prefixes. `api` and `web`
+  still publish openly — the browser needs them. Proven by re-running both opt-in suites
+  against the new binds, which is what shows a bind is *right* rather than merely
+  different.
+- **The opt-in Postgres suite had rotted since 2026-08-12.** `ingest_resume` gained a
+  required `consent_version` in M4's PDPA slice (`77a22c6`) and the module was never
+  updated, so two of its five cases had been failing with a `TypeError` ever since.
+  Nothing caught it: `pytest -q` skips the module and CI has no database. `HANDOFF.md`
+  §1 asserted "4 passed" throughout — wrong twice over, since there are five cases and
+  two failed. **An opt-in suite going quiet shows up as neither a red tick nor a changed
+  skip count.** Worth a periodic run of every opt-in module for exactly this reason.
+
+### The four leads are now findings
+
+Last session's audit lost 15 of 33 agents to a session limit, so items 2, 3, 14 and 16
+were written down as single-source leads. Each was re-investigated and then handed to an
+independent agent told to **refute** it. **All four survived** (8 agents, 0 errors, every
+refuter returned `refuted: false`), and three change what their slice has to do.
+`PLAN.md` now carries the corrected shapes; the short version:
+
+- **Slice 3 is worse than the note said.** `_assemble` takes `list[str]`
+  (`parse.py:395-401`) and never sees a pdfplumber `Page`, so geometry cannot be
+  measured there *under any implementation*. Measured: 8 of 11 words carry `\x00`, word
+  starts drift up to 11 chars — and two things the audit did not have: **`find()` is
+  unsound even with zero NULs** (105 of 120 words in `resume_multipage.pdf` occur more
+  than once) and the two-column path reorders (11 offset inversions). The answer is
+  pdfplumber's textmap, which aligns chars to boxes by construction rather than by
+  search.
+- **Slice 5's recorded remedy is out of date.** This machine runs Compose **v5.3.1**,
+  where `ports: !reset []` and `!override` both work — so the
+  `docker-compose.override.yml` inversion is unnecessary. And `profiles:` is worse than
+  "insufficient": with the profile inactive the project **fails to load at all**, because
+  every infra service is a `depends_on` target. Two traps nobody had named: the
+  `*api_env` anchor cannot cross files, and `NEXT_PUBLIC_API_BASE` is a build arg.
+- **Slice 4's gate is confirmed.** `resumes.py:299-306` has two conjuncts and neither
+  touches `Application.state`, so `WITHDRAWN` and `REJECTED` still grant read access.
+- **Slice 2's admin scope is genuinely unsettled**, not just misnamed. `require_role`
+  cannot produce a row predicate — but `jobs.py:222-223` is an existing role-branched
+  scope that **narrows** ADMIN. That is an owner decision.
+
+### Advice for the owner
+
+- **Slice 2 was respecified with you and is ready to build.** There is no cost —
+  all 22 `llm_call_logs` rows are `cost_usd = 0` and none are NULL — so it charts tokens,
+  latency, prompt family, attempts and the quality metrics instead. The measured baseline
+  is in `PLAN.md` so the screen can be checked against something.
+- **The check nobody scheduled paid again, twice.** Last session it was the audit; this
+  session it was noticing the opt-in suite's number had never been re-read, and noticing
+  the ports while looking at something else. Neither was on the plan.
+- **Nothing was pushed until slice 1 actually closed**, as you asked. See the note below
+  for the count — re-derive it, do not trust the prose.
+
+---
+
+## 2026-08-14 — M5 slice 1 is written and cannot be watched
 
 **Two commits, gates green, not pushed, and the slice is NOT done** — the browser
 check could not run. Both reasons are environmental and both need the owner.
@@ -136,6 +243,13 @@ building on top of it instead.
 Items 2, 3, 4, 14, 15 and 16 come from the audit's **unchallenged** half and are **leads,
 not findings** — see the caveat above. 1, 5, 9, 10 and 11 were confirmed by a second pass
 or by running something.
+
+**Updated 2026-08-15: all of them are findings now.** 4 and 15 were confirmed by querying
+Postgres directly; 2, 3, 14 and 16 were each re-investigated and then handed to an
+independent agent told to refute the result, and **all four survived**. Item 5 (the open
+ports) and item 6 (the full `C:`) are **fixed**. Item 3's prescribed remedy —
+`docker-compose.override.yml` — turned out to be the pre-v2.24 answer and is superseded;
+see the 2026-08-15 entry.
 
 ### Things to watch, and to improve
 

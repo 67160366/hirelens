@@ -6,7 +6,9 @@ scope was agreed and its first slice landed. Updated 2026-08-12 when slice 5 put
 face on the matching engine, again when slice 6 closed **M3**, and again the same
 day when all five slices of **M4** landed, and again on 2026-08-13 when slice 5 was
 finally watched in a browser, turned out not to work, and had all seven of its defects
-fixed. Read this first when picking
+fixed. Updated again on 2026-08-15, when **M5 slice 1 was watched and closed**, the data
+services came off every network interface, and four leads the previous session could not
+challenge were confirmed. Read this first when picking
 the project back up — then
 `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
@@ -83,6 +85,25 @@ milestone visible has been cheap because the slices before it stored the right t
 extension was not connected. Everything else is verified below, and that is not the
 same thing — it is the first item in §9.
 
+**M5 is under way: slice 1 of 5 is done** (2026-08-15). The dropped-claims audit view
+was written on 2026-08-14 with every gate green and deliberately left unticked, because
+nobody had used it; the two blockers that stopped that — a full `C:` and a disconnected
+Chrome extension — were both gone this session, and watching it took twenty minutes and
+**zero Gemini quota**. This time the slice worked, which is worth saying plainly beside
+the 2026-08-13 row where it did not: the rule is not that browser checks always find
+defects, it is that nothing else can tell you either way.
+
+Three things landed beside it, none of them planned. **Redis, Postgres and MinIO were
+published on every interface** and Redis has no password — that is the dev machine's
+state, not a deploy question, so it was fixed first and separately. **The opt-in
+Postgres suite had rotted**: `ingest_resume` gained a required `consent_version` in M4's
+PDPA slice and two of its five cases had been failing ever since, invisible because
+`pytest -q` skips the module and CI has no database. And the **four findings the
+2026-08-14 audit could not challenge** — its adversarial pass died on a session limit —
+were each re-investigated and independently refuted; all four survived, and three of
+them change what their slice has to do. `docs/PLAN.md` carries the corrected shapes for
+slices 2, 3 and 5.
+
 ### Verified by running it, not only by tests
 
 | Check | Result |
@@ -90,7 +111,7 @@ same thing — it is the first item in §9.
 | `pytest -q` | **534** passed, 38 skipped, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `npm test` | **62** in `web/` (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
-| `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | 4 passed against real Postgres |
+| `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
 | `ruff check` / `ruff format --check` | clean |
 | `mypy app` (strict) | clean, 35 files |
@@ -168,6 +189,12 @@ same thing — it is the first item in §9.
 | Erasure, through the API | Both throwaway accounts erased with `DELETE /auth/me`: `stored_files_removed: 1`, the token then 401, and `psql` reports 0 rows. The blobs-before-rows order exercised for real rather than only in tests (2026-08-13) |
 | **The other three defects, fixed and watched** | The whole journey re-walked a second time on the rebuilt container against live Gemini, browser-only. A **recruiter account created from the browser** — impossible before, since `AuthPanel` sent no role — with the "nothing here verifies that you represent an employer" note showing on the recruiter choice. Then, with the applicants panel sampled every 400 ms and **nothing reloaded**: `t=0.0s APPLIED (1)` with Shortlist disabled reading *"Screen this candidate first…"*, `t=0.4s BEING SCREENED (1)` reading *"A screening is running."*, `t=20.5s SCREENED (1)` with Shortlist **enabled**. After shortlisting, the disabled button reads **"Already shortlisted."** — the sentence that was wrong. Timeline: *The candidate applied / The system moved it to being screened / …to screened / The employer moved it to shortlisted*, the last three carrying `cited evidence`. Ranking names `resume_th.pdf`, no console errors, both accounts erased (2026-08-13) |
 | The Thai requirement, and what it proves | `ภาษาไทย` typed as a `language` requirement came back **not met** against a resume written entirely in Thai — because the document never *states* a language proficiency, so no quote can be located for it. That is `not_evidenced` doing its job, not a miss: the alternative is inferring a claim about a person from the fact that their CV is in Thai (2026-08-13) |
+| **M5 slice 1, watched at last — and this time it worked** | The dropped-claims audit view, driven in a browser against the containers on `LLM_PROVIDER=fake` + `FAKE_MODE=hallucinating`, spending **zero** Gemini quota. One recruiter account was enough: `screenable` merges own uploads with applicants', so no application journey is needed to reach a screening. Extraction first — **10/11 verified, 9.1% unverifiable, 2 model calls** — with the M1 panel still rendering (`skills[5] Team leadership — no matching text in the document`), which is the regression the shared-component refactor owed. Then the new half: clicking the ranked candidate showed **1/2 claims verified, 50.0% unverifiable, 2 model calls**, `Python` **Met** citing `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ PostgreSQL` (p1 · chars 161–214 · exact), `Kubernetes` reading "No citable evidence", and beneath them `Excluded — could not be traced to the document (1)` naming `requirements[1] Kubernetes` with the fabricated quote struck through (2026-08-15) |
+| The fabricated quote did not manufacture a verdict | `FAKE_MODE=hallucinating` attaches its fabrication to a requirement the document does *not* evidence, which is the sharper test — there is nothing real beside it to hide behind. `Kubernetes` still came back unevidenced. A made-up quote reaching a `met` verdict is the one failure this whole design exists to prevent, and it is now watched rather than only unit-tested (2026-08-15) |
+| **The model-call count comes from the stats, not the row that spells it the same** | `EvidenceStats.attempts` counts model calls; `Screening.attempts` is the *job* counter. `psql` shows this screening at `attempts = 1` while its stored stats say `2`, and the screen said "**2** model calls" — had the component read the row it would have said one, and nothing would have looked wrong. A silent failure confirmed live, not only by its vitest case (2026-08-15) |
+| The console was clean, on an instrument proven to speak | A `console.log`/`console.error` probe pair was emitted and **both confirmed visible first**; only then was the absence of application errors believed. §10's rule, applied rather than quoted (2026-08-15) |
+| Erasure after the walkthrough | `DELETE /auth/me` → 200, `stored_files_removed: 1`, the token then **401**, and `psql` reports 0 accounts, 0 jobs, 0 screenings for it — the cascade, not just the row (2026-08-15) |
+| **The data services are no longer on every interface** | Redis was published as `6379:6379` with no password, so it bound every interface — a raw socket answered `+PONG` and `CONFIG GET requirepass` came back empty. Postgres and MinIO were published the same way. All three are `127.0.0.1:`-bound now; `api` and `web` still publish openly because the browser needs them. Proven by re-running both opt-in suites against the new binds — `test_minio.py` **9 passed**, `test_postgres.py` **5 passed** — which is what shows the bind is right rather than merely different (2026-08-15) |
 | Migration `0009` on both dialects | Postgres round-trip with `alembic check` clean, `consented_at` landing as `timestamp with time zone` and both columns nullable; SQLite `upgrade head` → `downgrade base` (2026-08-12) |
 | Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
 | The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
@@ -1021,6 +1048,18 @@ found a claim in these very docs that was false (see #8 below).
 | 4 | PDPA: consent, export, delete | **done** — `services/privacy_service.py`, `GET /auth/me/export`, `DELETE /auth/me`, `GET /resumes/consent`, migration `0009`, `PRAGMA foreign_keys=ON`; `tests/test_pdpa.py` |
 | 5 | A thin UI for the journey | **done** — `web/app/applications/`, the applicants panel on `/jobs/[id]`, `lib/applications.ts`, `components/{ApplicationTimeline,ApplicationActions}.tsx`; **no API change and no migration**; `lib/applications.test.ts` |
 
+**M5 is under way.** Its scope was reviewed with the owner on 2026-08-13 and amended on
+2026-08-15, when four of its planning claims were confirmed false or outdated against the
+code. `docs/PLAN.md` carries the corrected shapes — read it, not the original bullets.
+
+| # | Work | Status |
+|---|---|---|
+| 1 | The dropped-claims audit view | **done** (2026-08-15) — `web/lib/evidence.ts`, `components/{DroppedClaims,EvidenceStatsBar}.tsx`, judging's half on `/jobs/[id]`; **no API change and no migration**; watched in a browser, which is what closed it |
+| 2 | The usage and quality dashboard | **respecified 2026-08-15, not started.** It was a *cost* dashboard and there is no cost — every model maps to `FREE_TIER`, so all 22 rows are `cost_usd = 0` and none are NULL. Now scoped to tokens, latency, prompt family, attempts and the quality metrics. Its admin scope is an open owner decision |
+| 3 | Word geometry at parse time | **not started, and larger than it read.** `_assemble` takes `list[str]` and never sees a `Page`, so geometry cannot be measured there at all; `find()` is unsound; the two-column path reorders. `PLAN.md` has the real change set |
+| 4 | The pdf.js overlay | **not started, and gated on a decision** — `_owned_resume` has no application-state predicate, so a withdrawn or rejected application still grants read access, and this slice turns that into raw PII bytes |
+| 5 | Production compose and a runbook | **not started; its security half shipped early** (2026-08-15) — the data services are `127.0.0.1:`-bound now. `profiles:` cannot do the rest; `docker-compose.prod.yml` with `!reset`/`!override` can |
+
 **Four things to know before starting M5:**
 
 1. ~~**Watch the application journey in a browser.**~~ **Done 2026-08-13, and it was
@@ -1166,6 +1205,19 @@ also tracks the status of every item above.
   tool answering the wrong question, while this one is a tool answering *nothing* in
   a way that reads as good news. Any check whose passing result is an **absence** —
   no errors, no rows, no diff, no annotations — needs a positive control first.
+- **A command that does two things reports on one of them** (2026-08-14). `docker
+  compose up -d --build` **built both images, failed to recreate the containers, and
+  exited 0** — printing the error on its last line. The containers went on serving
+  nine-hour-old code while the command said it had succeeded. This is the eighth
+  instrument to lie here and it is a new species: the six before it answered the wrong
+  question, the seventh (`read_console_messages`) answered *nothing* in a way that read
+  as good news, and this one answers **the wrong question about its own success**. The
+  general form: when a command does more than one thing, its exit code may cover only
+  part of it. Ask the container what it holds — checking its env vars is what caught
+  this, and it took one command. The root cause was a full `C:`, which flips Docker's
+  containerd metadata store to read-only; **check free space before a session that
+  rebuilds anything**, because the failure mode is not "out of space", it is builds
+  succeeding while swaps fail.
 - **A `.ps1` without a BOM is read in the ANSI codepage, so Thai in a script literal
   is corrupted before it is ever sent** (2026-08-12). A live check "verified" a Thai
   requirement round-trip against text the script itself had already broken —

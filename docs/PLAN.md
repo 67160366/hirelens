@@ -662,7 +662,8 @@ the wrong region — a visual claim nobody can verify, which is the one thing th
 project refuses. So the geometry is measured where the offsets are measured, and the
 overlay waits for it.
 
-- [ ] 1. **The dropped-claims audit view.** The guardrail's own evidence, which the
+- [x] 1. **The dropped-claims audit view** (written 2026-08-14, **closed 2026-08-15 by
+  watching it**). The guardrail's own evidence, which the
   system produces on every document and has never shown anyone. What the model said,
   why the quote could not be located, and the hallucination rate beside it.
   **No API change and no migration** — checked rather than assumed, the same way this
@@ -696,26 +697,98 @@ overlay waits for it.
   vitest cases (62 → 69), three of them on failures that are silent: a reason with no
   label, an `isClean` derived from the rounded rate, and a model-call count read from
   the identically-spelled *job* counter.
-  **What is missing is the only thing that closes it: nobody has watched it.** The
-  Chrome extension was not connected and `C:` was full, so Docker could build the images
-  and not recreate the containers. Per this milestone's own rule the slice is not done,
-  and this box stays empty until the walkthrough runs — `docs/NOTES.md` 2026-08-14 has
-  the command and why it costs no quota.
-- [ ] 2. **The cost and quality dashboard.** A read route aggregating `llm_call_logs`
-  and `extracted_profiles`, and a screen for it. **No migration.** Scoped to the
-  caller's own rows, for the reason export is a subject-access request rather than a
-  dump of everything visible; `ADMIN` sees everything, via `require_role`.
-  Two things it must do: **`cost_usd IS NULL` renders as "unknown", never as 0** — a
-  stale or missing price silently corrupting a cost figure is a named hazard in
-  `CLAUDE.md` — and every figure can name the rows behind it, per the organizing idea.
+  ~~**What is missing is the only thing that closes it: nobody has watched it.**~~
+  **Watched 2026-08-15, and it works** — both blockers (a full `C:`, a disconnected
+  Chrome extension) were gone, and the walkthrough spent **zero** Gemini quota on
+  `FAKE_MODE=hallucinating`, which is the only way to make the panel speak: there is not
+  one dropped claim in the dev database, because the real provider behaves.
+  One recruiter account did it: `screenable` merges own uploads with applicants', so no
+  application journey is needed to reach a screening. Extraction first — **10/11
+  verified, 9.1% unverifiable, 2 model calls**, and the M1 panel still renders
+  (`skills[5] Team leadership — no matching text in the document`), which is the
+  regression check the shared-component refactor owed. Then the new half: clicking the
+  ranked candidate showed **1/2 claims verified, 50.0% unverifiable, 2 model calls**,
+  `Python` **Met** citing the Thai line `ดูแลระบบกระทบยอดการชำระเงินด้วย Python และ
+  PostgreSQL` (p1 · chars 161–214 · exact), `Kubernetes` reading *"No citable evidence"*,
+  and beneath them `Excluded — could not be traced to the document (1)` naming
+  `requirements[1] Kubernetes` with the fabricated quote struck through.
+  **The fabricated quote did not manufacture a verdict** — the requirement it was
+  attached to still reads unevidenced, which is the sharper half of the test.
+  Two things the browser proved that no test did. **The model-call count is read from
+  `stats.attempts`, not the identically-spelled job counter**: `psql` shows the
+  screening's own `attempts = 1` while the stats say `2`, and the screen said "2 model
+  calls" — had it read the row it would have said one. And the console was clean **on an
+  instrument proven to speak first** (a `console.log`/`console.error` probe pair,
+  confirmed visible before the absence was believed). The throwaway account was erased
+  afterwards: `stored_files_removed: 1`, the token then **401**, and `psql` reports 0
+  accounts, 0 jobs, 0 screenings.
+- [ ] 2. **The usage and quality dashboard.** A read route aggregating `llm_call_logs`
+  and `extracted_profiles`, and a screen for it. **No migration.**
+
+  **Respecified 2026-08-15, with the owner: this was a *cost* dashboard and there is no
+  cost.** `app/llm/gemini.py:37-46` maps every model to `FREE_TIER`, so all 22 logged
+  calls stored `cost_usd = 0.0` — and **not one is NULL**, which is the single behaviour
+  the old spec said it must get right. Building it as written meant shipping a screen of
+  zeroes that reads as a bug. Measured in `psql` rather than inferred, and worth keeping
+  as the baseline the screen can be checked against: `extract-v1` 17 gemini calls at
+  8,410 in / 27,439 out and avg 9,698 ms; `judge-v1` 1 call at 609 / 560 and 3,272 ms;
+  4 `fake` calls at 585 / 0. So it charts what is real — **tokens, latency, calls per
+  prompt family, re-ask attempts, hallucination rate, claims verified and dropped, parse
+  success**. The `cost_usd IS NULL` rule stays written down for the day a paid provider
+  exists (a stale price silently corrupting a cost figure is a named hazard in
+  `CLAUDE.md`), and the slice gets renamed rather than the hazard forgotten.
+
+  The organizing idea is unchanged: every figure is a query over rows the system already
+  wrote and can name the rows it came from, and **nothing on it may spend a model call**.
   The extraction/judging split (`resume_id` xor `screening_id`) is what makes "what did
   this document cost" and "what did this screening cost" separately answerable, so the
   dashboard must not collapse it.
+
+  Three constraints, each verified against the code on 2026-08-15 and confirmed by an
+  independent challenge rather than left as a lead:
+  **`llm_call_logs` has no owner column at all.** So "the caller's own rows" is two
+  *arms* and three joins — `resume_id → resumes.candidate_id` for extraction,
+  `screening_id → screenings → jobs.owner_id` for judging.
+  **The `resume_id` xor `screening_id` invariant is a docstring, not a constraint.**
+  Both columns are nullable with no `CHECK`, so a row with both null is legal today and
+  would vanish from every owner-scoped total. Decide whether this slice adds the
+  constraint or reports the orphans — but do not let them disappear silently, which is
+  the same instinct as `dropped` and `excluded`.
+  **`require_role` cannot widen a row scope.** It is a 403 route gate that runs no query
+  and returns the caller unchanged, so the old line "`ADMIN` sees everything, via
+  `require_role`" would 403 exactly the accounts that own the extraction rows.
+  `api/app/api/routes/resumes.py:294` is the pattern for widening by role — but note
+  `api/app/api/routes/jobs.py:222-223`, an existing role-branched set-level `WHERE` that
+  **narrows** ADMIN to its own rows. Admin's set-level scope is genuinely unsettled in
+  this codebase, so it is an owner decision and not just a change of mechanism.
 - [ ] 3. **Word geometry, measured where the offsets are measured.** The slice the
-  correction above created. Per-word boxes keyed to char ranges, written in
-  `_assemble` in the same pass that already measures page spans — the same placement
-  as the NUL strip and the OCR substitution, and for the same reason: anything that
-  runs *after* offsets are fixed cannot shift them.
+  correction above created. Per-word boxes keyed to char ranges.
+
+  **Corrected 2026-08-15 — this bullet used to say "written in `_assemble`, in the same
+  pass that already measures page spans", and that is impossible.** `_assemble` is
+  declared `_assemble(raw_pages: list[str], …)` (`parse.py:395-401`): it receives
+  *strings*, never the pdfplumber `Page` objects, so geometry cannot be measured there
+  under any implementation. Three things were measured rather than argued:
+  the NUL strip runs on the whole page string *after* words exist (`parse.py:414`), so
+  on `resume_broken_tounicode.pdf` **8 of 11 words carry a literal `\x00`** and word
+  starts drift by up to **11 characters** between raw and assembled text;
+  **`find()` is unsound even where there are no NULs** — 105 of 120 words in
+  `resume_multipage.pdf` occur more than once, so first-occurrence matching would
+  highlight the wrong word, silently;
+  and the two-column path **reorders**, giving 11 offset inversions on
+  `resume_two_column.pdf`, so visual word order is not char order.
+  The mechanism that works is not searching at all: pdfplumber's textmap aligns
+  characters to boxes **by construction** (verified — 85 tuples for an 85-char string,
+  `to_string() == extract_text()`). Note the dependency risk: `Page._get_textmap` is
+  underscore-private, while `chars_to_textmap` is public in `pdfplumber.utils.text`.
+  So the real change set is: `_text_of` (`parse.py:282-294`) stops returning a bare
+  `str`; `layout.extract_in_reading_order` (`layout.py:132-135`) returns geometry per
+  crop region with a running offset; the NFC+NUL transform becomes an offset
+  **remapping** rather than a `.replace()`; `_assemble` becomes where geometry is
+  *rebased* into the document coordinate space rather than where it is measured; an
+  OCR'd page discards its geometry (already the documented overlay fallback); and
+  `parse_docx` (`parse.py:325`) needs the field optional from day one. Plus migration
+  `0010`.
   **Not backfilled**, exactly like `page_spans` in `0005`: filling it in would mean
   re-parsing every stored file under the identical OCR configuration. Pre-migration
   resumes fall back to the text pane.
@@ -729,10 +802,34 @@ overlay waits for it.
   A page from OCR, or a resume written before slice 3's migration, falls back to
   `DocumentPane` **with the reason shown** — a silent fallback is indistinguishable
   from a bug, which is M4 slice 5's disabled-button lesson in a new place.
-- [ ] 5. **Production compose and a runbook.** A compose profile with secrets out of
-  `.env`, restart policies, and Postgres/Redis not published to the host. Plus the
-  runbook: how to bring it up, how to run migrations, what to check, how to erase an
-  account on request.
+- [ ] 5. **Production compose and a runbook.** Secrets out of `.env`, restart policies,
+  and Postgres/Redis not published to the host. Plus the runbook: how to bring it up,
+  how to run migrations, what to check, how to erase an account on request.
+
+  **The security half shipped early, on 2026-08-15, as its own commit** — it was the
+  state of the dev machine rather than a question about a future deploy. Redis was
+  published on every interface with no password (a raw socket answered `+PONG`;
+  `CONFIG GET requirepass` came back empty), as were Postgres and MinIO. All three are
+  `127.0.0.1:`-bound now, and both opt-in suites were re-run against the new binds to
+  prove the bind was right rather than merely different.
+
+  **Corrected 2026-08-15: this cannot be a compose `profiles:`,** which the scope review
+  named. Measured on this machine (Compose **v5.3.1**): `profiles:` leaves
+  `published: "5432"` untouched when active, and when *inactive* the project fails to
+  load at all — `service "api" depends on undefined service "postgres": invalid compose
+  project` — because every infra service is a `depends_on` target. A plain override
+  **appends** rather than replaces (both ports published), and `ports: []` is a silent
+  no-op. The `docker-compose.override.yml` inversion the 2026-08-14 notes prescribe is
+  the pre-v2.24 answer and is no longer needed: `ports: !reset []` removes the key and
+  `ports: !override [...]` replaces it, both verified working here. So keep
+  `docker-compose.yml` as the dev file — that is what keeps the fresh-clone promise and
+  `CLAUDE.md`'s opt-in test commands flag-free — and add a committed
+  `docker-compose.prod.yml` run as `-f docker-compose.yml -f docker-compose.prod.yml`,
+  with `COMPOSE_FILE` set on the prod host so a bare `up` there is prod.
+  Two traps no document named: the `*api_env` YAML anchor **cannot cross files**
+  (`unknown anchor 'api_env' referenced`), so prod env wants an `env_file:` shared by
+  `api` and `worker`; and `NEXT_PUBLIC_API_BASE` is a **build arg**, so a prod URL means
+  rebuilding the web image, not restarting it — as does the matching `CORS_ORIGINS`.
 
 Each slice is driven in a browser *inside* the slice, not after it. That rule cost
 seven defects to learn and the `next@16` check confirmed it is cheap to keep.
