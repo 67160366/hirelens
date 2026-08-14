@@ -108,8 +108,11 @@ refuter returned `refuted: false`), and three change what their slice has to do.
 - **The check nobody scheduled paid again, twice.** Last session it was the audit; this
   session it was noticing the opt-in suite's number had never been re-read, and noticing
   the ports while looking at something else. Neither was on the plan.
-- **Nothing was pushed until slice 1 actually closed**, as you asked. See the note below
-  for the count — re-derive it, do not trust the prose.
+- **Nothing was pushed until slice 1 actually closed**, as you asked — and then all of
+  it went at once: **7 commits** (last session's 4 plus this session's 3), re-derived
+  with `git rev-list --count` rather than believed from the previous note, which said 3.
+  CI run `31825047640` is green on both jobs with **0 annotations**, checked through the
+  API rather than read off the tick.
 
 ---
 

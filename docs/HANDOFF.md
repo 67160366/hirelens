@@ -201,13 +201,20 @@ slices 2, 3 and 5.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>, and **all of M3, all of
-M4 and all seven of the 2026-08-13 walkthrough fixes are pushed and green on CI** (run
-`31678374829`, 2026-08-13 — both the `api` and `web` jobs, including
-`Verify migrations apply and reverse`, the step that caught migration `0006`). A local
-run reports **534 passed, 38 skipped**, and the runner — no Tesseract, no database, no
-MinIO, no API key — reports the same, which is the opt-in test design doing its job.
-Plus **62** vitest cases in `web/`. Recent runs carry **no annotations at all**, which
+`main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything through
+M5 slice 1 is pushed and green on CI** (run `31825047640`, 2026-08-15 — both the `api`
+and `web` jobs, including `Verify migrations apply and reverse`, the step that caught
+migration `0006`). That push carried **7 commits**: last session's four, which had been
+held back deliberately until slice 1 was actually closed, plus this session's three. A
+local run reports **536 passed, 38 skipped**, and the runner — no Tesseract, no
+database, no MinIO, no API key — reports the same, which is the opt-in test design doing
+its job. Plus **69** vitest cases in `web/`.
+
+**A caveat that suite count hides, found 2026-08-15:** the opt-in modules are *not*
+covered by either number. `tests/test_postgres.py` had two of its five cases failing for
+three days and neither `pytest -q` (which skips it) nor CI (which has no database) could
+see it. Run every opt-in module by hand periodically; a quiet one looks exactly like a
+passing one. Recent runs carry **no annotations at all**, which
 is new: earlier green runs still emitted Node deprecations from inside
 `actions/setup-node`. Read them anyway — §1's `setup-uv` story is why, and both jobs of
 `31678374829` were re-checked for annotations rather than assumed clean from the tick.
