@@ -145,6 +145,7 @@ class TestProfileRoundTrip:
                 data=data,
                 storage=LocalStorage(settings.storage_path),
                 queue=_inline_queue(pg_sessionmaker, settings),
+                consent_version="test-consent",
             )
             assert result.created
             resume_id = result.resume.id
@@ -295,6 +296,7 @@ class TestProfileRoundTrip:
                 data=data,
                 storage=LocalStorage(settings.storage_path),
                 queue=_inline_queue(pg_sessionmaker, settings),
+                consent_version="test-consent",
             )
             verified = (
                 await session.execute(
