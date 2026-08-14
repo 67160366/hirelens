@@ -23,8 +23,13 @@ services:
       POSTGRES_USER: hirelens
       POSTGRES_PASSWORD: hirelens
       POSTGRES_DB: hirelens
+    # Loopback only. A published port with no host-IP prefix binds *every*
+    # interface, so `5432:5432` put this database — and Redis, and MinIO — on the
+    # local network for anyone to reach. The opt-in suites in CLAUDE.md still
+    # connect over localhost, and the containers reach each other on the compose
+    # network rather than through a published port, so nothing else changes.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -38,8 +43,11 @@ services:
     # Persistence off on purpose: this holds the job queue, and a stale queue
     # surviving a restart is worse than an empty one in development.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # Loopback only, and this one is the sharpest of the three: Redis takes no
+    # password here, so a published `6379:6379` accepted CONFIG SET from anyone on
+    # the network. See the postgres note above.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -54,9 +62,11 @@ services:
     environment:
       MINIO_ROOT_USER: hirelens
       MINIO_ROOT_PASSWORD: hirelens-dev-secret
+    # Loopback only, per the postgres note. 9001 is the console, which is a login
+    # form with the credentials above sitting in this very file.
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
