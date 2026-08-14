@@ -6,7 +6,7 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-15 (latest) — slice 1 closes, the ports close, and four leads become findings
+## 2026-08-15 (latest) — slices 1 and 2 close, the ports close, four leads become findings
 
 **M5 slice 1 is done.** Both of last session's blockers were gone before the first
 command: `C:` had **61 GB** free (it was 114 MB), and the Chrome extension connected.
@@ -14,15 +14,20 @@ The stack was already sitting on `LLM_PROVIDER=fake` + `FAKE_MODE=hallucinating`
 the images had been built at 01:40 — **after** the 01:35 commit — so the containers
 served the slice-1 code once they were finally recreated. **Zero Gemini quota spent.**
 
-Three commits, gates run rather than quoted: `pytest -q` **536 passed / 38 skipped**,
-`ruff check` / `ruff format --check` / `mypy app` clean (51 files). Plus the two opt-in
-suites against real servers: `test_postgres.py` **5 passed**, `test_minio.py` **9 passed**.
+Six commits in all — three for slice 1 and the ports, three more for slice 2 (below).
+Gates run rather than quoted, at the end of the session: `pytest -q` **556 passed / 38
+skipped**, vitest **98**, `ruff check` / `ruff format --check` / `mypy app` clean (54
+files), `npm run typecheck` / `lint` / `build` clean. Plus the two opt-in suites against
+real servers: `test_postgres.py` **5 passed**, `test_minio.py` **9 passed**.
 
 | # | Commit | What it is |
 |---|---|---|
 | 1 | Bind the data services to the loopback interface only | The security finding below. `docker-compose.yml` only |
 | 2 | Repair the opt-in Postgres suite, which had rotted unnoticed | Two call sites; the module had been half-broken since 2026-08-12 |
 | 3 | Close M5 slice 1, and correct what the remaining slices must do | `PLAN.md` slice 1 ticked and slices 2/3/5 rewritten on confirmed findings; `HANDOFF.md` §1, §9 and §10 refreshed. One commit rather than two because the two halves interleave in the same three files |
+| 4 | Record the push and its CI run, now that both exist | The repository-state paragraph, plus the opt-in caveat |
+| 5 | Serve the usage and quality figures from rows already written | Slice 2's server half: `schemas/metrics.py`, `services/metrics_service.py`, `GET /metrics/usage`, `tests/test_metrics.py` |
+| 6 | Put the usage and quality figures on a screen | Slice 2's other half: `web/lib/metrics.ts` + its tests, `web/app/metrics/` |
 
 ### What watching slice 1 proved
 
@@ -99,12 +104,53 @@ refuter returned `refuted: false`), and three change what their slice has to do.
   cannot produce a row predicate — but `jobs.py:222-223` is an existing role-branched
   scope that **narrows** ADMIN. That is an owner decision.
 
-### Advice for the owner
+### Slice 2 followed the same day
 
-- **Slice 2 was respecified with you and is ready to build.** There is no cost —
-  all 22 `llm_call_logs` rows are `cost_usd = 0` and none are NULL — so it charts tokens,
-  latency, prompt family, attempts and the quality metrics instead. The measured baseline
-  is in `PLAN.md` so the screen can be checked against something.
+You decided two things and it was built on them: **ADMIN sees every row**, and the
+dashboard is respecified as *usage and quality* rather than cost.
+
+Three commits — the server half, the screen, and the docs. Gates: `pytest` **536 → 556**,
+vitest **95 → 98**, `ruff`/`mypy`/`typecheck`/`lint`/`build` clean.
+
+**No migration, and no new table.** The schema was shaped for this in M1, which lifted
+`claims_verified`, `claims_dropped` and `hallucination_rate` into real columns
+*specifically* so the metrics query would be a `GROUP BY` rather than a JSON walk. Four
+years of that docstring finally being cashed in.
+
+Four decisions, each confirmed load-bearing by mutation (1 case fails apiece):
+
+- **A group's cost is unknown unless every call in it is priced.** `SUM` skips nulls, so
+  the obvious version reports a partial total as though it were complete. A missing total
+  is visibly missing; a partial one is not.
+- **The hallucination rate is recomputed from the totals, never averaged** from the
+  stored per-profile rates. On the test's data the two formulas differ **25×**.
+- **Owner scoping is two arms**, because `llm_call_logs` has no owner column. Drop
+  either and half the calls silently report zero.
+- **The four buckets partition the rows exactly**, so the unattributable row the audit
+  found cannot vanish from every total.
+
+**The browser found one thing no gate could**: the screen read *"1 claims dropped"*. The
+sentence was built inline in JSX, where `web/`'s no-DOM vitest cannot reach it — the
+exact failure mode `lib/evidence.ts` exists to prevent, repeated one slice later. It is
+`droppedNote()` in `lib/metrics.ts` now.
+
+The two rules real data cannot demonstrate were **driven with seeded rows and then
+deleted**: an unpriced call turned the headline and its own bucket to `unknown` while the
+judging bucket kept its real `$0.0000`, and an unattributed call raised the amber banner
+and made the hidden bucket appear. Promoting the account to ADMIN took the totals from
+5 calls to 28 and reproduced the `psql` baseline exactly.
+
+**Browser flakiness worth knowing about**: the extension reported a viewport of
+2133×1012 while screenshots came back 1568×743, so **coordinate clicks landed in the
+wrong place** and `Page.captureScreenshot` timed out twice. Ref-based `find` /
+`read_page` / `form_input` were reliable throughout. Prefer refs over coordinates here.
+One caveat recorded honestly: `form_input` drove the auth form fine but did **not**
+commit the job-authoring form's React state, so that job was seeded through the page's
+own authenticated `fetch` instead. The authoring UI itself had been driven by hand an
+hour earlier in slice 1, and the screen this slice is about was driven entirely in the
+browser.
+
+### Advice for the owner
 - **The check nobody scheduled paid again, twice.** Last session it was the audit; this
   session it was noticing the opt-in suite's number had never been re-read, and noticing
   the ports while looking at something else. Neither was on the plan.
@@ -112,7 +158,13 @@ refuter returned `refuted: false`), and three change what their slice has to do.
   it went at once: **7 commits** (last session's 4 plus this session's 3), re-derived
   with `git rev-list --count` rather than believed from the previous note, which said 3.
   CI run `31825047640` is green on both jobs with **0 annotations**, checked through the
-  API rather than read off the tick.
+  API rather than read off the tick. Slice 2's three commits followed.
+- **Slice 3 is the one to scope with care next.** It is the largest remaining piece and
+  the one whose recorded shape was most wrong — `PLAN.md` now carries the real change
+  set, which touches `parse.py`, `layout.py` and a migration. **Slice 4 is still gated
+  on your decision** about whether a withdrawn or rejected application should keep
+  granting a recruiter read access, and that decision gets more expensive once the file
+  route serves raw PDF bytes.
 
 ---
 

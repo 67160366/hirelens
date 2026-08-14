@@ -85,7 +85,19 @@ milestone visible has been cheap because the slices before it stored the right t
 extension was not connected. Everything else is verified below, and that is not the
 same thing — it is the first item in §9.
 
-**M5 is under way: slice 1 of 5 is done** (2026-08-15). The dropped-claims audit view
+**M5 is under way: slices 1 and 2 of 5 are done** (both 2026-08-15). Slice 2 is the
+usage and quality dashboard, and it was **respecified with the owner before it was
+built** — it was scoped as a *cost* dashboard and there is no cost, because every model
+maps to `FREE_TIER`, so all 22 logged calls stored `cost_usd = 0.0` and not one is
+NULL. Building it as written would have shipped a screen of zeroes that reads as a bug.
+The cost *rule* survives in full — an unknown price renders "unknown" and never
+`$0.00`, and says how many rows are unpriced so it is a measurement rather than a
+defect — and what the screen leads with is tokens, latency, prompt family and the
+quality metrics, all real today. `ADMIN` sees every row, which is a **row scope read in
+the WHERE clause**, not a route gate: `require_role` runs no query and would have 403'd
+exactly the accounts that own the rows.
+
+The dropped-claims audit view
 was written on 2026-08-14 with every gate green and deliberately left unticked, because
 nobody had used it; the two blockers that stopped that — a full `C:` and a disconnected
 Chrome extension — were both gone this session, and watching it took twenty minutes and
@@ -108,8 +120,8 @@ slices 2, 3 and 5.
 
 | Check | Result |
 |---|---|
-| `pytest -q` | **534** passed, 38 skipped, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
-| `npm test` | **62** in `web/` (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
+| `pytest -q` | **556** passed, 38 skipped as of 2026-08-15 (+2 for the screening `dropped` payload, +20 for the usage dashboard). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `npm test` | **98** in `web/` as of 2026-08-15 (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -195,6 +207,10 @@ slices 2, 3 and 5.
 | The console was clean, on an instrument proven to speak | A `console.log`/`console.error` probe pair was emitted and **both confirmed visible first**; only then was the absence of application errors believed. §10's rule, applied rather than quoted (2026-08-15) |
 | Erasure after the walkthrough | `DELETE /auth/me` → 200, `stored_files_removed: 1`, the token then **401**, and `psql` reports 0 accounts, 0 jobs, 0 screenings for it — the cascade, not just the row (2026-08-15) |
 | **The data services are no longer on every interface** | Redis was published as `6379:6379` with no password, so it bound every interface — a raw socket answered `+PONG` and `CONFIG GET requirepass` came back empty. Postgres and MinIO were published the same way. All three are `127.0.0.1:`-bound now; `api` and `web` still publish openly because the browser needs them. Proven by re-running both opt-in suites against the new binds — `test_minio.py` **9 passed**, `test_postgres.py` **5 passed** — which is what shows the bind is right rather than merely different (2026-08-15) |
+| **M5 slice 2, watched inside the slice** | The usage and quality dashboard at `/metrics`, against the rebuilt containers on `FAKE_MODE=hallucinating` — **zero Gemini quota**. `/openapi.json` lists `/metrics/usage` and all seven new schemas first, which proves the container serves the code just written (this slice *does* add a route, unlike slice 1). A recruiter's own view: **4 calls, 711 tokens**, split **2 extraction / 2 judging** — and that split is the two-arm scoping working, since a judging call reaches its owner only through `screenings → jobs.owner_id`. Quality read 10 verified, 9.1% unverifiable, 1 dropped, 2 re-ask attempts; documents 1 of 1 (2026-08-15) |
+| **The cost rule, driven rather than asserted** | Real data cannot show it — every call is free-tier — so an unpriced row was seeded and then deleted. The headline moved to **`unknown`** with *"1 of 5 calls have no known price"*, the extraction bucket went `unknown` with its own count, and the **judging bucket kept reporting its real `$0.0000`**. That is contagion at the right grain: a partial sum would have read `$0.0000` everywhere and given nobody a reason to doubt it (2026-08-15) |
+| **The unattributed bucket, and ADMIN's row scope** | An `llm_call_logs` row with neither `resume_id` nor `screening_id` — legal, because the xor is a docstring and not a constraint — raised the amber banner *"Some calls could not be attributed. 1 unattributed."* and made the bucket appear, where it is hidden while empty. Promoting the account to `ADMIN` moved the scope note to "Every row in the system" and the totals from **5 calls to 28**, with the buckets still summing exactly (24 + 3 + 1). The group table reproduced the `psql` baseline to the token: `gemini/extract-v1` 17 calls, 8,410 in / 27,439 out, 9.7 s mean (2026-08-15) |
+| The browser found what the gates could not | The screen read **"1 claims dropped"**. Every gate was green — the sentence was built inline in JSX, where `web/`'s no-DOM vitest cannot reach it. It is `droppedNote()` in `lib/metrics.ts` now with three cases, and the fix was re-watched on a rebuilt image. Slice 1's lesson in a new costume (2026-08-15) |
 | Migration `0009` on both dialects | Postgres round-trip with `alembic check` clean, `consented_at` landing as `timestamp with time zone` and both columns nullable; SQLite `upgrade head` → `downgrade base` (2026-08-12) |
 | Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
 | The backfill derives, and that has a cost | Three accounts through the round-trip: the one owning a posting came back `RECRUITER`, and **a recruiter owning no posting came back `CANDIDATE`**. No downgrade could preserve that — dropping the column discards the only record of it — so the migration says to re-run it only if you are prepared to re-grant roles (2026-08-12) |
@@ -206,9 +222,9 @@ M5 slice 1 is pushed and green on CI** (run `31825047640`, 2026-08-15 — both t
 and `web` jobs, including `Verify migrations apply and reverse`, the step that caught
 migration `0006`). That push carried **7 commits**: last session's four, which had been
 held back deliberately until slice 1 was actually closed, plus this session's three. A
-local run reports **536 passed, 38 skipped**, and the runner — no Tesseract, no
+local run reports **556 passed, 38 skipped**, and the runner — no Tesseract, no
 database, no MinIO, no API key — reports the same, which is the opt-in test design doing
-its job. Plus **69** vitest cases in `web/`.
+its job. Plus **98** vitest cases in `web/`.
 
 **A caveat that suite count hides, found 2026-08-15:** the opt-in modules are *not*
 covered by either number. `tests/test_postgres.py` had two of its five cases failing for
@@ -1062,7 +1078,7 @@ code. `docs/PLAN.md` carries the corrected shapes — read it, not the original 
 | # | Work | Status |
 |---|---|---|
 | 1 | The dropped-claims audit view | **done** (2026-08-15) — `web/lib/evidence.ts`, `components/{DroppedClaims,EvidenceStatsBar}.tsx`, judging's half on `/jobs/[id]`; **no API change and no migration**; watched in a browser, which is what closed it |
-| 2 | The usage and quality dashboard | **respecified 2026-08-15, not started.** It was a *cost* dashboard and there is no cost — every model maps to `FREE_TIER`, so all 22 rows are `cost_usd = 0` and none are NULL. Now scoped to tokens, latency, prompt family, attempts and the quality metrics. Its admin scope is an open owner decision |
+| 2 | The usage and quality dashboard | **done** (2026-08-15) — `schemas/metrics.py`, `services/metrics_service.py`, `GET /metrics/usage`, `web/lib/metrics.ts` + `web/app/metrics/`; **no migration**; `tests/test_metrics.py`. Respecified first: it was a *cost* dashboard and there is no cost, since every model maps to `FREE_TIER`. `ADMIN` sees every row, read in the WHERE clause rather than gated on the route |
 | 3 | Word geometry at parse time | **not started, and larger than it read.** `_assemble` takes `list[str]` and never sees a `Page`, so geometry cannot be measured there at all; `find()` is unsound; the two-column path reorders. `PLAN.md` has the real change set |
 | 4 | The pdf.js overlay | **not started, and gated on a decision** — `_owned_resume` has no application-state predicate, so a withdrawn or rejected application still grants read access, and this slice turns that into raw PII bytes |
 | 5 | Production compose and a runbook | **not started; its security half shipped early** (2026-08-15) — the data services are `127.0.0.1:`-bound now. `profiles:` cannot do the rest; `docker-compose.prod.yml` with `!reset`/`!override` can |

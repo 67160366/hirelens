@@ -722,8 +722,9 @@ overlay waits for it.
   confirmed visible before the absence was believed). The throwaway account was erased
   afterwards: `stored_files_removed: 1`, the token then **401**, and `psql` reports 0
   accounts, 0 jobs, 0 screenings.
-- [ ] 2. **The usage and quality dashboard.** A read route aggregating `llm_call_logs`
-  and `extracted_profiles`, and a screen for it. **No migration.**
+- [x] 2. **The usage and quality dashboard** (2026-08-15). A read route aggregating
+  `llm_call_logs` and `extracted_profiles`, and a screen for it. **No API-breaking
+  change and no migration.**
 
   **Respecified 2026-08-15, with the owner: this was a *cost* dashboard and there is no
   cost.** `app/llm/gemini.py:37-46` maps every model to `FREE_TIER`, so all 22 logged
@@ -761,6 +762,28 @@ overlay waits for it.
   `api/app/api/routes/jobs.py:222-223`, an existing role-branched set-level `WHERE` that
   **narrows** ADMIN to its own rows. Admin's set-level scope is genuinely unsettled in
   this codebase, so it is an owner decision and not just a change of mechanism.
+  **Decided 2026-08-15: ADMIN sees every row**, and the role is read in the WHERE
+  clause (`metrics_service.scope_for`) rather than gated on the route.
+
+  **Built and watched the same day.** `app/schemas/metrics.py` states the idea,
+  `app/services/metrics_service.py` holds the queries, `GET /metrics/usage` serves it,
+  and `web/lib/metrics.ts` + `web/app/metrics/page.tsx` render it. Four decisions were
+  each confirmed load-bearing by mutation — 1 case fails apiece: the cost rule, the
+  recomputed hallucination rate, the two-arm scoping, and the four-bucket partition.
+  Totals, buckets and groups are folded up in Python from **one** grouped query, so the
+  headline cannot drift from the breakdown beneath it.
+  Gates: `pytest` **536 → 556**, vitest **95 → 98**.
+  **Verified in a browser inside the slice** on `FAKE_MODE=hallucinating`, zero Gemini
+  quota. The two rules real data cannot demonstrate were driven with seeded rows that
+  were then deleted: an unpriced call turned the headline *and its own bucket* to
+  `unknown` — "1 of 5 calls have no known price" — while the judging bucket kept
+  reporting its real `$0.0000`; and an unattributed call raised the amber banner and
+  made the hidden bucket appear. Promoting the account to `ADMIN` moved the scope note
+  and the totals from 5 calls to 28, and the group table reproduced the `psql` baseline
+  exactly (`gemini/extract-v1` 17 calls, 8,410 in / 27,439 out, 9.7 s).
+  **The browser found one defect no gate could:** the screen read *"1 claims dropped"*,
+  because the sentence was built inline in JSX. It is `droppedNote()` in `lib/` now,
+  with three cases — the same lesson slice 1 recorded, in a new costume.
 - [ ] 3. **Word geometry, measured where the offsets are measured.** The slice the
   correction above created. Per-word boxes keyed to char ranges.
 
