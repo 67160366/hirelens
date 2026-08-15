@@ -85,7 +85,17 @@ milestone visible has been cheap because the slices before it stored the right t
 extension was not connected. Everything else is verified below, and that is not the
 same thing — it is the first item in §9.
 
-**M5 is under way: slices 1, 2 and 3 of 5 are done** (all 2026-08-15). Slice 2 is the
+**M5 is under way: slices 1, 2, 3 and 4 of 5 are done** (all 2026-08-15). Slice 4 is the
+pdf.js overlay, and it is what cashes in slice 3: a citation now highlights on the
+original PDF as well as in the extracted text, from the character boxes the parser
+measured. Two read routes and no migration — geometry is its own route rather than a
+field on `ProfileOut`, because it costs ~20 bytes per character and most visits never
+open the view that needs it. **The client never searches for text**; it selects the
+runs a character range overlaps, and a page whose stored box disagrees with what pdf.js
+reports gets no boxes and a sentence saying why. Watching it found one defect no gate
+could: two claims resting on the same quote painted that span twice, and stacked
+translucent boxes read as "more strongly evidenced". Only slice 5 — production compose
+and a runbook — is left. Slice 2 is the
 usage and quality dashboard, and it was **respecified with the owner before it was
 built** — it was scoped as a *cost* dashboard and there is no cost, because every model
 maps to `FREE_TIER`, so all 22 logged calls stored `cost_usd = 0.0` and not one is
@@ -120,8 +130,8 @@ slices 2, 3 and 5.
 
 | Check | Result |
 |---|---|
-| `pytest -q` | **614** passed, 38 skipped as of 2026-08-15 (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
-| `npm test` | **98** in `web/` as of 2026-08-15 (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
+| `pytest -q` | **633** passed, 38 skipped as of 2026-08-15 (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `npm test` | **120** in `web/` as of 2026-08-15 (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -214,6 +224,14 @@ slices 2, 3 and 5.
 | **Character geometry moved nothing, measured rather than asserted** | The property M5 slice 3 had to keep: every fixture parsed with the geometry pass on and with `HEAD`'s parser, and `document_text`, page spans, `pages_without_text` and `pages_from_ocr` compared **byte-identical across all 13 documents**. That is what keeps every citation already shown to a user pointing where it did (2026-08-15) |
 | **The geometry is an exact partition of the inked characters** | Across every parseable fixture, the characters covered by runs are *exactly* the non-whitespace characters of `document_text` — no gaps, no overlaps, in order. It catches an off-by-one anywhere in the chain: the textmap walk, the reading-order join, the NUL remap, the page rebase. On `resume_broken_tounicode.pdf`, where 8 of 11 words carry a literal NUL, 64 covered = 64 inked (2026-08-15) |
 | **Geometry through the whole stack, and the Thai case that justifies it** | `resume_th.pdf` uploaded **through the browser** against the rebuilt containers: `extracted`, 10/11 verified and 9.1% unverifiable — unchanged from before the parser touched anything. Read back out of Postgres through `ParsedDocument.from_stored`, the geometry covers **347 of 347** inked characters. Then the payoff: the quote `ชำระเงิน` sits at character 180 **inside** the unbroken 31-character run `ดูแลระบบกระทบยอดการชำระเงินด้วย` and resolves to **8 boxes for 8 characters**, x 167.0 → 195.2 on one line. Per-word boxes — what `PLAN.md` originally specified — would have highlighted all 31 (2026-08-15) |
+| **M5 slice 4, watched inside the slice** | The overlay at `/`, against the rebuilt containers on `LLM_PROVIDER=fake` — **zero Gemini quota**. `/openapi.json` lists both new routes first. `resume_th.pdf` renders with its citations boxed on the page, and the payoff slice 3 changed shape for is visible: the quote `ชำระเงิน` at character **180** sits inside the unbroken **31-character** run and covers **8 characters**, x 167.03 → 201.28 — per-word boxes would have covered all 31. Two citations on one line (`Python` at 193–199, `PostgreSQL` at 204–214) draw separate boxes at different x on the same y (2026-08-15) |
+| **Two columns, boxed in the right column** | `resume_two_column.pdf`: every box lands in the **left** column, on `Nadia Wong`, `Go, Kubernetes` and `Terraform, gRPC`. That is the case a client re-deriving positions would fail visibly — `document_text` is in *reading* order, not the PDF's internal order — so it is the one worth watching rather than unit-testing (2026-08-15) |
+| A scan says why it has no boxes | `resume_scanned.pdf`: zero boxes, header reads "No measured positions", and the page caption reads *"Page 1 was read by OCR, so its text came from an image rather than from characters on the page — there is no glyph to point at. The text view still highlights every citation."* A silent fallback is indistinguishable from a bug (2026-08-15) |
+| The new routes' refusals, on real data | A second account: **404** on `/file` and on `/geometry`; unauthenticated **401**; the owner 200. Nothing new was granted — both read through `_owned_resume(must_own=False)`, and mutation-testing shows requiring ownership fails 3 cases (2026-08-15) |
+| The file route's headers, read off the wire | `cache-control: no-store`, `x-content-type-options: nosniff`, `content-disposition: inline` **with no filename**, `content-type: application/pdf`. Read with `curl`, because in the browser JS they came back **null** — the CORS safelist hides them from script, which is the *tenth* instrument here to answer a different question than the one asked (2026-08-15) |
+| The pdf.js worker, asked of the container | `GET /pdf.worker.min.mjs` on the running web container: **200, 1,262,398 bytes**. It is copied into `public/` by a prebuild hook rather than resolved by the bundler from a bare specifier in `new URL(...)`, and a green `next build` could not have told the difference — the same check the `next@16` change had to do by hand (2026-08-15) |
+| The browser found what the gates could not, a third time | Two claims resting on the same quote (`resume_th.pdf`'s headline and seniority both cite chars 11–72) painted that span's boxes **twice**, and stacked translucent rectangles render darker — a picture saying that line is more strongly evidenced. 31 boxes for 10 citations before, **26 with zero duplicated positions** after `distinctSpans` (2026-08-15) |
+| ⚠️ An instrument that lied about pixels | Reading the canvas back with `getImageData` reported it **entirely white** on a page that was plainly rendered — pdf.js v6 paints through an ImageBitmap, so a 2d readback sees nothing. The screenshot was the ground truth. Ninth of its kind, and the first where the *check* was more sophisticated than the thing it checked (2026-08-15) |
 | Migration `0010` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `page_geometry` landing as real `jsonb` read from `information_schema`, the downgrade dropping it (0 columns), and `alembic check` finding no drift; plus `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-15) |
 | Migration `0009` on both dialects | Postgres round-trip with `alembic check` clean, `consented_at` landing as `timestamp with time zone` and both columns nullable; SQLite `upgrade head` → `downgrade base` (2026-08-12) |
 | Migration `0008` on both dialects | `upgrade head` → `downgrade -1` → `upgrade head` on Postgres with `alembic check` clean, and `upgrade head` → `downgrade base` on SQLite, which is where CI runs it (2026-08-12) |
@@ -379,6 +397,11 @@ api/app/
                        /screenings; 202 when work was queued, 200 when it was not.
                        Also GET /jobs/{id}/ranking and GET /jobs/{id}/candidates,
                        neither of which spends anything
+                       metrics.py — M5 slice 2: GET /metrics/usage, a query over rows
+                       resumes.py also serves M5 slice 4's two reads: /{id}/file (the
+                       stored bytes, no-store, no filename anywhere) and /{id}/geometry
+                       (what geometry.stored() wrote). Same `_owned_resume` as the
+                       profile — the overlay draws what the profile already describes
   cli.py               `python -m app.cli <pdf>` — fastest way to see output
 web/
   app/page.tsx         auth + upload + live progress + result + retry
@@ -393,6 +416,15 @@ web/
   lib/screening.ts     M3: the pure judgment logic the ranking screen runs on. Its own
                        module so `npm test` needs no DOM, the same instinct as the
                        Python suite needing no server
+  lib/overlay.ts       M5 slice 4: the overlay's whole rule set — which boxes a
+                       character range selects, and the four reasons a page gets none.
+                       Pure, so vitest reaches all of it with no DOM. **Nothing here
+                       searches for text**, and `gapForPage` draws nothing rather than
+                       something it cannot show describes the page on screen
+  components/DocumentViewer.tsx  M5 slice 4: text or original, and the two lazy
+                       fetches. `DocumentPane` is untouched and still used directly
+                       wherever there is no PDF to offer
+  components/PdfOverlay.tsx      M5 slice 4: the pdf.js canvas and the boxes on it
   components/Evidence.tsx, ProfileView.tsx, DocumentPane.tsx (citation highlighting)
   components/RankingTable.tsx, JudgmentView.tsx, RequirementEditor.tsx,
                        RequirementFields.tsx, AuthPanel.tsx
@@ -1084,7 +1116,7 @@ code. `docs/PLAN.md` carries the corrected shapes — read it, not the original 
 | 1 | The dropped-claims audit view | **done** (2026-08-15) — `web/lib/evidence.ts`, `components/{DroppedClaims,EvidenceStatsBar}.tsx`, judging's half on `/jobs/[id]`; **no API change and no migration**; watched in a browser, which is what closed it |
 | 2 | The usage and quality dashboard | **done** (2026-08-15) — `schemas/metrics.py`, `services/metrics_service.py`, `GET /metrics/usage`, `web/lib/metrics.ts` + `web/app/metrics/`; **no migration**; `tests/test_metrics.py`. Respecified first: it was a *cost* dashboard and there is no cost, since every model maps to `FREE_TIER`. `ADMIN` sees every row, read in the WHERE clause rather than gated on the route |
 | 3 | Character geometry at parse time | **done** (2026-08-15) — `pipeline/geometry.py`, rebased in `parse.py`, stored by migration `0010` on `resumes.page_geometry`; `tests/test_geometry.py`. Scoped as *per-word* and corrected to **per-character runs**: Thai has no spaces, so a whitespace "word" is an unbroken 31-character run with real quotes inside it |
-| 4 | The pdf.js overlay | **not started, and now unblocked.** Slice 3 landed, and the ownership question is settled: **a recruiter keeps read access after a terminal state**, decided with the owner on 2026-08-15 — a recruiter who rejected somebody may still have to account for it. `_owned_resume` is unchanged and the file route serves on the same rule |
+| 4 | The pdf.js overlay | **done** (2026-08-15) — `GET /resumes/{id}/file` + `GET /resumes/{id}/geometry` on `_owned_resume` unchanged, `web/lib/overlay.ts`, `components/{PdfOverlay,DocumentViewer}.tsx`, `pdfjs-dist`; **no migration and no change to any existing payload**; `tests/test_resume_file.py` + `lib/overlay.test.ts`. Watched in a browser inside the slice, which found the one defect the gates could not |
 | 5 | Production compose and a runbook | **not started; its security half shipped early** (2026-08-15) — the data services are `127.0.0.1:`-bound now. `profiles:` cannot do the rest; `docker-compose.prod.yml` with `!reset`/`!override` can |
 
 **Four things to know before starting M5:**
@@ -1149,7 +1181,7 @@ M2, for the record — nothing in it is outstanding (live status in `docs/PLAN.m
 | 5 | ~~DOCX parser~~ **done** | `parse_docx` in `parse.py` reads paragraphs and tables in document order; a `.docx` has no pages so it is reported as one. The upload gate keeps a magic-byte signature per type. Pinned by `tests/test_docx.py` |
 | 6 | ~~Two-column fix~~ **done** | `app/pipeline/layout.py` — a bounded XY-cut. `None` for anything it is unsure of, which is the pre-M2 code path, so single-column output is byte-identical. Pinned by `tests/test_layout.py` |
 | 7 | ~~MinIO storage backend~~ **done** | `MinioStorage` in `app/storage.py`; the API and the worker build storage independently so both pick it up. The contract in `tests/storage_contract.py` runs against both backends |
-| 8 | ~~Evidence viewer~~ **done** — text-layer only | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. A true pdf.js overlay is still not done. **This row used to claim #6 already extracts the bbox geometry it needs, leaving "an endpoint and a pdf.js canvas" — that was wrong, corrected 2026-08-13.** `layout.py` computes boxes to *crop* columns and discards them in the same function; `PageSpan` and `EvidenceRef` carry char offsets and a page number and nothing else, so **no stored row can say where on a page a character range sits**, and a two-column page's text is in reading order rather than the PDF's, so a client cannot re-derive it. The overlay is a parser slice **plus** a frontend slice with a migration between them — M5 slices 3 and 4 |
+| 8 | ~~Evidence viewer~~ **done** — and the overlay with it, 2026-08-15 | `web/components/DocumentPane.tsx` highlights every citation in `document_text` and scrolls to the one clicked. ~~A true pdf.js overlay is still not done.~~ **Closed by M5 slices 3 and 4**, which took a parser slice, a migration and a frontend slice — not the "endpoint and a canvas" this row used to promise. **This row used to claim #6 already extracts the bbox geometry it needs, leaving "an endpoint and a pdf.js canvas" — that was wrong, corrected 2026-08-13.** `layout.py` computes boxes to *crop* columns and discards them in the same function; `PageSpan` and `EvidenceRef` carry char offsets and a page number and nothing else, so **no stored row can say where on a page a character range sits**, and a two-column page's text is in reading order rather than the PDF's, so a client cannot re-derive it. The overlay is a parser slice **plus** a frontend slice with a migration between them — M5 slices 3 and 4 |
 
 The browser walkthrough was re-done on 2026-08-08 and covered the whole journey
 including the retry path (§1); the OCR banner was checked in a real browser once
@@ -1215,6 +1247,15 @@ also tracks the status of every item above.
   `name="ck_<table>_<rule>"` gets wrapped a second time and `alembic check` reports
   drift against the model forever. `fk`, `pk` and `uq` names are safe spelled out —
   their conventions never reference the given name.
+- **A check can be more sophisticated than the thing it checks, and still be the one
+  that is wrong** (2026-08-15). Reading a pdf.js canvas back with `getImageData`
+  reported it entirely white on a page that was visibly rendered — v6 paints through an
+  ImageBitmap, so a 2d readback sees nothing. The screenshot was the ground truth. The
+  same day, milder: the file route's `nosniff` and `Content-Disposition` headers read as
+  `null` from browser JS because the CORS safelist hides them from script, while `curl`
+  showed all four present. Both are the general rule below in a new place — but note
+  what is new: these were not crude tools answering the wrong question, they were
+  *precise* ones measuring the wrong surface.
 - **When a check says something surprising, suspect the instrument first.** Five
   tools have now each told a confident lie here: `git hash-object` reported
   CRLF-corrupted PDFs as intact because it normalizes while hashing, a

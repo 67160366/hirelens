@@ -20,7 +20,7 @@ caught a load-bearing claim about the codebase that was false.
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
 | M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | ✅ done (2026-08-12) |
 | M4 | Visibility timeout, RBAC, the application state machine, PDPA | ✅ done (2026-08-12) |
-| M5 | Dropped-claims view, cost dashboard, word geometry + pdf.js overlay, production compose | scoped 2026-08-13 |
+| M5 | Dropped-claims view, cost dashboard, word geometry + pdf.js overlay, production compose | 4 of 5 slices done |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
 
 ---
@@ -866,8 +866,10 @@ overlay waits for it.
   `document_text` and page spans are byte-identical before and after** — the M2 #6
   discipline, which is what keeps every citation already shown to a user pointing where
   it did.
-- [ ] 4. **The pdf.js overlay**, on slice 3's geometry — **now unblocked**, since slice
-  3 landed and the ownership question below is settled.
+- [x] 4. **The pdf.js overlay**, on slice 3's geometry (2026-08-15). `GET /resumes/{id}/file`
+  and `GET /resumes/{id}/geometry` behind `_owned_resume`, `web/lib/overlay.ts` +
+  `components/{PdfOverlay,DocumentViewer}.tsx`; **no migration and no change to any
+  existing payload**; `tests/test_resume_file.py`, `lib/overlay.test.ts`.
 
   **Decided with the owner on 2026-08-15: a recruiter keeps read access to a resume
   after the application reaches a terminal state.** The gap was real and confirmed —
@@ -884,6 +886,49 @@ overlay waits for it.
   A page from OCR, or a resume written before slice 3's migration, falls back to
   `DocumentPane` **with the reason shown** — a silent fallback is indistinguishable
   from a bug, which is M4 slice 5's disabled-button lesson in a new place.
+
+  **Built as two routes rather than a widened payload.** Geometry costs ~20 bytes per
+  character and is needed only when somebody opens the overlay, so folding it into
+  `ProfileOut` and `ScreeningDetail` would charge every visit for a view most of them
+  never open. `GeometryOut` keeps **"never measured" and "measured and empty" apart** —
+  the first is every row written before migration `0010`, which is not backfilled; the
+  second is a `.docx` or a page whose textmap could not be proven — because the client
+  needs both to say *which* fallback it is in.
+
+  **The client never searches for text**, which is what the slice is for: `boxesForPage`
+  selects the runs a character range overlaps and clips to the characters inside them.
+  Re-deriving positions in the browser would mean reproducing the server's NFC
+  normalization, NUL strip and column reordering, and the day they drifted it would
+  highlight the wrong region. Its opposite number is `gapForPage`: a page whose stored
+  box disagrees with pdf.js's viewport, or that is rotated, gets **no boxes at all** —
+  the same refusal as `runs_for` answering `None`.
+
+  **Two things checked rather than assumed**, both of which a green build cannot see.
+  The bytes are *fetched* and handed to pdf.js as a buffer instead of giving it a URL,
+  because a URL puts the bearer token in a query string — the same trade
+  `waitForProfile` makes by parsing SSE by hand. And the pdf.js worker is copied into
+  `public/` by a prebuild hook rather than resolved from a bare specifier inside
+  `new URL(...)`, then **verified by asking the running container for it** (200,
+  1,262,398 bytes) rather than by a passing `next build`.
+
+  **Watched in a browser inside the slice**, on `LLM_PROVIDER=fake` — zero Gemini quota.
+  `/openapi.json` listed both routes first. `resume_th.pdf`: 10/10 verified, and the
+  payoff slice 3 changed its shape for — the quote `ชำระเงิน` at character 180 sits
+  inside a **31-character** run and covers **8 characters**, x 167.03 → 201.28.
+  `resume_two_column.pdf`: every box lands in the **left column**, where a client that
+  re-derived positions would visibly fail, since `document_text` is in reading order and
+  not the PDF's. `resume_scanned.pdf`: no boxes and the caption reads *"Page 1 was read
+  by OCR, so its text came from an image rather than from characters on the page…"*.
+  A second account got **404** on both routes, unauthenticated **401**, the owner 200.
+  Both throwaway accounts erased afterwards (`stored_files_removed: 3`, token then 401,
+  `psql` reports 0 rows).
+  **The browser found one defect the gates could not**, again: two claims resting on the
+  same quote painted that span's boxes twice, and stacked translucent rectangles render
+  darker — 31 boxes for 10 citations. `distinctSpans` in `lib/overlay.ts` now, with its
+  own cases; 26 boxes and no duplicated positions after.
+  And one instrument lied, the ninth: reading the canvas back with `getImageData`
+  reported it blank on a page that was plainly rendered — pdf.js v6 paints through an
+  ImageBitmap. **The screenshot was the ground truth, not the pixel probe.**
 - [ ] 5. **Production compose and a runbook.** Secrets out of `.env`, restart policies,
   and Postgres/Redis not published to the host. Plus the runbook: how to bring it up,
   how to run migrations, what to check, how to erase an account on request.

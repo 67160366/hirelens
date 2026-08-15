@@ -6,7 +6,69 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-15 (latest) — slices 1, 2 and 3 close, the ports close, four leads become findings
+## 2026-08-15 (latest) — the overlay lands, and M5 has one slice left
+
+**M5 slice 4 is done.** A citation now highlights on the original PDF, not only in the
+extracted text — which is what slice 3's `page_geometry` was measured for, and the item
+parked since M2 #8. Four commits, none pushed (your call, as always).
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Serve the original document, and the boxes drawn on it | `GET /resumes/{id}/file` + `/geometry`, `tests/test_resume_file.py` (19 cases) |
+| 2 | Draw each citation on the document it was read from | `lib/overlay.ts` + its tests, `components/{PdfOverlay,DocumentViewer}.tsx`, `pdfjs-dist`, the worker copy script |
+| 3 | Paint a span once, however many claims rest on it | The defect the browser found |
+| 4 | Close M5 slice 4, and record what watching it found | These docs |
+
+Gates: `pytest -q` **633 passed / 38 skipped** (was 614), vitest **120** (was 98),
+`ruff`/`mypy`/`typecheck`/`lint`/`build` clean. **No migration, and no change to any
+payload that already existed** — `/jobs/[id]` and `/` both had the resume id already.
+
+### What watching it proved
+
+Driven on `LLM_PROVIDER=fake`, so **zero Gemini quota** — the third slice running to
+close that way.
+
+- **The payoff, visible at last.** In `resume_th.pdf` the quote `ชำระเงิน` starts at
+  character 180 *inside* an unbroken 31-character run, and the overlay covers **8
+  characters** (x 167.03 → 201.28). Per-word boxes — what the plan originally
+  specified — would have covered all 31. This is why slice 3 changed shape.
+- **The two-column page is the one that could not be faked.** Every box lands in the
+  left column, on the words it cites. `document_text` is in *reading* order, which is
+  not the PDF's internal order, so a client that searched for the text would put these
+  boxes somewhere else and look plausible doing it.
+- **A scan says why it is empty**: no boxes, and the caption names OCR as the reason.
+
+### The defect, and the instrument
+
+**The browser found one thing no gate could, again.** Two claims resting on the same
+quote — the headline and the seniority both cite chars 11–72 — painted that span's
+boxes twice, and stacked translucent rectangles render *darker*, which reads as "this
+line is more strongly evidenced". 31 boxes for 10 citations; 26 after `distinctSpans`.
+That is three slices in a row where the browser caught something the gates could not,
+and all three were about what the screen *says* rather than what the code computes.
+
+**And an instrument lied — the ninth, but a new species.** Checking the canvas with
+`getImageData` reported it entirely white on a page that was plainly rendered: pdf.js
+v6 paints through an ImageBitmap, so a 2d readback sees nothing. I nearly filed it as a
+blank-page bug. **The screenshot was the ground truth, and the more sophisticated check
+was the wrong one.** A tenth, milder, the same day: the file route's `nosniff` and
+`content-disposition` headers read as `null` in browser JS — the CORS safelist hides
+them from script. `curl` showed all four present. Both belong beside §10's list.
+
+### Advice
+
+- **Slice 5 is all that is left of M5** — production compose and a runbook. `PLAN.md`
+  carries the measured shape: `!reset`/`!override` (not `profiles:`, which fails to
+  load the project at all), the `*api_env` anchor cannot cross files, and
+  `NEXT_PUBLIC_API_BASE` is a build arg so a prod URL means rebuilding the web image.
+- **`web/public/` exists now** and holds exactly one generated file, pdf.js's worker,
+  copied by a `prebuild` hook and gitignored. `web/Dockerfile` copies it. If the worker
+  ever 404s in a browser, that hook is the first thing to check.
+- Four commits are sitting unpushed. `git rev-list --count origin/main..main` says so.
+
+---
+
+## 2026-08-15 — slices 1, 2 and 3 close, the ports close, four leads become findings
 
 **M5 slice 1 is done.** Both of last session's blockers were gone before the first
 command: `C:` had **61 GB** free (it was 114 MB), and the Chrome extension connected.

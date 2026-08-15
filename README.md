@@ -26,7 +26,9 @@ things at once:
 
 1. **A guardrail.** Unverifiable claims never reach a reviewer.
 2. **Explainability.** Every field carries a page number and character range, which
-   is what the UI renders — and, from M2, highlights on the PDF.
+   is what the UI renders — highlighted in the extracted text, and from M5 boxed on
+   the original PDF itself, from character positions measured at parse time rather
+   than searched for afterwards.
 3. **A metric, for free.** Counting rejected quotes gives a hallucination rate with
    no labelled dataset and no baseline to beat.
 
