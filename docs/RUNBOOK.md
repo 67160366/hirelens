@@ -277,15 +277,42 @@ happened to survive the conflicts.
 ### Rotate a secret
 
 - **`JWT_SECRET`** — change it in `.env.prod`, then `up -d api worker`. Every existing
-  token stops working immediately, because there is no refresh-token denylist and this is
-  the only revocation mechanism that exists. That bluntness is the current design, not an
-  oversight; see `docs/PLAN.md` "Auth — beyond M1".
+  token stops working immediately. **This is no longer the only revocation available**
+  (it was, until 2026-08-16): `POST /auth/logout` ends one session, and a password change
+  revokes the token that made it. Reach for the secret only when you need *everybody*
+  signed out at once — a suspected key compromise — because that is what it does.
 - **`POSTGRES_PASSWORD`** — changing it in `.env.prod` does **not** change the password
   in an existing database volume; `POSTGRES_PASSWORD` only initialises a fresh one. Do it
   with `ALTER ROLE` inside psql *and* in `.env.prod`, or the stack will not reconnect.
 - **`MINIO_ROOT_PASSWORD`** — same shape. Change it in MinIO, then in `.env.prod`.
 
 ---
+
+### End one session
+
+```bash
+curl -X POST http://localhost:8000/auth/logout \
+  -H "Authorization: Bearer <their access token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token": "<their refresh token>"}'      # 204
+```
+
+Both tokens are refused afterwards. **Send the refresh token**: omitting it revokes only
+the access token, and the session stays renewable for the refresh token's full lifetime.
+
+The revocations live in `revoked_tokens` and are swept once an hour, after each token's
+own expiry — so the table is sized by outstanding sessions rather than by history, and a
+row disappearing is housekeeping rather than a session coming back to life.
+
+```bash
+docker compose ... exec -T postgres psql -U hirelens -d hirelens \
+  -c "select reason, token_type, count(*) from revoked_tokens group by 1,2;"
+```
+
+**What this cannot do: sign out somebody's *other* devices.** The denylist stores only
+tokens that are dead, never the ones outstanding, so there is no list to walk. If you
+need every session for one person gone and you cannot ask them to log out on each device,
+the only tool is rotating `JWT_SECRET` — which signs out everybody.
 
 ## 7. When a document does not come out
 

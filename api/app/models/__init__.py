@@ -5,6 +5,7 @@ from a single import.
 """
 
 from app.models.application import Application, ApplicationEvent, ApplicationState
+from app.models.auth import RevocationReason, RevokedToken
 from app.models.base import Base
 from app.models.core import (
     Candidate,
@@ -35,6 +36,8 @@ __all__ = [
     "RequirementKind",
     "Resume",
     "ResumeStatus",
+    "RevocationReason",
+    "RevokedToken",
     "Role",
     "Screening",
     "ScreeningStatus",

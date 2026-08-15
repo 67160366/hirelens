@@ -16,10 +16,15 @@ new session: this file, then `docs/HANDOFF.md` §3 (reading order), then `docs/P
 `useSyncExternalStore` on 2026-08-16, so **the session is an external store and no
 component copies it into state** — `web/lib/auth.ts` is the only thing that touches
 `localStorage`, and two components on one page can no longer disagree about who is
-signed in. The one named item left is **httpOnly cookies with the refresh-token
-denylist**, which `docs/RUNBOOK.md` made more pressing rather than less: rotating
-`JWT_SECRET` is currently the only way to revoke anything, and it signs everybody out at
-once.
+signed in. The **refresh-token denylist landed the same day** (migration `0011`,
+`services/token_service.py`), so `POST /auth/logout` is real, a spent refresh token is
+genuinely single-use, and rotating `JWT_SECRET` is no longer the only revocation there
+is. **`decode_token` and `token_service.assert_live` must always be called together** —
+verifying a token without checking the denylist accepts one somebody signed out, and it
+is the pairing that makes any of it true. The one named item left is **httpOnly cookies**
+instead of `localStorage`, which answers XSS token theft rather than revocation, and
+which needs a decision about whether bearer auth survives alongside it — every `curl` in
+`docs/RUNBOOK.md` uses one.
 
 M5's organizing idea, the same shape as the two below: **every number on an
 observability screen is a query over rows the system already wrote, and can name the

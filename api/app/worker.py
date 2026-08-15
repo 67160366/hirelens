@@ -28,7 +28,13 @@ from arq.connections import RedisSettings
 
 from app.config import get_settings
 from app.db import build_engine, build_sessionmaker
-from app.jobs import JobContext, reclaim_stalled, run_resume_job, run_screening_job
+from app.jobs import (
+    JobContext,
+    purge_revoked_tokens,
+    reclaim_stalled,
+    run_resume_job,
+    run_screening_job,
+)
 from app.llm.registry import build_extractor
 from app.logging_config import configure_logging
 from app.pipeline.ocr import build_ocr_engine
@@ -65,6 +71,17 @@ async def reclaim(ctx: dict[str, Any]) -> None:
     cluster, so replicas do not each reclaim the same row.
     """
     await reclaim_stalled(ctx[CONTEXT_KEY])
+
+
+async def purge_tokens(ctx: dict[str, Any]) -> None:
+    """Housekeeping for `revoked_tokens`: drop rows whose token has expired anyway.
+
+    Rides the same cron the reaper does because it wants the same thing — a periodic
+    tick with no event behind it — but it is not the same *kind* of job. The reaper
+    is correctness: a row nobody sweeps is a user's document stranded forever. This
+    one only keeps a table small, and skipping it costs disk rather than behaviour.
+    """
+    await purge_revoked_tokens(ctx[CONTEXT_KEY])
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:
@@ -125,7 +142,14 @@ class WorkerSettings:
     # Once a minute, on the minute. An interval knob would be false precision next
     # to a 900 s visibility timeout — a sweep a minute adds at most 60 s to how long
     # a dead worker's row waits, and the timeout is what decides that.
-    cron_jobs: ClassVar[list[Any]] = [cron(reclaim, second=0, run_at_startup=True)]
+    cron_jobs: ClassVar[list[Any]] = [
+        cron(reclaim, second=0, run_at_startup=True),
+        # Hourly, not per minute: this is housekeeping, and an expired revocation row
+        # is refused correctly by `decode_token` for as long as it sits there. Running
+        # it as often as the reaper would be a delete statement a minute to reclaim
+        # bytes nobody is short of.
+        cron(purge_tokens, minute=7, run_at_startup=True),
+    ]
 
     on_startup = staticmethod(on_startup)
     on_shutdown = staticmethod(on_shutdown)

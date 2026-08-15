@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -66,11 +67,34 @@ def create_refresh_token(settings: Settings, subject: uuid.UUID) -> str:
     )
 
 
-def decode_token(settings: Settings, token: str, *, expected_type: str) -> uuid.UUID:
-    """Return the subject, or raise `AuthError`.
+@dataclass(frozen=True, slots=True)
+class TokenClaims:
+    """What a verified token says about itself.
+
+    `decode_token` used to return the subject alone and drop everything else on the
+    floor — including the `jti` that has been in every token since M1 specifically so
+    revocation could be added later. Revoking a token needs three of these: which
+    token (`jti`), whose (`subject`), and how long the revocation has to be
+    remembered (`expires_at`, after which the token is dead on its own).
+    """
+
+    subject: uuid.UUID
+    jti: str
+    token_type: str
+    expires_at: datetime
+
+
+def decode_token(settings: Settings, token: str, *, expected_type: str) -> TokenClaims:
+    """Return the verified claims, or raise `AuthError`.
 
     The token type is checked explicitly so a refresh token cannot be presented as
     an access token.
+
+    **This does not consult the revocation list.** Signature, expiry and type are
+    properties of the token; whether it has been taken back is a question for the
+    database, and this module deliberately has no session. `token_service.assert_live`
+    is the other half, and the two are called together in `deps.get_current_candidate`
+    and in the refresh route.
     """
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])
@@ -81,6 +105,22 @@ def decode_token(settings: Settings, token: str, *, expected_type: str) -> uuid.
         raise AuthError(f"Expected a {expected_type} token")
 
     try:
-        return uuid.UUID(str(payload["sub"]))
+        subject = uuid.UUID(str(payload["sub"]))
     except (KeyError, ValueError) as exc:
         raise AuthError("Token subject is missing or malformed") from exc
+
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        # Every token this application has ever issued carries one. A token without
+        # it is either forged or from a scheme that predates M1, and either way it
+        # cannot be revoked — so it is refused rather than trusted unconditionally.
+        raise AuthError("Token id is missing")
+
+    try:
+        expires_at = datetime.fromtimestamp(float(payload["exp"]), tz=UTC)
+    except (KeyError, TypeError, ValueError) as exc:  # pragma: no cover - pyjwt enforces exp
+        raise AuthError("Token expiry is missing or malformed") from exc
+
+    return TokenClaims(
+        subject=subject, jti=jti, token_type=str(payload["type"]), expires_at=expires_at
+    )

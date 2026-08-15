@@ -43,7 +43,7 @@ from app.models import Job, Resume, ResumeStatus, Screening, ScreeningStatus
 from app.models.base import utcnow
 from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
 from app.pipeline.parse import ParseError
-from app.services import application_service, resume_service, screening_service
+from app.services import application_service, resume_service, screening_service, token_service
 from app.services.screening_service import NotScreenable
 from app.storage import ObjectNotFoundError, Storage
 
@@ -647,3 +647,26 @@ async def reclaim_stalled(context: JobContext, *, now: datetime | None = None) -
             screenings,
         )
     return total
+
+
+async def purge_revoked_tokens(context: JobContext) -> int:
+    """Drop revocation rows for tokens that have expired on their own.
+
+    A revoked token stops needing a row the moment its own `exp` passes, because
+    `decode_token` refuses it without any help from the database. Sweeping is what
+    keeps `revoked_tokens` sized by *outstanding sessions* rather than by every
+    sign-out the system has ever seen.
+
+    Cron rather than a task anybody enqueues, and for the same reason as
+    `reclaim_stalled`: there is no event to hang it off. Nothing is broken if it
+    never runs — the table only grows, and a stale row is refused-correctly rather
+    than wrongly, so this is housekeeping and not correctness. That is why it logs
+    only when it actually removed something.
+    """
+    async with context.sessionmaker() as session:
+        removed = await token_service.purge_expired(session)
+        await session.commit()
+
+    if removed:
+        logger.info("purged %d expired token revocation(s)", removed)
+    return removed

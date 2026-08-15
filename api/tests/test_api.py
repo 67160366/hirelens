@@ -157,21 +157,60 @@ class TestChangePassword:
         )
         assert response.status_code == 422
 
-    async def test_tokens_issued_before_the_change_still_work(self, authed_client: AsyncClient):
-        """KNOWN LIMITATION, pinned so it is a deliberate state rather than a surprise.
+    async def test_the_token_that_changed_the_password_stops_working(
+        self, authed_client: AsyncClient
+    ):
+        """This test is the opposite of the one it replaces, which is the point.
 
-        Revoking the old pair needs a refresh-token denylist, which is also what a
-        real `/auth/logout` would need. When that lands, this test should fail and
-        be replaced with its opposite.
+        It used to read `test_tokens_issued_before_the_change_still_work` and pin a
+        **known limitation**: with no denylist, the credential that proved the old
+        password went on working after the password had changed. Its docstring said
+        that when revocation landed this test should fail and be replaced with its
+        opposite — and on 2026-08-16 it did fail, for exactly that reason.
+
+        Same shape as `test_columns_should_read_one_after_the_other` in
+        `test_parse.py`: a test written to break the day the limitation is removed
+        is worth more than a comment nobody re-reads.
         """
         old_token = authed_client.headers["Authorization"]
+        changed = await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
+        )
+        assert changed.status_code == 200
+
+        authed_client.headers["Authorization"] = old_token
+        assert (await authed_client.get("/auth/me")).status_code == 401
+
+        # And the pair it handed back is usable, or the route would have signed the
+        # caller out of the session it was standing in.
+        authed_client.headers["Authorization"] = f"Bearer {changed.json()['access_token']}"
+        assert (await authed_client.get("/auth/me")).status_code == 200
+
+    async def test_a_session_on_another_device_survives_a_password_change(
+        self, authed_client: AsyncClient, client: AsyncClient
+    ):
+        """KNOWN LIMITATION, pinned so it stays a deliberate state.
+
+        The denylist stores only tokens that are dead, never tokens that are
+        outstanding, so a password change has no list of other sessions to walk. A
+        session signed in on another device keeps working until its own token
+        expires. Closing this needs a session registry or a per-account epoch inside
+        the token payload; `README.md` carries the limitation.
+
+        Pinned rather than commented for the same reason as the test above: when it
+        is fixed, this should fail and be replaced with its opposite.
+        """
+        credentials = {"email": "candidate@example.com", "password": "correct horse battery"}
+        elsewhere = (await client.post("/auth/login", json=credentials)).json()["access_token"]
+
         await authed_client.post(
             "/auth/change-password",
             json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
         )
 
-        authed_client.headers["Authorization"] = old_token
-        assert (await authed_client.get("/auth/me")).status_code == 200
+        client.headers["Authorization"] = f"Bearer {elsewhere}"
+        assert (await client.get("/auth/me")).status_code == 200
 
 
 class TestUpload:

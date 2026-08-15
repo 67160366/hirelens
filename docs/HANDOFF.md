@@ -1147,9 +1147,21 @@ gone, and two components on one page can no longer hold different ideas of who i
 in. Signing out in one tab now signs out the others, which is what proved the change in a
 browser.
 
-What is named and unstarted: **httpOnly cookies with the refresh-token denylist** — made
-more pressing rather than less by `docs/RUNBOOK.md`, since rotating `JWT_SECRET` is now a
-documented operational step and is also the *only* revocation that exists.
+**The refresh-token denylist landed the same day**, deferred four times before that.
+`revoked_tokens` (migration `0011`) plus `services/token_service.py`, so `POST
+/auth/logout` exists and means something, a spent refresh token is genuinely single-use,
+and a password change revokes the credential that proved the old password. Two claims
+were checked before building and one was already false: `security.py:46` has carried a
+`jti` since M1 specifically so revocation could be added later — so no token format
+changed — while `README.md` described refresh tokens as "single-use" when `POST
+/auth/refresh` was leaving the presented token valid for another fourteen days. **The
+rule to hold: `decode_token` and `token_service.assert_live` are always called
+together**; either alone is a hole.
+
+What is named and unstarted: **httpOnly cookies** instead of `localStorage`. That is the
+XSS half rather than the revocation half, it changes every client call including the SSE
+stream and the PDF fetch, and it needs a decision on whether bearer auth survives beside
+it — every `curl` in `docs/RUNBOOK.md` uses one.
 
 | # | Work | Status |
 |---|---|---|

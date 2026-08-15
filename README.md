@@ -136,7 +136,8 @@ credential endpoints. Full schema at `/docs`.
 |---|---|---|
 | `POST` | `/auth/register` | Create an account; returns an access + refresh pair. `role` is `candidate` (default) or `recruiter` — see the limitation below |
 | `POST` | `/auth/login` | Exchange credentials for a token pair |
-| `POST` | `/auth/refresh` | Rotate the pair; a refresh token is single-use |
+| `POST` | `/auth/refresh` | Rotate the pair; the token presented is revoked, so it is genuinely single-use |
+| `POST` | `/auth/logout` | End this session — the access token, and the refresh token behind it |
 | `POST` | `/auth/change-password` | Prove the old password, set a new one |
 | `GET` | `/auth/me` | The signed-in account, and its role |
 | `GET` | `/auth/me/export` | Everything held about you, as one JSON document |
@@ -160,14 +161,17 @@ credential endpoints. Full schema at `/docs`.
 | `POST` | `/screenings/{id}/retry` | Replay a stopped screening |
 | `GET` | `/health` | Liveness, and which provider is active |
 
-There is deliberately **no `/users` listing, no `/logout` and no username check.**
-Resumes are PII, so letting one account enumerate others is a vulnerability rather
-than a feature — RBAC landed in M4, and so did the two PDPA rights the system can
-honour: a copy of your data, and its erasure. A `/logout` on stateless JWTs would need a
-refresh-token denylist to mean anything, and an endpoint that returns 200 without
-revoking anything is worse than not having one. Username checks are an
-account-enumeration oracle, which is exactly what `/auth/login`'s single error
-message exists to avoid.
+There is deliberately **no `/users` listing and no username check.** Resumes are PII, so
+letting one account enumerate others is a vulnerability rather than a feature — RBAC
+landed in M4, and so did the two PDPA rights the system can honour: a copy of your data,
+and its erasure. Username checks are an account-enumeration oracle, which is exactly what
+`/auth/login`'s single error message exists to avoid.
+
+**`POST /auth/logout` exists as of 2026-08-16, and did not before.** The reason it was
+absent is worth keeping: on stateless JWTs a logout route needs a denylist to mean
+anything, and an endpoint that returns 200 without revoking anything is worse than not
+having one. `revoked_tokens` is that denylist, so the route now actually ends the
+session — both the access token and the refresh token behind it.
 
 ### Try it without the web app
 
@@ -296,10 +300,14 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
 - **Ambiguous citations are flagged, not resolved.** A quote such as `Python` that
   appears in both a bullet and a skills list is reported as ambiguous rather than
   guessed at.
-- **A password change does not revoke tokens already issued.** They keep working
-  until they expire, because revocation needs a refresh-token denylist that does not
-  exist yet — the same gap that is why there is no `/auth/logout`. Pinned by
-  `tests/test_api.py::TestChangePassword`.
+- **A password change does not sign out the account's *other* devices.** It revokes the
+  token that made the call, and `/auth/logout` ends the session it is given — but the
+  denylist stores only tokens that are *dead*, never tokens that are outstanding, so
+  there is no list of other sessions to walk. One on another machine keeps working until
+  its own token expires. Closing this needs a session registry or a per-account epoch
+  inside the token payload, and neither is built. Pinned by
+  `tests/test_api.py::TestChangePassword::test_a_session_on_another_device_survives_a_password_change`,
+  which is written to fail the day it is fixed.
 - **Anyone may register as a recruiter.** The role is a field on `POST /auth/register`,
   because there is no other way to become one. Verifying that somebody really
   represents the company they claim to is an identity problem this project has no

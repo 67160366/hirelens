@@ -90,10 +90,9 @@ never that a browser check always finds something.
   `export`. Harmless today and it is why this session cost zero quota — but the next
   `docker compose up -d` in a fresh shell will flip the dev stack onto the real provider
   and its 20/day cap. Decide which you want `.env` to say.
-- **`useAuth` is done** — see below. **httpOnly cookies with the refresh-token denylist**
-  is the one named item left, and it is worth more than it looks now that there is a
-  runbook: rotating `JWT_SECRET` is the *only* way to revoke anything, and it logs
-  everybody out at once.
+- **`useAuth` and the refresh-token denylist are both done** — see below. **httpOnly
+  cookies** is the one named item left, and it is genuinely optional: it answers XSS
+  token theft, not revocation, and revocation was the pressing half.
 - **Four commits sit unpushed.** `git rev-list --count origin/main..main` says so — derive
   it, do not read it here.
 - Two small open items, both one line each, both skipped because nothing was in the file:
@@ -167,6 +166,55 @@ with *"Cannot find package '@/lib/api'"*. Pointing `auth.ts` at a relative path 
 made the error go away and left the next value-import through `@/` to hit the same wall.
 The suite is still DOM-free: `localStorage` and `window` are two hand-written stubs with
 four methods between them.
+
+### And the refresh-token denylist, deferred four times
+
+`revoked_tokens` (migration `0011`), `services/token_service.py`, and a cron sweep beside
+the reaper. `POST /auth/logout` exists and means something for the first time.
+
+**The two claims it rested on were checked first, and one was already false.**
+`security.py:46` has put a `jti` in every token since M1, with a comment saying it exists
+"so revocation can be added without reissuing the whole scheme" — so nothing about the
+token format changed and tokens already in browsers became revocable. And `README.md`'s
+route table described a refresh token as **"single-use"**, which it was not: `/auth/refresh`
+issued a fresh pair and left the presented token valid for another fourteen days, so a
+stolen one kept working *after* the real user had rotated it. That is the concrete hole
+this closes, and it was sitting in the README describing behaviour the code did not have.
+
+**Why a table and not Redis**, decided on evidence rather than taste: the suite runs on
+in-memory SQLite with no server, and `docker-compose.yml` runs Redis with `--save ""
+--appendonly no` — so a denylist there would **forget every revocation on restart**,
+un-revoking silently while the operator believed the session was dead.
+
+**One guard was deleted after surviving mutation.** A `if await is_revoked(...)` fast path
+sat in front of the SAVEPOINT, and either guard alone passed every test, because the tests
+exercise sequential double-revocation rather than a race. The savepoint is the one that is
+*also* correct under concurrency, so keeping the cheaper one would have meant keeping the
+one that only works when nothing else is happening. `geometry.py`'s separator reset, in a
+new costume.
+
+**A test failed on purpose, which was its job.** `test_tokens_issued_before_the_change_still_work`
+pinned the limitation and its docstring said that when revocation landed it should fail and
+be replaced with its opposite. It did, and it has been — same device as
+`test_columns_should_read_one_after_the_other`.
+
+Gates: `pytest` **633 → 651**, five decisions confirmed load-bearing by mutation (3, 3, 1,
+1, 1). Migration `0011` round-trips on SQLite *and* Postgres, `alembic check` clean.
+Driven against the containers and real Postgres: logout → both tokens 401; a refresh token
+used once → 200 and **replayed → 401**; a password change → the old token 401 and the new
+pair working; all four reasons in `psql` as upper-case names; and **0** revocation rows
+after `DELETE /auth/me`, which is the cascade rather than the row.
+
+**One instrument lied on the way, and I nearly reported it as a pass.** A SQLite migration
+round-trip printed `SQLITE OK` — because that was my own `echo`, on a command that had
+actually failed with "unable to open database file". Re-run under `set -e`, it genuinely
+passes. Eleventh of its kind here, and the plainest: *a success message you wrote yourself
+is not a result.*
+
+**Still not done, and pinned so it stays honest:** a password change cannot sign out the
+account's *other* devices, because the denylist stores only dead tokens and never
+outstanding ones. `test_a_session_on_another_device_survives_a_password_change` fails the
+day somebody fixes it.
 
 ---
 

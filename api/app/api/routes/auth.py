@@ -14,8 +14,8 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import CandidateDep, SessionDep, SettingsDep, StorageDep
-from app.models import Candidate, Role
+from app.api.deps import CandidateDep, ClaimsDep, SessionDep, SettingsDep, StorageDep
+from app.models import Candidate, RevocationReason, Role
 from app.security import (
     TOKEN_TYPE_REFRESH,
     AuthError,
@@ -25,7 +25,7 @@ from app.security import (
     hash_password,
     verify_password,
 )
-from app.services import privacy_service
+from app.services import privacy_service, token_service
 from app.services.privacy_service import ErasureIncomplete
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -69,6 +69,13 @@ class TokenPair(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
+    """Optional, because the access token alone still ends the current request's
+    session — but omitting it leaves the session renewable for the refresh token's
+    full lifetime, which is almost never what a caller means."""
 
 
 class ChangePasswordRequest(BaseModel):
@@ -141,17 +148,25 @@ async def refresh(payload: RefreshRequest, session: SessionDep, settings: Settin
     protected routes.
     """
     try:
-        subject = decode_token(settings, payload.refresh_token, expected_type=TOKEN_TYPE_REFRESH)
+        claims = decode_token(settings, payload.refresh_token, expected_type=TOKEN_TYPE_REFRESH)
+        await token_service.assert_live(session, claims)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
         ) from exc
 
-    candidate = await session.get(Candidate, subject)
+    candidate = await session.get(Candidate, claims.subject)
     if candidate is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
         )
+
+    # Rotation only means something if the token that was spent stops working. Until
+    # this line, `refresh` issued a new pair and left the presented one valid for the
+    # rest of its fourteen days — so a stolen refresh token kept working *after* the
+    # real user had rotated it, and neither of them could tell.
+    await token_service.revoke(session, claims, RevocationReason.REFRESH_ROTATED)
+    await session.commit()
 
     return TokenPair(
         access_token=create_access_token(settings, candidate.id),
@@ -159,21 +174,71 @@ async def refresh(payload: RefreshRequest, session: SessionDep, settings: Settin
     )
 
 
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    payload: LogoutRequest,
+    claims: ClaimsDep,
+    candidate: CandidateDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> None:
+    """End this session: the access token that authenticated the call, and the
+    refresh token behind it.
+
+    **The first time this route can mean anything.** It did not exist before, and
+    deliberately so — with no denylist, a `/auth/logout` that only asked the client to
+    forget its token would report success while the token went on working, which is a
+    worse answer than not offering the route at all.
+
+    The refresh token is the one that matters, because it is what can mint new access
+    tokens for the next fourteen days. It is taken in the body rather than inferred,
+    since the server never sees it otherwise.
+
+    A refresh token belonging to **somebody else is ignored rather than revoked**, or
+    this route would be a way to sign out any account whose refresh token you had
+    got hold of — the caller may only end their own session. It answers 204 either
+    way, so it is not an oracle for whose token is whose.
+    """
+    await token_service.revoke(session, claims, RevocationReason.LOGOUT)
+
+    if payload.refresh_token is not None:
+        try:
+            refresh_claims = decode_token(
+                settings, payload.refresh_token, expected_type=TOKEN_TYPE_REFRESH
+            )
+        except AuthError:
+            # A malformed or expired refresh token is nothing to do: it cannot mint
+            # anything. The access token is already revoked above, so the session is
+            # over either way and there is no reason to fail the call.
+            refresh_claims = None
+        if refresh_claims is not None and refresh_claims.subject == candidate.id:
+            await token_service.revoke(session, refresh_claims, RevocationReason.LOGOUT)
+
+    await session.commit()
+
+
 @router.post("/change-password", response_model=TokenPair)
 async def change_password(
     payload: ChangePasswordRequest,
+    claims: ClaimsDep,
     candidate: CandidateDep,
     session: SessionDep,
     settings: SettingsDep,
 ) -> TokenPair:
     """Change the signed-in account's password, proving the old one first.
 
-    Returns a fresh token pair so a client can swap without a second round trip.
+    Returns a fresh token pair so a client can swap without a second round trip, and
+    revokes the access token that authenticated this call — the old password's
+    credential should not outlive the old password.
 
-    **Tokens issued before this call keep working until they expire.** Revoking
-    them needs a refresh-token denylist, which this project does not have yet —
-    the same gap that is why there is no `/auth/logout`. Saying so here is better
-    than implying a guarantee the system cannot make.
+    **What this still does not do, and it is a real limitation rather than a
+    rounding error: it cannot sign out the account's *other* devices.** Nothing
+    records which tokens are outstanding — the denylist stores only the dead — so
+    there is no list to walk. A session on another machine keeps working until its
+    refresh token expires. Closing that needs a session registry or a per-account
+    epoch inside the token payload; both are bigger than the denylist, and
+    `README.md` carries the limitation rather than this route implying a guarantee
+    it cannot make.
     """
     if candidate.password_hash is None:
         raise HTTPException(
@@ -189,6 +254,7 @@ async def change_password(
         )
 
     candidate.password_hash = hash_password(payload.new_password)
+    await token_service.revoke(session, claims, RevocationReason.PASSWORD_CHANGED)
     await session.commit()
 
     return TokenPair(

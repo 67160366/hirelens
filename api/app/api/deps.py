@@ -15,7 +15,8 @@ from app.llm.base import StructuredExtractor
 from app.models import Candidate, Role
 from app.pipeline.retrieval import Retriever
 from app.queue import JobQueue
-from app.security import TOKEN_TYPE_ACCESS, AuthError, decode_token
+from app.security import TOKEN_TYPE_ACCESS, AuthError, TokenClaims, decode_token
+from app.services import token_service
 from app.storage import Storage
 
 _bearer = HTTPBearer(auto_error=False)
@@ -81,9 +82,12 @@ async def get_current_candidate(
         )
 
     try:
-        candidate_id = decode_token(
-            settings, credentials.credentials, expected_type=TOKEN_TYPE_ACCESS
-        )
+        claims = decode_token(settings, credentials.credentials, expected_type=TOKEN_TYPE_ACCESS)
+        # Verify, then check it has not been taken back. `decode_token` answers what
+        # the token says; only the database knows whether it still counts. Both
+        # raise `AuthError`, so a revoked token and a forged one look identical to
+        # whoever presented them — which is the right amount to disclose.
+        await token_service.assert_live(session, claims)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -91,7 +95,7 @@ async def get_current_candidate(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    candidate = await session.get(Candidate, candidate_id)
+    candidate = await session.get(Candidate, claims.subject)
     if candidate is None:
         # A valid signature for a deleted account. 401, not 404: the token itself
         # is no longer usable.
@@ -103,6 +107,43 @@ async def get_current_candidate(
 
 
 CandidateDep = Annotated[Candidate, Depends(get_current_candidate)]
+
+
+async def get_current_claims(
+    session: SessionDep,
+    settings: SettingsDep,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> TokenClaims:
+    """The verified claims of the access token that authenticated this request.
+
+    Its own dependency rather than a value smuggled onto `request.state` by
+    `get_current_candidate`: FastAPI does not promise an order between two
+    dependencies of the same route, and a value that exists only because something
+    else happened to run first is the kind of coupling that breaks silently.
+
+    Decoding twice costs one HMAC verification. Only `/auth/logout` needs this — the
+    one route whose job is to act on the token itself rather than on the account
+    behind it.
+    """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        claims = decode_token(settings, credentials.credentials, expected_type=TOKEN_TYPE_ACCESS)
+        await token_service.assert_live(session, claims)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    return claims
+
+
+ClaimsDep = Annotated[TokenClaims, Depends(get_current_claims)]
 
 
 def require_role(*allowed: Role) -> Callable[[Candidate], Candidate]:

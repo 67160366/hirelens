@@ -1097,11 +1097,83 @@ producing them.** Check the claims a slice rests on at the moment you build it.
   revoking them needs a refresh-token denylist, which is also the reason there is no
   `/auth/logout`. The limitation is pinned by a characterization test in
   `tests/test_api.py::TestChangePassword` rather than left to be discovered.
-- [ ] Refresh-token denylist, which would unlock a real `/auth/logout` and let a
-  password change revoke outstanding sessions. Considered for M4's scope review on
-  2026-08-12 and deliberately left out — it is a storage decision (where a denylist
-  lives, and how it is swept) rather than an authorization one, and none of M4's four
-  commitments need it. Raise it again if PDPA's delete path makes it cheap.
+- [x] **Refresh-token denylist, and a real `/auth/logout`** (2026-08-16). Deferred four
+  times as "a storage decision — where a denylist lives, and how it is swept", and that
+  framing turned out to be most of the work: `revoked_tokens` (migration `0011`),
+  `services/token_service.py`, and a cron sweep beside the reaper.
+
+  **Two claims checked before building, and one of them was already false in the docs.**
+  `security.py:46` has put a `jti` in every token since M1, with a comment saying it
+  exists "so revocation can be added without reissuing the whole scheme" — so **no token
+  format changed and tokens already in browsers became revocable**. And `README.md`'s
+  route table said a refresh token was "single-use", which it was not: `POST /auth/refresh`
+  issued a fresh pair and left the presented token valid for the rest of its fourteen
+  days, so a stolen one kept working *after* the real user had rotated it. That is the
+  concrete hole this closes, and the README now describes what the code does.
+
+  **A table rather than Redis**, decided on two grounds rather than taste: the suite runs
+  on in-memory SQLite with no server, so a Redis-only denylist would break the no-server
+  default; and `docker-compose.yml` runs Redis with `--save "" --appendonly no`, so a
+  denylist there would **forget every revocation on restart** — un-revoking silently,
+  which is worse than not having one because the operator believes the session is dead.
+
+  Three decisions inside it:
+  **`decode_token` verifies, `token_service.assert_live` checks the denylist, and they
+  are always called together.** Either alone is a hole — verifying without checking
+  accepts a token somebody signed out, checking without verifying trusts a `jti` an
+  attacker chose. `assert_live` raises the same `AuthError`, so a revoked token and a
+  forged one are indistinguishable to whoever presented them and no route learned a
+  second failure mode.
+  **`/auth/logout` will not revoke a refresh token belonging to somebody else**, or the
+  route would be a way to sign out any account whose refresh token you had got hold of.
+  It answers 204 either way, so it is not an oracle for whose token is whose.
+  **The idempotency guard is a SAVEPOINT, not `ON CONFLICT`** — the latter is spelled per
+  dialect, and the SQLite spelling passes the whole suite while failing on the Postgres
+  production runs, which is the shape of SQLite ignoring `ON DELETE` before
+  `PRAGMA foreign_keys=ON`.
+  A fourth guard was **deleted after surviving mutation**: a `if await is_revoked(...)`
+  fast path in front of the savepoint. Either guard alone passed every case, because the
+  tests exercise sequential double-revocation rather than a race — and the savepoint is
+  the one that is also correct under concurrency, so keeping the cheaper one meant
+  keeping the one that only works when nothing else is happening. Same discipline as the
+  separator reset deleted from `geometry.py`.
+
+  Gates: `pytest` **633 → 651** (`tests/test_revocation.py`, 17 cases). Five decisions
+  confirmed load-bearing by mutation (3, 3, 1, 1 and 1 cases fail). Migration `0011`
+  round-trips on **both** dialects — SQLite where CI runs it, and Postgres where
+  `revoked_tokens` lands with its CASCADE FK and both indexes read out of `\d`, with
+  `alembic check` finding no drift.
+
+  **`test_tokens_issued_before_the_change_still_work` failed, which was its job.** It
+  pinned the limitation and its docstring said that when revocation landed it should
+  fail and be replaced with its opposite — the same device as
+  `test_columns_should_read_one_after_the_other`. It now asserts that the credential
+  which proved the old password stops working.
+
+  Verified against the containers and real Postgres, `/openapi.json` listing
+  `/auth/logout` first: logout → the access token **401** and its refresh token **401**;
+  a refresh token used once → 200 and **replayed → 401**; a password change → the old
+  access token **401** while the pair it returns works; `psql` showing all four rows with
+  their reasons as upper-case names; and after `DELETE /auth/me`, **0** revocation rows —
+  the cascade, so an erased account leaves no fragment behind. Both crons ran at startup
+  (`cron:purge_tokens`, `cron:reclaim`).
+
+  **What it still does not do, recorded rather than implied:** a password change cannot
+  sign out the account's *other* devices, because the denylist stores only dead tokens
+  and never outstanding ones, so there is no list to walk. That needs a session registry
+  or a per-account epoch in the payload. `README.md` carries it, and
+  `test_a_session_on_another_device_survives_a_password_change` pins it so it fails the
+  day somebody fixes it.
+
+- [ ] **httpOnly cookies instead of `localStorage`.** The other half of the auth story
+  and now the only one left: the denylist above answers *revocation*, this answers *XSS
+  token theft*. Deferred a fifth time deliberately — it changes every client call, the
+  SSE stream and the PDF fetch, and it needs a decision about whether bearer auth
+  survives alongside it, since every `curl` in `docs/RUNBOOK.md` and every verification
+  run in these documents uses one. Checked while scoping the denylist: CORS already sets
+  `allow_credentials=True`, and on localhost `:3000` → `:8000` is **same-site** for
+  cookies (ports do not affect SameSite), so dev works with `Lax` and only a
+  cross-domain deploy needs `None; Secure`.
 
 ## M6 — reviewed and closed unbuilt (2026-08-16)
 
