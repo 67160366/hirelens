@@ -39,8 +39,11 @@ ENV NODE_ENV=production \
 # the dependencies it actually reaches, so no node_modules is copied here.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-# No `public/` COPY: this project has no static assets directory, and COPY fails
-# on a path that does not exist rather than skipping it.
+# `public/` exists since M5 slice 4 and holds exactly one thing: pdf.js's worker,
+# put there by the `prebuild` hook in the builder stage above. It is served as a
+# same-origin asset rather than resolved by the bundler, so `next start` has to be
+# able to find it here too.
+COPY --from=builder --chown=node:node /app/public ./public
 
 USER node
 EXPOSE 3000

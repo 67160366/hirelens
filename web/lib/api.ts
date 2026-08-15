@@ -106,6 +106,42 @@ export interface ProfileResponse {
   document_text: string | null;
 }
 
+/**
+ * Consecutive characters sharing a line, with a box per character (M5 slice 4).
+ *
+ * `x` holds one `[x0, x1]` pair per character starting at `char_start`, and `top` /
+ * `bottom` are shared because every character in a run has them by definition. Runs
+ * rather than words: Thai has no spaces, so a whitespace "word" can be an unbroken
+ * 31-character run with real quotes inside it.
+ */
+export interface CharRun {
+  char_start: number;
+  top: number;
+  bottom: number;
+  x: [number, number][];
+}
+
+/** One page's characters, and the page box they were measured against. */
+export interface PageGeometry {
+  page_number: number;
+  width: number;
+  height: number;
+  runs: CharRun[];
+}
+
+export interface GeometryReport {
+  /**
+   * False for a resume parsed before migration `0010`, which is not backfilled.
+   * Deliberately distinct from `pages` being empty, which means the parser looked
+   * and could prove nothing — the overlay says which, so a fallback is never silent.
+   */
+  measured: boolean;
+  /** Sparse: a page is absent when its geometry could not be proven consistent. */
+  pages: PageGeometry[];
+  /** Carried here because `ScreeningDetail` has no `Resume` to read it off. */
+  pages_from_ocr: number[];
+}
+
 export type Role = "candidate" | "recruiter" | "admin";
 
 /**
@@ -551,6 +587,22 @@ export const api = {
     request<Resume>(`/resumes/${id}/retry`, { method: "POST" }, token),
 
   getProfile: (id: string, token: string) => request<ProfileResponse>(`/resumes/${id}`, {}, token),
+
+  /**
+   * The original bytes, fetched rather than handed to pdf.js as a URL.
+   *
+   * pdf.js would happily take the URL, and then the bearer token would have to
+   * travel in the query string — into proxy access logs and browser history, in a
+   * project whose rules forbid logging personal data. It is the same trade
+   * `waitForProfile` makes by parsing SSE by hand instead of using `EventSource`,
+   * and it keeps the `ApiError` taxonomy and the 401-refresh path working here too.
+   */
+  getResumeFile: async (id: string, token: string): Promise<ArrayBuffer> =>
+    (await send(`/resumes/${id}/file`, {}, token)).arrayBuffer(),
+
+  /** Where each character of the document sits, for the overlay to draw. */
+  getResumeGeometry: (id: string, token: string) =>
+    request<GeometryReport>(`/resumes/${id}/geometry`, {}, token),
 
   /* ---------------------------------------------------------------------- */
   /* Jobs and their requirements                                             */

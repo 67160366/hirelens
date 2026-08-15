@@ -14,7 +14,11 @@ const config = [
   ...coreWebVitals,
   ...typescript,
   {
-    ignores: [".next/**", "node_modules/**", "next-env.d.ts"],
+    // `public/` holds one generated file — pdf.js's worker, copied out of
+    // node_modules before every build. Linting somebody else's minified build
+    // output produced six errors and 1,570 warnings about code this repo does not
+    // own and cannot change.
+    ignores: [".next/**", "node_modules/**", "next-env.d.ts", "public/**"],
   },
 ];
 

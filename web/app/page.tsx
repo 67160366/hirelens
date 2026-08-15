@@ -4,11 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/AuthPanel";
-import {
-  DocumentPane,
-  EvidenceSelectionProvider,
-  collectEvidence,
-} from "@/components/DocumentPane";
+import { EvidenceSelectionProvider, collectEvidence } from "@/components/DocumentPane";
+import { DocumentViewer } from "@/components/DocumentViewer";
 import { ProfileView } from "@/components/ProfileView";
 import { api, type ConsentTerms, type ProfileResponse, type Resume } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
@@ -200,9 +197,12 @@ export default function Home() {
               <EvidenceSelectionProvider>
                 <div className="grid items-start gap-5 lg:grid-cols-2">
                   <ProfileView resume={result.resume} profile={result.profile} />
-                  <DocumentPane
+                  <DocumentViewer
+                    resumeId={result.resume.id}
+                    filename={result.resume.filename}
                     text={result.document_text}
                     references={result.profile ? collectEvidence(result.profile) : []}
+                    authorized={authorized}
                   />
                 </div>
               </EvidenceSelectionProvider>

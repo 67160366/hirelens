@@ -15,6 +15,9 @@ node_modules/
 .next/
 out/
 *.tsbuildinfo
+# pdf.js's worker, copied out of node_modules by web/scripts/copy-pdf-worker.mjs
+# before every dev run and build. Generated, not authored.
+web/public/pdf.worker.min.mjs
 
 # Environment / secrets
 .env

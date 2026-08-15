@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApplicationActions } from "@/components/ApplicationActions";
 import { ApplicationTimeline } from "@/components/ApplicationTimeline";
 import { AuthPanel } from "@/components/AuthPanel";
-import { DocumentPane, EvidenceSelectionProvider } from "@/components/DocumentPane";
+import { EvidenceSelectionProvider } from "@/components/DocumentPane";
+import { DocumentViewer } from "@/components/DocumentViewer";
 import { DroppedClaims } from "@/components/DroppedClaims";
 import { EvidenceStatsBar } from "@/components/EvidenceStatsBar";
 import { JudgmentView } from "@/components/JudgmentView";
@@ -586,9 +587,16 @@ export default function JobPage() {
                 <DroppedClaims dropped={detail?.judgment?.dropped ?? []} />
               </div>
               {detail?.document_text ? (
-                <DocumentPane
+                <DocumentViewer
+                  resumeId={selected.resume_id}
+                  // `resumeName` answers an id prefix when the filename is not in
+                  // this recruiter's list, and `canRenderOriginal` then declines to
+                  // offer the tab — failing closed, since nothing here can prove the
+                  // document is a PDF.
+                  filename={resumeName(selected.resume_id)}
                   text={detail.document_text}
                   references={collectJudgmentEvidence(selected.requirements)}
+                  authorized={authorized}
                 />
               ) : (
                 <p className="text-sm text-stone-500 dark:text-stone-400">
