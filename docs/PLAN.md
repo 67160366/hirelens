@@ -1068,6 +1068,13 @@ producing them.** Check the claims a slice rests on at the moment you build it.
   Three of the four are false positives (setState after an `await`, which the rule's
   analysis does not follow); the fourth, in `useAuth`, is a real localStorage
   hydration and owes a `useSyncExternalStore` rewrite as its own commit.
+  **Done 2026-08-16.** The session reads through `useSyncExternalStore` from
+  `localStorage` rather than being copied into state, so the suppression is gone (lint
+  proven to speak before the absence was believed), two components on one page can no
+  longer disagree about the token, and a sign-out propagates across tabs via the
+  `storage` event — which is what proved it in a browser, since the old code had no such
+  listener. `Auth` is unchanged, so none of the five consuming pages was touched.
+  17 vitest cases (**120 → 137**), five mutations each confirmed load-bearing.
   **`web/Dockerfile` is unchanged, and that was checked rather than assumed.**
   Turbopack is the default builder in 16 and has a known regression dropping packages
   from `.next/standalone/node_modules` (vercel/next.js#88844) — the exact directory

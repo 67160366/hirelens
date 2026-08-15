@@ -1140,10 +1140,16 @@ lexical retriever already *is* BM25's idea, the embedding half is a paid adapter
 own homework. All four reasons are in `docs/PLAN.md`'s M6 section, along with the two
 honest shapes it could take if it is ever revisited.
 
-**So there is no milestone in progress.** What is named and unstarted: `useAuth` owes its
-`useSyncExternalStore` rewrite, and httpOnly cookies with the refresh-token denylist —
-which `docs/RUNBOOK.md` made more pressing rather than less, since rotating `JWT_SECRET`
-is now a documented operational step and is also the *only* revocation that exists.
+**So there is no milestone in progress.** `useAuth`'s `useSyncExternalStore` rewrite
+landed on 2026-08-16 — the session is an external store now, `web/lib/auth.ts` is the only
+module that touches `localStorage`, the last genuine `set-state-in-effect` suppression is
+gone, and two components on one page can no longer hold different ideas of who is signed
+in. Signing out in one tab now signs out the others, which is what proved the change in a
+browser.
+
+What is named and unstarted: **httpOnly cookies with the refresh-token denylist** — made
+more pressing rather than less by `docs/RUNBOOK.md`, since rotating `JWT_SECRET` is now a
+documented operational step and is also the *only* revocation that exists.
 
 | # | Work | Status |
 |---|---|---|
@@ -1198,8 +1204,8 @@ is now a documented operational step and is also the *only* revocation that exis
    `FlatCompat` is gone and **ESLint stays on 9** because the config's own
    `eslint-plugin-react` has no ESLint 10 release; the new
    `react-hooks/set-state-in-effect` rule is suppressed at four sites with reasons
-   rather than switched off, and `useAuth` still owes a `useSyncExternalStore` rewrite
-   as its own commit; and `web/Dockerfile` needed **no change**, which was verified by
+   rather than switched off — and the one *genuine* suppression is gone as of
+   2026-08-16, when `useAuth` moved onto `useSyncExternalStore` as its own commit; and `web/Dockerfile` needed **no change**, which was verified by
    assembling the standalone layout by hand rather than inferred from a green build —
    Turbopack has a known regression (vercel/next.js#88844) in exactly the directory
    that image copies.

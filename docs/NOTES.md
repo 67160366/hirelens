@@ -90,11 +90,10 @@ never that a browser check always finds something.
   `export`. Harmless today and it is why this session cost zero quota — but the next
   `docker compose up -d` in a fresh shell will flip the dev stack onto the real provider
   and its 20/day cap. Decide which you want `.env` to say.
-- **Two items are now deferred four times**: `useAuth` owes its `useSyncExternalStore`
-  rewrite (it carries the one *genuine* `set-state-in-effect` suppression and every route
-  depends on it), and httpOnly cookies with the refresh-token denylist. The denylist is
-  worth more than it looks now that there is a runbook: rotating `JWT_SECRET` is currently
-  the *only* way to revoke anything, and it logs everybody out at once.
+- **`useAuth` is done** — see below. **httpOnly cookies with the refresh-token denylist**
+  is the one named item left, and it is worth more than it looks now that there is a
+  runbook: rotating `JWT_SECRET` is the *only* way to revoke anything, and it logs
+  everybody out at once.
 - **Four commits sit unpushed.** `git rev-list --count origin/main..main` says so — derive
   it, do not read it here.
 - Two small open items, both one line each, both skipped because nothing was in the file:
@@ -132,6 +131,42 @@ honestly as scoped" are different claims, and only one of them is true here.
 `README.md` was corrected in the same commit: its metrics table listed "Cost and latency
 per document" as a shipped free metric, and cost is structurally `$0.00` — the same stale
 claim slice 2 was respecified over, still sitting one file away.
+
+### Then `useAuth`, deferred four times, in one commit
+
+The session is an external store now — `useSyncExternalStore` over `localStorage` instead
+of reading it in an effect and calling `setToken`. The last genuine
+`react-hooks/set-state-in-effect` suppression is gone, and **lint was proven to speak
+before the absence was believed** (a deliberate violation injected, warning observed, file
+restored). `Auth` is unchanged, so none of the five consuming pages was touched.
+
+Two things fell out that were not the reason for doing it, and the second is the better
+one:
+
+- **Two components on one page now agree about who is signed in.** Each `useAuth()` call
+  used to own a private copy of the token. Only `AuthPanel` and its page call it today,
+  which is why nobody had met the bug — `DocumentViewer` takes `authorized` as a *prop*
+  precisely to avoid it.
+- **Tabs stay in step.** The store listens for `storage`, which fires only in the tabs
+  that did *not* write. A revoked session used to stay live in every other tab.
+
+That second one is also what proved the container was serving the new bundle: this change
+adds no route, so `/openapi.json` proves nothing, and cross-tab sign-out is impossible
+with the old code. Watched: tab B signs out, tab A falls back to the sign-in form with its
+navigation count still 1 — never reloaded.
+
+**17 vitest cases (120 → 137), five mutations each confirmed load-bearing** — dropping the
+`emit` from `writeSession` fails 2, from `clearSession` 1, removing the storage listener 2,
+keeping a dead token after a failed renewal 1, leaking the listener on unsubscribe 1.
+Every one of those fails *silently* in production, which is why they were worth writing.
+
+**`vitest.config.ts` is new, and the reason is the interesting part.** Every `lib/` module
+imports from `@/lib/api`, and until now every one of those was `import type` — erased
+before the bundler ever resolves the alias. `auth.ts` imports values, so the suite failed
+with *"Cannot find package '@/lib/api'"*. Pointing `auth.ts` at a relative path would have
+made the error go away and left the next value-import through `@/` to hit the same wall.
+The suite is still DOM-free: `localStorage` and `window` are two hand-written stubs with
+four methods between them.
 
 ---
 

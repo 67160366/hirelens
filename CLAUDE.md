@@ -12,10 +12,14 @@ treating it as a backlog item**; if it is revisited, the two honest shapes are n
 there. The authoritative per-item status is the table in `docs/PLAN.md`. Orientation for a
 new session: this file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
 
-**There is no milestone in progress.** The named next items are `useAuth` owing a
-`useSyncExternalStore` rewrite, and httpOnly cookies with the refresh-token denylist —
-which `docs/RUNBOOK.md` made more pressing, since rotating `JWT_SECRET` is currently the
-only way to revoke anything and it signs everybody out at once.
+**There is no milestone in progress.** `useAuth` was rewritten onto
+`useSyncExternalStore` on 2026-08-16, so **the session is an external store and no
+component copies it into state** — `web/lib/auth.ts` is the only thing that touches
+`localStorage`, and two components on one page can no longer disagree about who is
+signed in. The one named item left is **httpOnly cookies with the refresh-token
+denylist**, which `docs/RUNBOOK.md` made more pressing rather than less: rotating
+`JWT_SECRET` is currently the only way to revoke anything, and it signs everybody out at
+once.
 
 M5's organizing idea, the same shape as the two below: **every number on an
 observability screen is a query over rows the system already wrote, and can name the
