@@ -82,6 +82,31 @@ export function boxesForPage(page: PageGeometry, reference: EvidenceRef): Box[] 
   return boxes;
 }
 
+/**
+ * One entry per distinct span, keeping the first claim that cited it.
+ *
+ * Two claims regularly rest on the same quote — in `resume_th.pdf` the headline and
+ * the seniority both cite characters 11–72 — and drawing a translucent box twice at
+ * the same coordinates renders it **darker than its neighbours**, which reads as
+ * "this line is more strongly evidenced" and is not a claim anything supports. Found
+ * by driving the overlay in a browser: the arithmetic was right and the picture was
+ * not, which no unit test was looking at.
+ *
+ * `DocumentPane` solves the same problem for the text view in `buildSegments`, where
+ * it also drops *overlapping* spans because nested `<mark>` elements are unreadable.
+ * Boxes have no such trouble, so only exact duplicates are collapsed here: two
+ * different ranges that happen to overlap really are two regions.
+ */
+export function distinctSpans(references: EvidenceRef[]): EvidenceRef[] {
+  const seen = new Set<string>();
+  return references.filter((reference) => {
+    const key = `${reference.char_start}-${reference.char_end}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** The same, across every page that has geometry. */
 export function boxesFor(pages: PageGeometry[], references: EvidenceRef[]): CitationBox[] {
   const out: CitationBox[] = [];

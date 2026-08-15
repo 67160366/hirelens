@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { EvidenceRef, GeometryReport } from "@/lib/api";
 import {
   boxesForPage,
   coverageNote,
   describeGap,
+  distinctSpans,
   gapForPage,
   pageOf,
   type OverlayGap,
@@ -57,7 +58,7 @@ async function loadDocument(data: ArrayBuffer) {
 export function PdfOverlay({
   file,
   geometry,
-  references,
+  references: cited,
 }: {
   file: ArrayBuffer;
   geometry: GeometryReport;
@@ -65,6 +66,11 @@ export function PdfOverlay({
 }) {
   const selection = useEvidenceSelection();
   const activeKey = selection?.activeKey ?? null;
+
+  // Two claims resting on the same quote must not paint the same box twice — see
+  // `distinctSpans`. Memoized because it feeds the effect that scrolls to the active
+  // citation, and a fresh array every render would re-run it on every keystroke.
+  const references = useMemo(() => distinctSpans(cited), [cited]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvases = useRef(new Map<number, HTMLCanvasElement>());

@@ -7,6 +7,7 @@ import {
   canRenderOriginal,
   coverageNote,
   describeGap,
+  distinctSpans,
   gapForPage,
 } from "./overlay";
 
@@ -94,6 +95,27 @@ describe("boxesForPage", () => {
     const boxes = boxesFor([PAGE, second], [ref(102, 104), ref(201, 203)]);
 
     expect(boxes.map((entry) => entry.page)).toEqual([1, 2]);
+  });
+});
+
+describe("distinctSpans", () => {
+  it("paints a span once however many claims rest on it", () => {
+    // Found in a browser, not here: in `resume_th.pdf` the headline and the seniority
+    // both cite characters 11–72, and two translucent boxes at the same coordinates
+    // render darker than their neighbours — a picture saying that line is more
+    // strongly evidenced, which nothing supports.
+    const spans = distinctSpans([ref(11, 72), ref(11, 72), ref(0, 10)]);
+
+    expect(spans.map((span) => [span.char_start, span.char_end])).toEqual([
+      [11, 72],
+      [0, 10],
+    ]);
+  });
+
+  it("keeps two ranges that merely overlap", () => {
+    // They are two regions. Only the text pane has to drop one, because nested
+    // `<mark>` elements are unreadable; boxes do not have that problem.
+    expect(distinctSpans([ref(10, 40), ref(20, 30)])).toHaveLength(2);
   });
 });
 
