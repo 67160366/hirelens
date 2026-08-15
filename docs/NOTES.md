@@ -6,7 +6,7 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-15 (latest) — slices 1 and 2 close, the ports close, four leads become findings
+## 2026-08-15 (latest) — slices 1, 2 and 3 close, the ports close, four leads become findings
 
 **M5 slice 1 is done.** Both of last session's blockers were gone before the first
 command: `C:` had **61 GB** free (it was 114 MB), and the Chrome extension connected.
@@ -14,9 +14,9 @@ The stack was already sitting on `LLM_PROVIDER=fake` + `FAKE_MODE=hallucinating`
 the images had been built at 01:40 — **after** the 01:35 commit — so the containers
 served the slice-1 code once they were finally recreated. **Zero Gemini quota spent.**
 
-Six commits in all — three for slice 1 and the ports, three more for slice 2 (below).
-Gates run rather than quoted, at the end of the session: `pytest -q` **556 passed / 38
-skipped**, vitest **98**, `ruff check` / `ruff format --check` / `mypy app` clean (54
+Eight commits in all — three for slice 1 and the ports, three for slice 2, two for
+slice 3 (below). Gates run rather than quoted, at the end of the session: `pytest -q`
+**614 passed / 38 skipped**, vitest **98**, `ruff check` / `ruff format --check` / `mypy app` clean (55
 files), `npm run typecheck` / `lint` / `build` clean. Plus the two opt-in suites against
 real servers: `test_postgres.py` **5 passed**, `test_minio.py` **9 passed**.
 
@@ -28,6 +28,8 @@ real servers: `test_postgres.py` **5 passed**, `test_minio.py` **9 passed**.
 | 4 | Record the push and its CI run, now that both exist | The repository-state paragraph, plus the opt-in caveat |
 | 5 | Serve the usage and quality figures from rows already written | Slice 2's server half: `schemas/metrics.py`, `services/metrics_service.py`, `GET /metrics/usage`, `tests/test_metrics.py` |
 | 6 | Put the usage and quality figures on a screen | Slice 2's other half: `web/lib/metrics.ts` + its tests, `web/app/metrics/` |
+| 7 | Measure where each character sits, in the pass that measures the offsets | Slice 3: `pipeline/geometry.py`, `parse.py`/`layout.py` rebasing, migration `0010`, `tests/test_geometry.py` |
+| 8 | Close M5 slice 3, and record the two things its plan got wrong | `PLAN.md` slices 3 and 4, `HANDOFF.md` §1 and §9 |
 
 ### What watching slice 1 proved
 
@@ -150,6 +152,49 @@ own authenticated `fetch` instead. The authoring UI itself had been driven by ha
 hour earlier in slice 1, and the screen this slice is about was driven entirely in the
 browser.
 
+### Slice 3 followed, and the plan was wrong about it twice
+
+You decided **a recruiter keeps read access after a terminal state** — which unblocks
+slice 4 — and said to go straight to slice 3. It is done: `app/pipeline/geometry.py`,
+rebased in `parse.py`, stored by migration `0010`. `pytest` **556 -> 614**.
+
+**`PLAN.md` was wrong about this slice in two ways, and both only showed up on contact
+with the code** — the same pattern the 2026-08-14 audit found, one layer deeper:
+
+- It said *per-word* boxes. Wrong for Thai, which has no spaces: a whitespace "word" in
+  `resume_th.pdf` is the unbroken 31-character run `ดูแลระบบกระทบยอดการชำระเงินด้วย`,
+  and the real quote `ชำระเงิน` sits **inside** it. Word boxes would have highlighted
+  all 31 characters for a quote covering 8. This is the identical measurement that made
+  `retrieval.py` tokenize Thai by n-gram — the repo had already paid for this lesson.
+- It said the geometry is written *in `_assemble`*. Impossible: `_assemble` is declared
+  over `list[str]`, never receives a `Page`, and is the DOCX path besides.
+
+**The mechanism is the interesting part.** Nothing searches for text. pdfplumber's
+textmap emits one `(character, source)` pair per character of the extracted string, so
+a char range and its box are produced *together* and cannot disagree. The alternative
+was measured wrong three ways — NULs, repeated words, and two-column reordering.
+
+**A page whose textmap does not reproduce its text exactly gets no geometry.** That is a
+rendered state, not a failure, and it is the same instinct as `detect_reading_order`
+answering `None` and the OCR confidence gate refusing a page: a wrong box is a visual
+claim nobody can check.
+
+**One mutation survived, so a line was deleted.** Resetting the open run on a separator
+passed all 58 tests when mutated — skipping the separator already breaks contiguity, so
+the reset could not fail. It is gone, with the reasoning in a comment.
+
+**The load-bearing property was measured, not asserted:** every fixture parsed with
+`HEAD`'s parser and with this one, and `document_text`, page spans, `pages_without_text`
+and `pages_from_ocr` came back **byte-identical across all 13 documents**. Then watched
+end to end — an upload through the browser extracted to the same 10/11 and 9.1% as
+before, and read back out of Postgres the geometry covers **347 of 347** inked
+characters, with `ชำระเงิน` resolving to 8 boxes for 8 characters.
+
+**The session limit hit during this walkthrough** and the model-backed browser tool
+(`find`) began returning 429. Nothing was reported off it: `read_page`,
+`javascript_tool` and `file_upload` need no model call and carried the rest. Worth
+knowing which browser tools cost one before the next limit.
+
 ### Advice for the owner
 - **The check nobody scheduled paid again, twice.** Last session it was the audit; this
   session it was noticing the opt-in suite's number had never been re-read, and noticing
@@ -159,12 +204,13 @@ browser.
   with `git rev-list --count` rather than believed from the previous note, which said 3.
   CI run `31825047640` is green on both jobs with **0 annotations**, checked through the
   API rather than read off the tick. Slice 2's three commits followed.
-- **Slice 3 is the one to scope with care next.** It is the largest remaining piece and
-  the one whose recorded shape was most wrong — `PLAN.md` now carries the real change
-  set, which touches `parse.py`, `layout.py` and a migration. **Slice 4 is still gated
-  on your decision** about whether a withdrawn or rejected application should keep
-  granting a recruiter read access, and that decision gets more expensive once the file
-  route serves raw PDF bytes.
+- **Slice 3 is done, and it was the largest remaining piece.** Its recorded shape was
+  wrong twice over, and both errors were only visible on contact with the code — which
+  is now four sessions running that a plan written about unbuilt work decayed before it
+  was built. Keep checking the claims a slice rests on at the moment you build it.
+- **Only slices 4 and 5 remain.** Slice 4 is unblocked by your decision and rests
+  entirely on slice 3's geometry; slice 5 is the production compose, whose security half
+  already shipped. Neither is gated on anything now.
 
 ---
 

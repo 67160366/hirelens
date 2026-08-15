@@ -784,8 +784,54 @@ overlay waits for it.
   **The browser found one defect no gate could:** the screen read *"1 claims dropped"*,
   because the sentence was built inline in JSX. It is `droppedNote()` in `lib/` now,
   with three cases — the same lesson slice 1 recorded, in a new costume.
-- [ ] 3. **Word geometry, measured where the offsets are measured.** The slice the
-  correction above created. Per-word boxes keyed to char ranges.
+- [x] 3. **Character geometry, measured where the offsets are measured** (2026-08-15).
+  The slice the correction above created. `app/pipeline/geometry.py` measures it,
+  `parse.py` rebases it into document space, migration `0010` stores it on
+  `resumes.page_geometry` — nullable and **not backfilled**, exactly like `page_spans`
+  in `0005`.
+
+  **Two things this bullet used to say were wrong, and both were corrected against
+  measurements rather than argument.** It said *per-word* boxes: wrong for the language
+  this project cares most about, because Thai has no spaces, so a whitespace-delimited
+  "word" in `resume_th.pdf` is the unbroken 31-character run
+  `ดูแลระบบกระทบยอดการชำระเงินด้วย` and real quotes sit inside it — the same
+  measurement that made `retrieval.py` tokenize Thai by character n-gram. Characters
+  are grouped into **runs** sharing a line instead, which keeps Latin text one run per
+  word for free at ~20 bytes per character. And it said the geometry is written *in
+  `_assemble`*: impossible, since `_assemble` is declared over `list[str]`, never
+  receives a `Page`, and is the DOCX path too. It is measured in `_text_of`, where the
+  page still exists, and `_assemble` only rebases it.
+
+  **Nothing searches for the text.** pdfplumber's textmap emits one `(character,
+  source)` pair per character of the extracted string, so a char range and a box are
+  produced together. `find()` was measured wrong three ways: 8 of the 11 words in
+  `resume_broken_tounicode.pdf` carry a NUL so it locates 3; it returns the *first*
+  occurrence and 105 of 120 words in `resume_multipage.pdf` repeat; and a two-column
+  page is assembled in reading order, giving 11 offset inversions.
+
+  **A page whose textmap does not reproduce its text exactly gets no geometry**, and
+  that is a rendered state rather than a failure — the same shape as
+  `detect_reading_order` answering `None` and `OCR_MIN_CONFIDENCE` refusing a page it
+  read badly. OCR'd pages and `.docx` have none for the same reason. The NUL strip
+  **remaps** and splits a run where a removal falls inside it; NFC is refused instead,
+  because it can *combine* characters so no index map exists — and it is measurably a
+  no-op on every PDF fixture today.
+
+  Gates: `pytest` **556 → 614** (`tests/test_geometry.py`, 58 cases). Four decisions
+  confirmed load-bearing by mutation (1, 3, 5 and 1 cases). A fifth — resetting the
+  open run on a separator — **survived every mutation and was deleted**: skipping a
+  separator already breaks contiguity, and a line the tests prove cannot matter is not
+  a careful line. Migration `0010` round-trips on Postgres (real `jsonb`, `alembic
+  check` clean) and on SQLite.
+
+  **The property, measured against HEAD rather than asserted:** `document_text`, page
+  spans, `pages_without_text` and `pages_from_ocr` are **byte-identical across all 13
+  fixtures**. Watched end to end afterwards: a resume uploaded through the browser
+  extracted to the same 10/11 verified and 9.1% unverifiable as before, and reading it
+  back out of Postgres through `from_stored` the geometry covers **347 of 347** inked
+  characters exactly. The payoff, in the case per-word boxes would have broken: the
+  Thai quote `ชำระเงิน` sits at character 180 *inside* that unbroken run and resolves
+  to **8 boxes for 8 characters**, x 167.0 → 195.2 on one line.
 
   **Corrected 2026-08-15 — this bullet used to say "written in `_assemble`, in the same
   pass that already measures page spans", and that is impossible.** `_assemble` is
@@ -820,8 +866,21 @@ overlay waits for it.
   `document_text` and page spans are byte-identical before and after** — the M2 #6
   discipline, which is what keeps every citation already shown to a user pointing where
   it did.
-- [ ] 4. **The pdf.js overlay**, on slice 3's geometry. `GET /resumes/{id}/file` behind
-  `_owned_resume` (404 not 403, `no-store`, no filename logged) plus a pdf.js canvas.
+- [ ] 4. **The pdf.js overlay**, on slice 3's geometry — **now unblocked**, since slice
+  3 landed and the ownership question below is settled.
+
+  **Decided with the owner on 2026-08-15: a recruiter keeps read access to a resume
+  after the application reaches a terminal state.** The gap was real and confirmed —
+  `_owned_resume`'s widening (`resumes.py:299-306`) has two conjuncts and neither
+  touches `Application.state`, so `WITHDRAWN` and `REJECTED` grant the same access as
+  a live application — but it is the intended behaviour, not a defect: a recruiter who
+  rejected somebody may still have to account for that decision, and the audit log
+  exists precisely so those decisions stay reviewable. So slice 4 serves raw bytes on
+  the same rule, and nothing about the predicate changes. Worth keeping written down
+  rather than rediscovering it as a surprise the next time somebody reads that query.
+
+  `GET /resumes/{id}/file` behind `_owned_resume` (404 not 403, `no-store`, no filename
+  logged) plus a pdf.js canvas.
   A page from OCR, or a resume written before slice 3's migration, falls back to
   `DocumentPane` **with the reason shown** — a silent fallback is indistinguishable
   from a bug, which is M4 slice 5's disabled-button lesson in a new place.
