@@ -8,7 +8,9 @@ day when all five slices of **M4** landed, and again on 2026-08-13 when slice 5 
 finally watched in a browser, turned out not to work, and had all seven of its defects
 fixed. Updated again on 2026-08-15, when **M5 slice 1 was watched and closed**, the data
 services came off every network interface, and four leads the previous session could not
-challenge were confirmed. Read this first when picking
+challenge were confirmed. Rewritten 2026-08-16 when slice 5 closed **M5**: the stack runs
+in production mode, and the compose mechanism the slice was scoped with turned out not to
+work. Read this first when picking
 the project back up — then
 `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
@@ -85,7 +87,16 @@ milestone visible has been cheap because the slices before it stored the right t
 extension was not connected. Everything else is verified below, and that is not the
 same thing — it is the first item in §9.
 
-**M5 is under way: slices 1, 2, 3 and 4 of 5 are done** (all 2026-08-15). Slice 4 is the
+**M5 is complete: all five slices are done** (1–4 on 2026-08-15, slice 5 on 2026-08-16).
+Slice 5 is the production compose and the runbook, and the thing worth carrying out of it
+is that **the compose mechanism was measured before anything was built on it** — the
+`env_file:` the slice was scoped with turns out to *lose* to a base file's `environment:`
+key, so it would have left every secret at its dev default and said nothing. `--env-file`
+works and is what shipped. Rehearsed cold in a separate compose project: ten migrations
+against an empty database, the placeholder-secret guard watched refusing, the three data
+services publishing nothing, and the whole journey in a browser for zero Gemini quota.
+Slice 4 is the
+the
 pdf.js overlay, and it is what cashes in slice 3: a citation now highlights on the
 original PDF as well as in the extracted text, from the character boxes the parser
 measured. Two read routes and no migration — geometry is its own route rather than a
@@ -94,8 +105,7 @@ open the view that needs it. **The client never searches for text**; it selects 
 runs a character range overlaps, and a page whose stored box disagrees with what pdf.js
 reports gets no boxes and a sentence saying why. Watching it found one defect no gate
 could: two claims resting on the same quote painted that span twice, and stacked
-translucent boxes read as "more strongly evidenced". Only slice 5 — production compose
-and a runbook — is left. Slice 2 is the
+translucent boxes read as "more strongly evidenced". Slice 2 is the
 usage and quality dashboard, and it was **respecified with the owner before it was
 built** — it was scoped as a *cost* dashboard and there is no cost, because every model
 maps to `FREE_TIER`, so all 22 logged calls stored `cost_usd = 0.0` and not one is
@@ -130,6 +140,13 @@ slices 2, 3 and 5.
 
 | Check | Result |
 |---|---|
+| **M5 slice 5, rehearsed cold** | `-p hirelens-prod` with its own volumes and ports 8100/3100, so the dev stack ran untouched throughout (23 accounts / 21 resumes intact afterwards, confirmed in `psql`). **All ten migrations ran against an empty database** — the cold-start path nothing had exercised since `0001` — and `alembic current` ends `d0e1f2a3b4c5 (head)`. Then the journey in a browser at :3100 on `LLM_PROVIDER=fake`, **zero Gemini quota**: consent unticked on load with the file picker disabled until ticked, `resume_th.pdf` → **10/10 verified, 0.0% unverifiable, 1 model call**, Thai citations at exact char ranges, and the **arq** worker taking the job in its own log (2026-08-16) |
+| **The placeholder-secret guard, watched refusing** | `JWT_SECRET` left empty on purpose: `migrate` exits 1 with *"JWT_SECRET is still the placeholder while APP_ENV=prod"*, and `api`, `worker` and `web` **never start**, because they gate on `service_completed_successfully`. It fires at the *first* service because `migrations/env.py` imports `get_settings()`. A guard nobody has watched refuse is not a guard (2026-08-16) |
+| **The data services publish nothing, proven against a positive control** | `docker port` is empty for the prod project's `postgres`, `redis` and `minio`. Believed only after probing dev's Redis on `127.0.0.1:6379` and getting `+PONG` — the *same reply that was the 2026-08-14 security finding* — so the probe was proven to work before its silence meant anything. §10's rule applied rather than quoted (2026-08-16) |
+| **Erasure on the prod stack** | `DELETE /auth/me` → `stored_files_removed: 1`, the token then **401**, and Postgres reports 0 candidates, 0 resumes, 0 profiles, **0 `llm_call_logs`** with **0 files** left in the uploads volume — the cascade, not just the row (2026-08-16) |
+| **The build-arg trap, exercised rather than quoted** | The rehearsal ran on :8100, so `NEXT_PUBLIC_API_BASE` genuinely differed and the web image rebuilt: its served chunks carry `localhost:8100` and nothing else. `CORS_ORIGINS` had to match or every request would have failed preflight — the consent route answered 200 from the page, which is what proved it (2026-08-16) |
+| Prod and dev images stay separate | `hirelens-api:prod`/`hirelens-web:prod` vs `:local`, distinct ids in `docker images`. Without the tag override a rehearsal build overwrites `:local` and the next dev `up` silently adopts a bundle built against the rehearsal's API URL (2026-08-16) |
+| Backup carries its schema version | `pg_dump` through the container: 662 lines, 10 tables, and `alembic_version` preserved at `d0e1f2a3b4c5` — checked, because a dump that cannot say what schema it is cannot be restored with confidence (2026-08-16) |
 | `pytest -q` | **633** passed, 38 skipped as of 2026-08-15 (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `npm test` | **120** in `web/` as of 2026-08-15 (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
@@ -1107,9 +1124,16 @@ found a claim in these very docs that was false (see #8 below).
 | 4 | PDPA: consent, export, delete | **done** — `services/privacy_service.py`, `GET /auth/me/export`, `DELETE /auth/me`, `GET /resumes/consent`, migration `0009`, `PRAGMA foreign_keys=ON`; `tests/test_pdpa.py` |
 | 5 | A thin UI for the journey | **done** — `web/app/applications/`, the applicants panel on `/jobs/[id]`, `lib/applications.ts`, `components/{ApplicationTimeline,ApplicationActions}.tsx`; **no API change and no migration**; `lib/applications.test.ts` |
 
-**M5 is under way.** Its scope was reviewed with the owner on 2026-08-13 and amended on
-2026-08-15, when four of its planning claims were confirmed false or outdated against the
-code. `docs/PLAN.md` carries the corrected shapes — read it, not the original bullets.
+**M5 is complete** (2026-08-16). Its scope was reviewed with the owner on 2026-08-13 and
+amended on 2026-08-15, when four of its planning claims were confirmed false or outdated
+against the code. `docs/PLAN.md` carries the corrected shapes — read it, not the original
+bullets. **Every one of the five slices had something false in its written plan by the
+time it was built**, which is the milestone's most reusable lesson and is recorded at the
+end of PLAN.md's M5 section.
+
+**M6 is the next question, and it is still a draft** reconstructed from the README. Review
+it with the owner before building to it, the way M3's, M4's and M5's were — the practice
+is 3 for 3 at finding claims that were false about unshipped work.
 
 | # | Work | Status |
 |---|---|---|
@@ -1117,7 +1141,7 @@ code. `docs/PLAN.md` carries the corrected shapes — read it, not the original 
 | 2 | The usage and quality dashboard | **done** (2026-08-15) — `schemas/metrics.py`, `services/metrics_service.py`, `GET /metrics/usage`, `web/lib/metrics.ts` + `web/app/metrics/`; **no migration**; `tests/test_metrics.py`. Respecified first: it was a *cost* dashboard and there is no cost, since every model maps to `FREE_TIER`. `ADMIN` sees every row, read in the WHERE clause rather than gated on the route |
 | 3 | Character geometry at parse time | **done** (2026-08-15) — `pipeline/geometry.py`, rebased in `parse.py`, stored by migration `0010` on `resumes.page_geometry`; `tests/test_geometry.py`. Scoped as *per-word* and corrected to **per-character runs**: Thai has no spaces, so a whitespace "word" is an unbroken 31-character run with real quotes inside it |
 | 4 | The pdf.js overlay | **done** (2026-08-15) — `GET /resumes/{id}/file` + `GET /resumes/{id}/geometry` on `_owned_resume` unchanged, `web/lib/overlay.ts`, `components/{PdfOverlay,DocumentViewer}.tsx`, `pdfjs-dist`; **no migration and no change to any existing payload**; `tests/test_resume_file.py` + `lib/overlay.test.ts`. Watched in a browser inside the slice, which found the one defect the gates could not |
-| 5 | Production compose and a runbook | **not started; its security half shipped early** (2026-08-15) — the data services are `127.0.0.1:`-bound now. `profiles:` cannot do the rest; `docker-compose.prod.yml` with `!reset`/`!override` can |
+| 5 | Production compose and a runbook | **done** (2026-08-16) — `docker-compose.prod.yml` as a committed overlay, `.env.prod.example` beside a gitignored `.env.prod`, `docs/RUNBOOK.md`. **No change to `api/` or `web/` at all**, asserted by re-running every gate. Rehearsed cold in a separate compose project, so the dev stack ran untouched throughout |
 
 **Four things to know before starting M5:**
 

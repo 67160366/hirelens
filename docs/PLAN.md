@@ -20,7 +20,7 @@ caught a load-bearing claim about the codebase that was false.
 | M2 | Async worker + queue, OCR, DOCX, two-column fix, MinIO, PDF viewer overlay | ✅ done (2026-08-08) |
 | M3 | Job requirements, hybrid retrieval, requirement-level judging, ranking | ✅ done (2026-08-12) |
 | M4 | Visibility timeout, RBAC, the application state machine, PDPA | ✅ done (2026-08-12) |
-| M5 | Dropped-claims view, cost dashboard, word geometry + pdf.js overlay, production compose | 4 of 5 slices done |
+| M5 | Dropped-claims view, cost dashboard, word geometry + pdf.js overlay, production compose | ✅ done (2026-08-16) |
 | M6 | Optional: ranking evaluation vs BM25/embedding baseline — **one-week timebox** | draft |
 
 ---
@@ -929,9 +929,65 @@ overlay waits for it.
   And one instrument lied, the ninth: reading the canvas back with `getImageData`
   reported it blank on a page that was plainly rendered — pdf.js v6 paints through an
   ImageBitmap. **The screenshot was the ground truth, not the pixel probe.**
-- [ ] 5. **Production compose and a runbook.** Secrets out of `.env`, restart policies,
-  and Postgres/Redis not published to the host. Plus the runbook: how to bring it up,
-  how to run migrations, what to check, how to erase an account on request.
+- [x] 5. **Production compose and a runbook** (2026-08-16). `docker-compose.prod.yml` as a
+  committed overlay, `.env.prod.example` beside a gitignored `.env.prod`, and
+  `docs/RUNBOOK.md`. **No API change, no migration, and no change to `api/` or `web/` at
+  all** — the gates were re-run to assert exactly that, and 633/38, 120 vitest, ruff,
+  mypy, typecheck, lint and build all came back unmoved.
+
+  **The mechanism was measured before anything was built on it**, which is the habit four
+  consecutive sessions have paid for. On this machine's Compose **v5.3.1**:
+  a service-level **`env_file:` loses** to a base file's `environment:` key — only keys
+  *absent* from the base come through, so the mechanism this slice was scoped with would
+  have left every secret at its dev default and said nothing;
+  **`--env-file` / `COMPOSE_ENV_FILES` works**, because it feeds compose's own
+  `${VAR:-default}` substitution, which is how `docker-compose.yml` already writes
+  everything it does not hard-code, and that is what shipped;
+  **`ports: !reset []` and `!override [...]` both work**, while an untagged `ports:` merge
+  **appends** and publishes the dev port alongside the prod one.
+  `profiles:` had already been rejected for worse: with the profile inactive the project
+  fails to load at all, since every infra service is a `depends_on` target.
+
+  Two things the build found that the plan did not name. **`migrate` runs under
+  `APP_ENV=prod`** because `migrations/env.py` imports `get_settings()`, so a forgotten
+  `JWT_SECRET` fails at the *first* service rather than the third — watched doing it, with
+  `api`, `worker` and `web` never starting because they gate on
+  `service_completed_successfully`. And **every building service needs its own image
+  tag**: the base file names `hirelens-api:local` / `hirelens-web:local`, so a prod build
+  in a second project overwrites them and the next dev `up` silently adopts a web bundle
+  built against the prod API URL. `:prod` tags now, verified distinct in `docker images`.
+
+  **`.env.prod` needed its own `.gitignore` line.** `.env.*.local` does not match it, so
+  a file of production credentials was committable — found by checking rather than by
+  assuming the existing patterns covered it.
+
+  **Rehearsed cold, in a separate compose project** (`-p hirelens-prod`, its own volumes,
+  ports 8100/3100), so the dev stack kept running throughout and its 23 accounts and 21
+  resumes were untouched afterwards. What that proved, and the dev stack could not:
+  all **ten migrations ran against an empty database** (`alembic current` → `d0e1f2a3b4c5
+  (head)`), the placeholder-secret guard genuinely **refuses**, and the three data services
+  publish **nothing** to the host — `docker port` empty on all three, believed only after
+  a positive control (dev's Redis answering `+PONG`, the same reply that *was* the
+  2026-08-14 security finding).
+  Then the whole journey in a browser at :3100 on `LLM_PROVIDER=fake`, **zero Gemini
+  quota**: register, consent unticked on load with the file picker disabled until ticked,
+  `resume_th.pdf` → **10/10 claims verified, 0.0% unverifiable, 1 model call**, Thai
+  citations resolving to exact char ranges, the arq worker taking the job in its log, and
+  the console clean on an instrument proven to speak first. Erasure then reported
+  `stored_files_removed: 1`, the token answered **401**, and Postgres reported 0
+  candidates, 0 resumes, 0 profiles, 0 `llm_call_logs` with 0 files left in the volume —
+  the cascade, not just the row.
+  `NEXT_PUBLIC_API_BASE` being a build arg was exercised rather than quoted: the rehearsal
+  ran on a different port, so the web image genuinely rebuilt and its bundle carries
+  `localhost:8100`.
+
+  The runbook is `docs/RUNBOOK.md`, and every command in it was run — including the two
+  failure messages, which were produced deliberately rather than transcribed. Three things
+  it records that are easy to get wrong later: rotating `POSTGRES_PASSWORD` in `.env.prod`
+  does **not** change an existing volume's password, a `pg_dump` is not the whole system
+  because the documents live in a volume or a bucket, and rotating `JWT_SECRET` logs
+  everybody out at once — the only revocation that exists while there is no refresh-token
+  denylist.
 
   **The security half shipped early, on 2026-08-15, as its own commit** — it was the
   state of the dev machine rather than a question about a future deploy. Redis was
@@ -960,6 +1016,28 @@ overlay waits for it.
 
 Each slice is driven in a browser *inside* the slice, not after it. That rule cost
 seven defects to learn and the `next@16` check confirmed it is cheap to keep.
+
+**M5 is complete** (2026-08-16). The guardrail's own evidence is on a screen, every number
+on the observability dashboard is a query over rows the system already wrote, each
+character of a resume knows where it sits on its page, a citation is boxed on the original
+PDF rather than only in the extracted text, and the stack runs in production mode with a
+runbook written from commands that were actually run. **All five slices were driven in a
+browser inside the slice**, and three of the five turned up a defect that every gate had
+passed — two claims painting one span twice, a sentence reading "1 claims dropped", and
+before them the seven from M4 slice 5 that bought the rule.
+
+The pattern worth carrying into M6: **four of the five slices needed no migration**, and
+the one that did (`0010`, character geometry) added a nullable column that is deliberately
+not backfilled — the same shape as `page_spans` in `0005`. The milestone's organizing
+idea held all the way through: an observability screen *reports*, it never re-asks, and
+not one figure on `/metrics` spends a model call.
+
+And the habit that paid four sessions running paid a fifth time. Every slice in this
+milestone had something in its written plan that was false by the time it was built —
+slice 1's "never shown anyone", slice 2's cost that did not exist, slice 3's per-word
+boxes and its impossible `_assemble`, slice 5's `env_file:` and its `profiles:`. **A claim
+about code nobody has built yet decays silently, and a scope review is not immune to
+producing them.** Check the claims a slice rests on at the moment you build it.
 
 - [x] **Containerize API + web; compose runs the whole stack** (2026-08-08 — pulled
   forward from M5 because a course deliverable required Docker Compose to manage the

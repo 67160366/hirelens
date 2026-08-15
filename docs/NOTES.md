@@ -6,7 +6,107 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-15 (latest) — the overlay lands, and M5 has one slice left
+## 2026-08-16 (latest) — M5 closes, and the mechanism it was scoped with did not work
+
+**M5 is complete.** Slice 5 — production compose and a runbook — is done, and with it the
+milestone. Four commits, none pushed (your call, as always).
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Run the stack in production mode, on a mechanism that was measured first | `docker-compose.prod.yml`, `.env.prod.example`, the `.gitignore` line |
+| 2 | Write the runbook from commands that were actually run | `docs/RUNBOOK.md` |
+| 3 | Commit the Thai walkthrough, brought up to date with M5 closing | `docs/WALKTHROUGH-th.md`, which had been sitting untracked |
+| 4 | Close M5, and record what its last slice measured | These docs |
+
+Gates: `pytest -q` **633 passed / 38 skipped**, vitest **120**, `ruff`/`mypy` (55 files)/
+`typecheck`/`lint`/`build` clean. **Unchanged, and that was the assertion** — this slice
+touches no `api/` or `web/` source, so a moved number would have meant it reached
+somewhere it should not have.
+
+### The thing worth remembering
+
+**The mechanism the slice was scoped with does not work**, and it was measured before
+anything was built on it rather than after. On Compose v5.3.1:
+
+| Mechanism | Result |
+|---|---|
+| `env_file:` in an override | **Loses** to a base file's `environment:` key. Only keys *absent* from the base come through |
+| `--env-file` / `COMPOSE_ENV_FILES` | **Works** — feeds compose's own `${VAR:-default}` substitution. This is what shipped |
+| `ports: !reset []` / `!override` | Both work |
+| `ports:` merged untagged | **Appends** — dev *and* prod ports published |
+
+`docker-compose.yml` sets every secret as `environment:`, so the scoped `env_file:` would
+have left all of them at their dev defaults **and nothing would have said so** — a stack
+that looks deployed and is running the development database password. That is the fifth
+consecutive session where a plan named a mechanism nobody had tried, and the first where
+the check took four minutes and one `docker compose config`.
+
+### Two things the build found that no document named
+
+- **`migrate` runs under `APP_ENV=prod`**, because `migrations/env.py` imports
+  `get_settings()`. So a forgotten `JWT_SECRET` fails at the *first* service, not the
+  third — watched doing exactly that, with `api`, `worker` and `web` never starting.
+  Driving the failure deliberately was worth more than reading the validator: a guard
+  nobody has watched refuse is not a guard.
+- **Every building service needs its own image tag.** The base names
+  `hirelens-api:local` / `hirelens-web:local`, so a prod build in a second compose project
+  overwrites them — and the next dev `up` silently adopts a web bundle built against the
+  prod API URL. `:prod` tags now.
+
+And **`.env.prod` was not gitignored**: `.env.*.local` does not match it. A file of
+production credentials was committable, found by checking the pattern rather than assuming
+the existing lines covered it.
+
+### The rehearsal
+
+Cold start in a separate project (`-p hirelens-prod`, own volumes, ports 8100/3100), so
+the dev stack ran throughout and its 23 accounts / 21 resumes were intact afterwards.
+
+- **Ten migrations against an empty database** — the cold-start path nothing had exercised
+  since `0001`. `alembic current` → `d0e1f2a3b4c5 (head)`.
+- **The three data services publish nothing**, believed only after a positive control:
+  dev's Redis answered `+PONG` on `127.0.0.1:6379` — *the same reply that was the
+  2026-08-14 security finding* — so the probe was proven before its silence meant
+  anything.
+- The journey in a browser at :3100 on `LLM_PROVIDER=fake`, **zero Gemini quota**:
+  **10/10 verified, 0.0% unverifiable, 1 model call**, Thai citations at exact char
+  ranges, the arq worker in its own log, console clean on an instrument proven to speak.
+- Erasure: `stored_files_removed: 1`, token then 401, 0 rows across four tables, 0 files
+  in the volume.
+- `NEXT_PUBLIC_API_BASE` at a different port meant the web image genuinely rebuilt — the
+  build-arg trap exercised rather than quoted.
+
+**No defect found this time.** Three of the five M5 slices had one that the gates could
+not see; this one did not, and that is the right outcome most of the time. The rule was
+never that a browser check always finds something.
+
+### Advice for the owner
+
+- **M5 is done and M6 is the next decision, and it is still a draft** reconstructed from
+  the README. `CLAUDE.md` says review it with you first, and the practice is 3 for 3 —
+  M5's own review turned a one-line bullet into three items, two already shipped. The
+  ranking evaluation needs a labelled gold set and carries a **one-week timebox**; if the
+  timebox expires, stop. Worth asking whether it is the right next thing at all, given the
+  two frontend items below have been deferred four times.
+- **Something for you to run when convenient**: the containers were serving
+  `LLM_PROVIDER=fake` while `.env` says `gemini`, left over from an earlier session's
+  `export`. Harmless today and it is why this session cost zero quota — but the next
+  `docker compose up -d` in a fresh shell will flip the dev stack onto the real provider
+  and its 20/day cap. Decide which you want `.env` to say.
+- **Two items are now deferred four times**: `useAuth` owes its `useSyncExternalStore`
+  rewrite (it carries the one *genuine* `set-state-in-effect` suppression and every route
+  depends on it), and httpOnly cookies with the refresh-token denylist. The denylist is
+  worth more than it looks now that there is a runbook: rotating `JWT_SECRET` is currently
+  the *only* way to revoke anything, and it logs everybody out at once.
+- **Four commits sit unpushed.** `git rev-list --count origin/main..main` says so — derive
+  it, do not read it here.
+- Two small open items, both one line each, both skipped because nothing was in the file:
+  `RETRIEVAL_BACKEND` is in no `.env.example`, and `.env` has `OCR_ENGINE=tesseract` while
+  `CLAUDE.md` frames it as off by default.
+
+---
+
+## 2026-08-15 — the overlay lands, and M5 has one slice left
 
 **M5 slice 4 is done.** A citation now highlights on the original PDF, not only in the
 extracted text — which is what slice 3's `page_geometry` was measured for, and the item
