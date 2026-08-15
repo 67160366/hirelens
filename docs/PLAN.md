@@ -8,11 +8,15 @@ completes.
 M1–M2 reflect decisions already made and verified, and so do **M3**, **M4** and now
 **M5** — their scopes were each reviewed with the owner (M3 on 2026-08-08, M4 on
 2026-08-12, M5 on 2026-08-13), so the decisions and slices below are commitments
-rather than a reconstruction. **M6 is still a draft** reconstructed from the README
-milestone table and HANDOFF scope notes — review it the same way before treating the
-details as commitments. Three reviews, three times it paid: M5's turned a one-line
-"recruiter views" bullet into three items, two of which were already shipped, and
-caught a load-bearing claim about the codebase that was false.
+rather than a reconstruction. **M6 was reviewed on 2026-08-16 and closed unbuilt** —
+its section below carries the four reasons. Four reviews, four times it paid, and the
+last one hardest: M5's turned a one-line "recruiter views" bullet into three items, two
+of which were already shipped, and caught a load-bearing claim about the codebase that
+was false; M6's found that the milestone contradicted a rule `pipeline/retrieval.py` has
+stated in its own docstring since M3.
+
+**There is no milestone in progress.** The only named unstarted item is httpOnly cookies
+instead of `localStorage`, under "Auth — beyond M1".
 
 | Milestone | Scope | Status |
 |---|---|---|

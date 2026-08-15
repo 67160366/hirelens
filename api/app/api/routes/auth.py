@@ -315,9 +315,11 @@ async def delete_me(
     postings. That is what a posting ceasing to exist means, but it is other
     people's history, so it is said out loud rather than discovered.
 
-    Tokens already issued keep working until they expire — the same gap that is why
-    there is no `/auth/logout` — but they authenticate nothing: `get_current_candidate`
-    answers **401** for a valid signature over an account that is gone.
+    Erasure does not bother revoking the account's tokens, and does not need to: they
+    authenticate nothing, because `get_current_candidate` answers **401** for a valid
+    signature over an account that is gone. The account's rows in `revoked_tokens` go
+    with it on the cascade — keeping them would retain a fragment of somebody who
+    asked to be forgotten, for tokens that are already refused.
     """
     account_id = str(candidate.id)
     try:

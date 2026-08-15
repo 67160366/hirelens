@@ -147,8 +147,8 @@ slices 2, 3 and 5.
 | **The build-arg trap, exercised rather than quoted** | The rehearsal ran on :8100, so `NEXT_PUBLIC_API_BASE` genuinely differed and the web image rebuilt: its served chunks carry `localhost:8100` and nothing else. `CORS_ORIGINS` had to match or every request would have failed preflight — the consent route answered 200 from the page, which is what proved it (2026-08-16) |
 | Prod and dev images stay separate | `hirelens-api:prod`/`hirelens-web:prod` vs `:local`, distinct ids in `docker images`. Without the tag override a rehearsal build overwrites `:local` and the next dev `up` silently adopts a bundle built against the rehearsal's API URL (2026-08-16) |
 | Backup carries its schema version | `pg_dump` through the container: 662 lines, 10 tables, and `alembic_version` preserved at `d0e1f2a3b4c5` — checked, because a dump that cannot say what schema it is cannot be restored with confidence (2026-08-16) |
-| `pytest -q` | **633** passed, 38 skipped as of 2026-08-15 (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
-| `npm test` | **120** in `web/` as of 2026-08-15 (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
+| `pytest -q` | **651** passed, 38 skipped as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `npm test` | **137** in `web/` as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -256,14 +256,20 @@ slices 2, 3 and 5.
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>, and **everything through
-M5 slice 1 is pushed and green on CI** (run `31825047640`, 2026-08-15 — both the `api`
-and `web` jobs, including `Verify migrations apply and reverse`, the step that caught
-migration `0006`). That push carried **7 commits**: last session's four, which had been
-held back deliberately until slice 1 was actually closed, plus this session's three. A
-local run reports **614 passed, 38 skipped**, and the runner — no Tesseract, no
-database, no MinIO, no API key — reports the same, which is the opt-in test design doing
-its job. Plus **98** vitest cases in `web/`.
+`main` is on GitHub at <https://github.com/67160366/hirelens>. **Everything through M5 —
+the whole milestone — is pushed and green on CI** (run `31904311200`, 2026-08-16: both
+the `api` and `web` jobs, **0 annotations**, read through the API rather than off the
+tick). That push carried **8 commits**, four of them slice 4's, and it was worth making
+before anything else: CI had never run slice 4's `pdfjs-dist` install or the `prebuild`
+hook that copies pdf.js's worker into `web/public/` — a directory that is gitignored in
+its entirety, so a clean runner was the only thing that could tell us. It passed.
+
+A local run reports **651 passed, 38 skipped** plus **137** vitest cases in `web/`, and
+the runner — no Tesseract, no database, no MinIO, no API key — reports the same, which is
+the opt-in test design doing its job.
+
+**Derive the unpushed count rather than reading it here** (`git rev-list --count
+origin/main..main`). This paragraph has been wrong about it twice.
 
 **A caveat that suite count hides, found 2026-08-15:** the opt-in modules are *not*
 covered by either number. `tests/test_postgres.py` had two of its five cases failing for
@@ -1110,11 +1116,12 @@ free.
 | 5 | A thin web UI | **done** — `web/app/jobs/`, `lib/auth.ts`, `lib/screening.ts`, `components/{RankingTable,JudgmentView,RequirementEditor,RequirementFields,AuthPanel}.tsx`; **no API change, no migration**; `lib/screening.test.ts` |
 | 6 | Retrieval — the pre-filter | **done** — `pipeline/retrieval.py`, `GET /jobs/{id}/candidates`, `RETRIEVAL_BACKEND`; no model call, no migration; `tests/test_retrieval.py` |
 
-**M3 and M4 are both closed**, each after a scope review with the owner rather than
-a reconstruction. **M5 was reviewed the same way on 2026-08-13** and `docs/PLAN.md`
-now holds its commitments; **M6 is still a draft**, so review it the same way before
-building to it — the practice has now paid for itself three times, and M5's review
-found a claim in these very docs that was false (see #8 below).
+**M3, M4 and M5 are all closed**, each after a scope review with the owner rather than
+a reconstruction. **M6 got the same review on 2026-08-16 and was closed unbuilt** — the
+practice has now paid for itself four times, and this was the first time its answer was
+"do not build this" rather than "build a different shape". M5's review found a claim in
+these very docs that was false (see #8 below); M6's found one in `README.md` and a
+contradiction with `pipeline/retrieval.py`'s own docstring.
 
 | # | Work | Status |
 |---|---|---|

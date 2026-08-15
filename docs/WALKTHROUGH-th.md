@@ -318,8 +318,13 @@ sort  = (ไม่ผ่าน gate ทีหลัง, score มาก→น้
   (n=2 ชนกันข้ามคำ, n=4 เริ่มพลาดคำสั้น)
 - **ไม่ match กับ `job.description`** เด็ดขาด — จะเป็นการเอา free text กลับมาให้คะแนน
   ทางประตูหลัง พิสูจน์สดแล้ว: เรซูเม่ที่มี *ทุกคำ* ใน description ยังได้ 0.0
-- ยังไม่มีการวัดคุณภาพของลำดับ และนั่นจงใจ — การวัดเทียบ BM25/embedding ต้องมี
-  labelled gold set ซึ่งเป็น M6 พร้อม timebox หนึ่งสัปดาห์ **ห้ามดึงเข้ามาก่อน**
+- ยังไม่มีการวัดคุณภาพของลำดับ และนั่นจงใจ — เดิมเป็น M6 แต่ **review แล้วปิดโดยไม่สร้าง**
+  (2026-08-16) เพราะสร้างตามที่เขียนไม่ได้อย่างซื่อสัตย์: หัวข้อคือ "วัด **ranking** เทียบ
+  BM25" แต่ BM25 เป็น **retrieval** scorer และ docstring ของ `retrieval.py` เองห้ามเอา
+  สองอย่างนี้มาเทียบกันไว้ตั้งแต่ M3 — *"a retrieval score is not a ranking score…
+  must not be shown as though they were comparable"* บวกกับ retriever ตัวนี้**เป็น BM25
+  อยู่แล้ว** (มี IDF จริง), embedding ติดกฎ paid-provider, และ gold set บน fixture
+  สังเคราะห์ 9 ใบที่เราเขียนเอง = ให้คะแนนข้อสอบตัวเอง เหตุผลเต็มอยู่ใน `docs/PLAN.md`
 
 ---
 
@@ -507,9 +512,19 @@ app/metrics/            dashboard การใช้งานและคุณ�
   ได้ เพราะ offset ชี้เข้า `document_text` เดียวกัน
 - `createScreening` คืน `queued` เพราะ **202 vs 200 เป็นการตัดสินใจเชิงออกแบบที่ UI
   ต้องรายงานได้** ไม่ใช่รายละเอียดที่ซ่อนไว้
+- **session เป็น external store ไม่ใช่ component state** (`useSyncExternalStore` เหนือ
+  `localStorage`) — `lib/auth.ts` เป็นที่เดียวที่แตะ `localStorage`, component สองตัวบน
+  หน้าเดียวกันจึงเห็น token ตรงกันเสมอ และ **sign out แท็บนึงแล้วแท็บอื่นออกตาม**
+  ผ่าน `storage` event
 - token เก็บใน `localStorage` (อ่านได้ด้วย XSS) — ยอมรับได้สำหรับ dev สองต้นทาง
-  คำตอบของ production คือ httpOnly cookie ซึ่งยัง defer อยู่เพราะลากเรื่อง
-  refresh-token denylist มาด้วย
+  คำตอบของ production คือ httpOnly cookie ซึ่ง **ยัง defer อยู่ (ข้อเดียวที่เหลือ)**
+- **refresh-token denylist ทำแล้ว** (2026-08-16, migration `0011`) — `POST /auth/logout`
+  มีจริงแล้ว และ refresh token ที่ใช้ไปแล้วถูกเพิกถอนจริง ก่อนหน้านี้ `README` เขียนว่า
+  "single-use" แต่**ไม่จริง**: ออก pair ใหม่แล้วปล่อยตัวเก่าใช้ได้ต่ออีก 14 วัน
+  กฎที่ต้องจำ: **`decode_token` กับ `token_service.assert_live` ต้องเรียกคู่กันเสมอ**
+  (verify อย่างเดียว = รับ token ที่ถูก sign out ไปแล้ว)
+  สิ่งที่ยังทำไม่ได้: เปลี่ยนรหัสผ่านแล้ว**ไล่เครื่องอื่นออกไม่ได้** เพราะ denylist เก็บแค่
+  token ที่ตายแล้ว ไม่เก็บที่ยังมีชีวิต — มี test pin ไว้ให้พังวันที่มีคนแก้
 
 ---
 
@@ -549,9 +564,9 @@ dashboard แต่ไม่มี cost เลย เพราะ `app/llm/gemin
 
 ## 10. Test / CI / คุณภาพ
 
-- `pytest -q` → **633 ผ่าน / 38 skip** (skip คือ opt-in: Postgres 4 + Tesseract 12 +
+- `pytest -q` → **651 ผ่าน / 38 skip** (skip คือ opt-in: Postgres 4 + Tesseract 12 +
   MinIO 9 + live-LLM 12)
-- `npm test` → **120 เคส** (vitest ไม่มี DOM)
+- `npm test` → **137 เคส** (vitest ไม่มี DOM)
 - gate ที่บังคับใน CI: `ruff check`, `ruff format --check`, `mypy app` (strict),
   `pytest -q`, แล้ว `npm ci` / `typecheck` / `lint` / `build`
   \+ **migration up/down round-trip บน SQLite**
@@ -606,7 +621,7 @@ dashboard แต่ไม่มี cost เลย เพราะ `app/llm/gemin
 | **M3** | job requirements, judging ระดับ requirement, ranking, retrieval, screening UI | ✅ 2026-08-12 |
 | **M4** | visibility timeout, RBAC, application state machine, PDPA | ✅ 2026-08-12 |
 | **M5** | dropped-claims view, dashboard, geometry, pdf.js overlay, production compose | ✅ **2026-08-16 (5/5)** |
-| **M6** | ประเมิน ranking เทียบ BM25/embedding baseline — **timebox 1 สัปดาห์** | draft (ยังไม่ review กับเจ้าของ) |
+| **M6** | ประเมิน ranking เทียบ BM25/embedding baseline | ⛔ **review แล้ว ปิดโดยไม่สร้าง** (2026-08-16) |
 
 ### M5 รายละเอียด
 
@@ -659,8 +674,8 @@ control คือ Redis ของ dev ที่ตอบ `+PONG`), อัปโ�
 
 ### สถานะ repo
 
-- gate ล่าสุด (รันเอง ไม่ได้อ้าง): pytest **633/38 skip**, vitest **120**,
-  ruff / mypy (55 ไฟล์) / typecheck / lint / build clean
+- gate ล่าสุด (รันเอง ไม่ได้อ้าง): pytest **651/38 skip**, vitest **137**,
+  ruff / mypy (57 ไฟล์) / typecheck / lint / build clean
 - opt-in ที่รันด้วยมือแล้ว: `test_postgres.py` 5 ผ่าน, `test_minio.py` 9 ผ่าน
 - จำนวน commit ที่ยังไม่ push **ให้ดูด้วย `git rev-list --count origin/main..main`**
   อย่าเชื่อบรรทัดนี้ — เอกสารในโปรเจคนี้เคยบอกเลขผิดมาแล้วสองครั้ง
