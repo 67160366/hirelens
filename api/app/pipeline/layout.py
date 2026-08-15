@@ -45,6 +45,8 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
+from app.pipeline.geometry import CharRun, runs_for, shift
+
 BBox = tuple[float, float, float, float]
 """(x0, top, x1, bottom), the argument `pdfplumber.Page.crop` takes."""
 
@@ -129,10 +131,49 @@ def detect_reading_order(page: Any) -> tuple[BBox, ...] | None:
     return tuple(boxes)
 
 
-def extract_in_reading_order(page: Any, boxes: tuple[BBox, ...]) -> str:
-    """Extract each region with pdfplumber and join them in order."""
-    parts = (page.crop(box).extract_text() or "" for box in boxes)
-    return "\n".join(part for part in parts if part.strip())
+def extract_in_reading_order(
+    page: Any, boxes: tuple[BBox, ...]
+) -> tuple[str, tuple[CharRun, ...] | None]:
+    """Extract each region with pdfplumber and join them in order.
+
+    Returns the text and, beside it, where each of its characters sits on the page
+    (M5 slice 3). The geometry is accumulated *as the text is joined*, so a run's
+    offsets index into the string this function returns rather than into the region
+    it came from — the reordering that makes this page's text differ from the PDF's
+    internal order is exactly why it cannot be recovered afterwards.
+
+    Geometry is `None` if any region's could not be trusted. All-or-nothing per page,
+    because a half-covered page would render as a highlight that silently stops.
+    """
+    parts: list[str] = []
+    runs: list[CharRun] = []
+    geometry_ok = True
+    cursor = 0
+
+    for box in boxes:
+        region = page.crop(box)
+        text: str = region.extract_text() or ""
+        if not text.strip():
+            # Dropped from the join, so it contributes no characters and no offsets.
+            continue
+
+        if geometry_ok:
+            region_runs = runs_for(region, text)
+            if region_runs is None:
+                geometry_ok = False
+            else:
+                runs.extend(shift(region_runs, cursor))
+
+        parts.append(text)
+        cursor += len(text) + len(_REGION_SEPARATOR)
+
+    return _REGION_SEPARATOR.join(parts), (tuple(runs) if geometry_ok else None)
+
+
+_REGION_SEPARATOR = "\n"
+"""What the regions are joined with. Named because the geometry offsets above have
+to advance by exactly its length, and a bare "\\n" in two places is how those two
+drift apart."""
 
 
 def _words_of(page: Any) -> list[_Word]:

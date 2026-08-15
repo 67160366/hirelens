@@ -211,6 +211,10 @@ async def process_resume(
     # ...and the page boundaries measured over that same string, so a quote located
     # in it later can still name a page without anything being re-parsed.
     resume.page_spans = document.stored_page_spans
+    # ...and where each of those characters sits on its page, measured in the same
+    # pass. Sparse: a page whose geometry could not be proven consistent with its
+    # text is absent rather than approximated (M5 slice 3).
+    resume.page_geometry = document.stored_page_geometry
     resume.status = ResumeStatus.PARSED
     resume.failure_reason = None
 

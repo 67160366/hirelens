@@ -168,6 +168,24 @@ class Resume(UUIDPrimaryKey, Timestamps, Base):
     field names, so `ParsedDocument.from_stored` reads it back with no mapping
     layer. Null on rows written before migration `0005`; those report page 1."""
 
+    page_geometry: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON_VARIANT)
+    """Where each character of `document_text` sits on the page it was read from.
+
+    What the pdf.js overlay needs and what nothing could previously say: `page_spans`
+    and `EvidenceRef` carry character offsets and a page number, and no row could name
+    a *position*. Measured at parse time, in the same pass as the offsets, because
+    anything computed afterwards cannot be trusted to describe them — see
+    `pipeline/geometry.py` for the three measured reasons searching for the text
+    instead does not work.
+
+    **Sparse, and deliberately so.** A page is absent when its geometry could not be
+    proven consistent with its text, when OCR replaced that text, or when the format
+    has no glyph boxes at all. Null on rows written before migration `0010`, and
+    **not backfilled** — exactly like `page_spans` in `0005`, because filling it in
+    would mean re-parsing every stored file under the identical OCR configuration,
+    which is the one thing `from_stored` exists to avoid. Those documents fall back to
+    the text pane, with the reason shown."""
+
     candidate: Mapped[Candidate] = relationship(back_populates="resumes")
     profile: Mapped[ExtractedProfileRow | None] = relationship(
         back_populates="resume", cascade="all, delete-orphan", uselist=False

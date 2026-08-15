@@ -33,6 +33,8 @@ from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from app.pipeline import geometry as geometry_module
+from app.pipeline.geometry import CharRun, PageGeometry, runs_for
 from app.pipeline.layout import detect_reading_order, extract_in_reading_order
 from app.pipeline.ocr import OCREngine, OCRError, OCRUnavailableError
 
@@ -134,6 +136,15 @@ class ParsedDocument:
     from a text layer. Surfaced to the user, because a citation into one of these
     is faithful to what was read, not necessarily to what was printed."""
 
+    page_geometry: tuple[PageGeometry, ...] = ()
+    """Where each character sits on the page it was read from (M5 slice 3).
+
+    **Sparse on purpose, and a missing page is a supported state.** A page is absent
+    when its geometry could not be proven consistent with its text, when OCR replaced
+    the text wholesale, or when the document has no glyph boxes at all (`.docx`). The
+    overlay falls back to the text pane for those and says why; a silent fallback is
+    indistinguishable from a bug, and a *guessed* box is worse than either."""
+
     # Page start offsets, precomputed for O(log n) lookup: a resume yields dozens of
     # spans to map and page_for_offset runs on each one.
     _page_starts: tuple[int, ...] = field(init=False, repr=False, compare=False, default=())
@@ -182,6 +193,15 @@ class ParsedDocument:
             for span in self.pages
         ]
 
+    @property
+    def stored_page_geometry(self) -> list[dict[str, Any]]:
+        """The character geometry in the shape `resumes.page_geometry` holds.
+
+        Beside `stored_page_spans` and paired with `from_stored` for the same reason:
+        neither half of a round-trip may change without the other.
+        """
+        return geometry_module.stored(self.page_geometry)
+
     @classmethod
     def from_stored(
         cls,
@@ -190,6 +210,7 @@ class ParsedDocument:
         *,
         pages_without_text: Sequence[int] = (),
         pages_from_ocr: Sequence[int] = (),
+        page_geometry: list[dict[str, Any]] | None = None,
     ) -> Self:
         """Rebuild a document from values already stored on a resume row.
 
@@ -215,6 +236,7 @@ class ParsedDocument:
             pages=tuple(PageSpan(**span) for span in page_spans or ()),
             pages_without_text=tuple(pages_without_text),
             pages_from_ocr=tuple(pages_from_ocr),
+            page_geometry=geometry_module.from_stored(page_geometry),
         )
 
 
@@ -256,13 +278,28 @@ def parse_pdf(source: Path | io.BytesIO, *, ocr: OCREngine | None = None) -> Par
             # Whether a text-less page carries an image decides if OCR can rescue
             # it. Tracked per page so a blank page is never rendered and paid for.
             page_has_images: list[bool] = []
+            # Where each character sits, per page, parallel to `raw_pages`. `None`
+            # for a page whose geometry could not be trusted (M5 slice 3).
+            raw_geometry: list[_PageInk | None] = []
             for page in pdf.pages:
-                raw_pages.append(_text_of(page))
+                text, runs = _text_of(page)
+                raw_pages.append(text)
                 page_has_images.append(bool(page.images))
+                raw_geometry.append(
+                    None
+                    if runs is None
+                    else _PageInk(width=float(page.width), height=float(page.height), runs=runs)
+                )
 
             from_ocr: tuple[int, ...] = ()
             if ocr is not None:
                 from_ocr = _recover_pages_with_ocr(pdf.pages, raw_pages, page_has_images, ocr)
+                for page_number in from_ocr:
+                    # OCR replaces a page's text wholesale, so every offset the
+                    # text layer's geometry described is gone. Dropping it is the
+                    # honest answer and the one slice 4 already plans to render:
+                    # a recognized page has no glyph boxes to overlay onto.
+                    raw_geometry[page_number - 1] = None
     except (ParseError, OCRError):
         # An OCR fault is about the engine, not the document: letting it become a
         # CorruptDocumentError below would mark a fixable misconfiguration as a
@@ -276,21 +313,42 @@ def parse_pdf(source: Path | io.BytesIO, *, ocr: OCREngine | None = None) -> Par
         has_images=any(page_has_images),
         pages_from_ocr=from_ocr,
         ocr_attempted=ocr is not None,
+        ink=raw_geometry,
     )
 
 
-def _text_of(page: Any) -> str:
+@dataclass(frozen=True, slots=True)
+class _PageInk:
+    """One page's geometry before `_assemble` rebases it into document space.
+
+    Its runs index into that page's *raw* text — before NFC and the NUL strip — so
+    it is deliberately not `PageGeometry`, which is measured against the stored
+    `document_text` and is the only shape anything outside this module sees.
+    """
+
+    width: float
+    height: float
+    runs: tuple[CharRun, ...]
+
+
+def _text_of(page: Any) -> tuple[str, tuple[CharRun, ...] | None]:
     """Read one page, one column at a time when it has more than one.
 
     `detect_reading_order` answers `None` for every page it is not confident about,
     and that branch is the one that ran before column detection existed — so a
     single-column document parses to exactly the string it always did, and no
     citation already shown to a user can shift.
+
+    Returns the character geometry beside the text (M5 slice 3). It is measured from
+    the same object the text came from and checked against the text itself, so it is
+    `None` rather than approximate whenever the two could disagree — see
+    `pipeline/geometry.py`. **The text is produced by exactly the calls it always
+    was**, which is what keeps `document_text` byte-identical.
     """
     boxes = detect_reading_order(page)
     if boxes is None:
         text: str = page.extract_text() or ""
-        return text
+        return text, runs_for(page, text)
     return extract_in_reading_order(page, boxes)
 
 
@@ -398,10 +456,19 @@ def _assemble(
     has_images: bool = False,
     pages_from_ocr: tuple[int, ...] = (),
     ocr_attempted: bool = False,
+    ink: Sequence[_PageInk | None] | None = None,
 ) -> ParsedDocument:
-    """Join per-page text into one offset space, tracking page boundaries."""
+    """Join per-page text into one offset space, tracking page boundaries.
+
+    `ink` carries per-page character geometry measured against each page's *raw*
+    text (M5 slice 3). It defaults to `None` meaning "no geometry", which is what
+    `parse_docx` and the tests that call this function with bare strings rely on —
+    a `.docx` has no glyph boxes at all, and it must stay possible to assemble a
+    document from text alone.
+    """
     chunks: list[str] = []
     pages: list[PageSpan] = []
+    geometry: list[PageGeometry] = []
     without_text: list[int] = []
     cursor = 0
 
@@ -425,6 +492,19 @@ def _assemble(
         cursor += len(page_text)
         pages.append(PageSpan(page_number=index, char_start=start, char_end=cursor))
 
+        page_ink = ink[index - 1] if ink is not None and index - 1 < len(ink) else None
+        if page_ink is not None:
+            rebased = _rebase_ink(page_ink, raw=raw, page_start=start)
+            if rebased is not None:
+                geometry.append(
+                    PageGeometry(
+                        page_number=index,
+                        width=page_ink.width,
+                        height=page_ink.height,
+                        runs=rebased,
+                    )
+                )
+
     if raw_pages and len(without_text) == len(raw_pages):
         if has_images:
             raise NoTextLayerError(page_count=len(raw_pages), ocr_attempted=ocr_attempted)
@@ -435,4 +515,38 @@ def _assemble(
         pages=tuple(pages),
         pages_without_text=tuple(without_text),
         pages_from_ocr=pages_from_ocr,
+        page_geometry=tuple(geometry),
     )
+
+
+def _rebase_ink(page_ink: _PageInk, *, raw: str, page_start: int) -> tuple[CharRun, ...] | None:
+    """Move one page's geometry from its raw text into the document's offset space.
+
+    Two transforms sit between the two, and they are not the same kind of problem:
+
+    **The NUL strip is exact and is remapped.** A broken ToUnicode map makes an
+    extractor emit `\\x00` for glyphs it cannot name, so the characters really do
+    move — by up to 11 positions in `resume_broken_tounicode.pdf`, where 8 of 11
+    words carry one. Each surviving character's new index is computed and the runs
+    are rewritten, splitting where a removal fell inside one.
+
+    **NFC is refused rather than remapped**, and the geometry is dropped if it
+    changes anything. Normalization can *combine* characters — `A` plus a combining
+    ring is one `Å` afterwards — so there is no index map, and a box drawn from a
+    guessed one would be a visual claim nobody could check. Measured: NFC is a no-op
+    on every PDF fixture in this repo today, so this costs nothing now and is correct
+    the day it does not.
+    """
+    if unicodedata.normalize("NFC", raw) != raw:
+        return None
+
+    positions: list[int | None] = []
+    kept = 0
+    for character in raw:
+        if character == "\x00":
+            positions.append(None)
+            continue
+        positions.append(kept)
+        kept += 1
+
+    return geometry_module.shift(geometry_module.remap(page_ink.runs, positions), page_start)
