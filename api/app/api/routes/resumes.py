@@ -38,6 +38,7 @@ from app.jobs import is_stalled
 from app.models import Candidate, Job, Resume, ResumeStatus, Role
 from app.models.application import Application
 from app.services import resume_service
+from app.storage import ObjectNotFoundError, StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,21 @@ MAGIC_BY_SUFFIX = {
     ".docx": b"PK\x03\x04",
 }
 ALLOWED_SUFFIXES = frozenset(MAGIC_BY_SUFFIX)
+
+# What `GET /{id}/file` labels the bytes it serves. Keyed by the same suffix the
+# gate above trusts, so a type can only be served if it was allowed in: adding a
+# format means adding both entries, and forgetting one is a KeyError rather than a
+# document served as something it is not.
+MEDIA_TYPE_BY_SUFFIX = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+def suffix_of(filename: str) -> str:
+    """The lower-cased extension, or `""`. Shared so upload and download agree."""
+    return filename[filename.rfind(".") :].lower() if "." in filename else ""
+
 
 CONSENT_VERSION = "2026-08-12"
 """Which wording an uploader is agreeing to (M4 slice 4).
@@ -215,7 +231,7 @@ async def upload_resume(
         raise too_large
 
     filename = file.filename or "resume.pdf"
-    suffix = filename[filename.rfind(".") :].lower() if "." in filename else ""
+    suffix = suffix_of(filename)
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -354,6 +370,120 @@ async def get_resume_profile(
         resume=ResumeOut.of(resume, settings),
         profile=resume.profile.profile if resume.profile else None,
         document_text=resume.document_text,
+    )
+
+
+@router.get("/{resume_id}/file")
+async def get_resume_file(
+    resume_id: uuid.UUID,
+    candidate: CandidateDep,
+    session: SessionDep,
+    storage: StorageDep,
+) -> Response:
+    """The original bytes, for the overlay to render (M5 slice 4).
+
+    This is the one route that serves a document verbatim rather than something
+    derived from it, so the rules around it are worth stating.
+
+    **Who.** `_owned_resume` with `must_own=False`, unchanged: the uploader, an
+    admin, or a recruiter the candidate applied to. Nothing new is granted — the
+    overlay draws what `GET /resumes/{id}` already returns the text of, and anyone
+    who may read the citations may see the page they point at. A recruiter keeps
+    that access after the application reaches a terminal state (decided with the
+    owner on 2026-08-15): somebody who rejected a candidate may still have to
+    account for it, and the audit log exists so those decisions stay reviewable.
+    **404, never 403** — a 403 on an id confirms the id exists.
+
+    **What is not said.** `no-store`, because a resume in a shared browser cache is
+    the same leak as one in a log. `nosniff` and a media type taken from the suffix
+    the upload gate already trusted, so nothing here can be interpreted as a type it
+    was not allowed in as. `Content-Disposition: inline` **carries no filename**: a
+    filename is the candidate's, and it would land in the browser's download history
+    for a recruiter who never asked for the file.
+
+    A missing object is a 404 — already-gone is a state erasure treats as done — and
+    any other storage fault is a **503**, the same split `is_retryable` and
+    `delete_account` make.
+    """
+    resume = await _owned_resume(session, resume_id=resume_id, candidate=candidate, must_own=False)
+
+    suffix = suffix_of(resume.filename)
+    if suffix not in MEDIA_TYPE_BY_SUFFIX:
+        # Unreachable through the upload gate, which refuses anything else. Refusing
+        # rather than guessing a type keeps that true if the gate ever widens first.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
+
+    try:
+        data = await storage.get(resume.storage_key)
+    except ObjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The stored document is no longer available",
+        ) from exc
+    except StorageError as exc:
+        # 503, as `DELETE /auth/me` answers for the same class of fault: the request
+        # was fine, the store was not, and retrying is the right next move.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The document store is unavailable",
+        ) from exc
+
+    # Ids and counts only — never the filename (§10).
+    logger.info("resume %s: served %d stored bytes", resume_id, len(data))
+    return Response(
+        content=data,
+        media_type=MEDIA_TYPE_BY_SUFFIX[suffix],
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+        },
+    )
+
+
+class GeometryOut(BaseModel):
+    """Where each character sits, for a client that is about to draw boxes.
+
+    Its own route rather than a field on `ProfileOut` and `ScreeningDetail`:
+    geometry costs about 20 bytes per character — 15 KB for `resume_multipage.pdf` —
+    and is needed only when somebody opens the overlay. Both screens fetch the
+    profile or the screening on every visit, so folding it in would charge every
+    visit for a view most of them never open.
+    """
+
+    measured: bool
+    """False for a row written before migration `0010`, which is **not backfilled**.
+    Distinct from `pages` being empty, which means the parser looked and could prove
+    nothing — a `.docx`, or a page whose textmap did not reproduce its text. The
+    client says which, so a fallback is never silent."""
+
+    pages: list[dict[str, Any]]
+    """Exactly what `geometry.stored()` wrote, served without a second vocabulary —
+    the same call `ProfileOut.profile` and `ScreeningDetail.judgment` make. Sparse:
+    a page is absent when its geometry could not be proven consistent with its text.
+    Pinned by tests rather than by a schema, because an untyped payload is one
+    nothing would fail to strip."""
+
+    pages_from_ocr: list[int]
+    """Carried here so the route answers on its own. `/jobs/[id]` has a
+    `ScreeningDetail`, which has no `ResumeOut` to read this off."""
+
+
+@router.get("/{resume_id}/geometry", response_model=GeometryOut)
+async def get_resume_geometry(
+    resume_id: uuid.UUID, candidate: CandidateDep, session: SessionDep
+) -> GeometryOut:
+    """The boxes the overlay draws, on the same ownership rule as the file itself.
+
+    Answers `measured: false` rather than 404 for a resume parsed before the
+    geometry existed: the resume is there and readable, and "not measured" is an
+    answer about it rather than a missing resource.
+    """
+    resume = await _owned_resume(session, resume_id=resume_id, candidate=candidate, must_own=False)
+    return GeometryOut(
+        measured=resume.page_geometry is not None,
+        pages=resume.page_geometry or [],
+        pages_from_ocr=resume.pages_from_ocr or [],
     )
 
 
