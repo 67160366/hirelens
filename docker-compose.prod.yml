@@ -1,0 +1,142 @@
+# Production overlay. Run it as:
+#
+#   docker compose --env-file .env.prod \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# or set both on the prod host so a bare `up` means prod:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+#   COMPOSE_ENV_FILES=.env.prod
+#
+# `docker-compose.yml` stays the *dev* file. That is what keeps the fresh-clone
+# promise — `docker compose up -d --build` with no flags still brings up a working
+# development stack — and what keeps CLAUDE.md's opt-in test commands flag-free,
+# since they reach Postgres and MinIO on published localhost ports that only dev
+# publishes.
+#
+# ---------------------------------------------------------------------------
+# The mechanism, measured on this machine (Compose v5.3.1) rather than assumed.
+# Four sessions running, a compose mechanism named in a plan turned out not to do
+# what the plan said, so these were each run through `config` first:
+#
+#   env_file: in an override      LOSES to a base file's `environment:` key.
+#                                 Only keys absent from the base come through, so
+#                                 putting JWT_SECRET in an env_file here would
+#                                 silently change nothing. NOT used below.
+#   --env-file / COMPOSE_ENV_FILES  WORKS. It feeds compose's own `${VAR:-default}`
+#                                 substitution, which is how the base file already
+#                                 writes every secret it does not hard-code.
+#   `environment:` in an override WINS over the base. This is how the hard-coded
+#                                 literals below (POSTGRES_PASSWORD, the MinIO
+#                                 credentials, DATABASE_URL) get replaced.
+#   ports: !reset []              WORKS — removes the key entirely.
+#   ports: !override [...]        WORKS — replaces it.
+#   ports: (untagged)             APPENDS. Both the dev and prod ports end up
+#                                 published, which is the trap this file exists to
+#                                 avoid. Never merge `ports` untagged here.
+#
+# `profiles:` was rejected before either: with the profile inactive the project
+# fails to load at all, because every infra service is a `depends_on` target.
+# ---------------------------------------------------------------------------
+#
+# Two things this file cannot do for you, both build-time:
+#
+#   * NEXT_PUBLIC_API_BASE is inlined into the client bundle by `next build`, so a
+#     prod URL means rebuilding the web image, not restarting it — and CORS_ORIGINS
+#     on the API has to name the same origin.
+#   * The `*api_env` YAML anchor in docker-compose.yml cannot be referenced from
+#     here; an anchor does not cross files. So `worker` repeats `api`'s overrides
+#     below rather than sharing them. Keep the two blocks in step.
+
+services:
+  postgres:
+    # Not published at all. In dev this is 127.0.0.1:5432 so the opt-in Postgres
+    # suite can reach it; in prod nothing outside the compose network has any
+    # business connecting, and `docker compose exec postgres psql` still works.
+    ports: !reset []
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hirelens
+      POSTGRES_DB: hirelens
+      # Required, with no default: `:?` makes compose refuse to start the project
+      # at all if it is missing. The base file hard-codes `hirelens` here, which is
+      # fine for a loopback-only dev database and is not a password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+
+  redis:
+    ports: !reset []
+    restart: unless-stopped
+
+  minio:
+    ports: !reset []
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env.prod}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.prod}
+
+  # The bucket step authenticates as the MinIO root user, so it needs the same
+  # credentials. The base file has them inline; left alone it would try the dev
+  # password against a prod server and fail the whole `up` at a confusing place.
+  createbucket:
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing local/${MINIO_BUCKET:-hirelens-resumes}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env.prod}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.prod}
+
+  # Migrations run first and under APP_ENV=prod on purpose: migrations/env.py
+  # imports get_settings(), so the placeholder-JWT_SECRET refusal in
+  # api/app/config.py fires here — at the first service — rather than two services
+  # later when the API tries to boot.
+  #
+  # Every service that builds also retags. The base file names `hirelens-api:local`
+  # and `hirelens-web:local`, and a prod build in a second compose project would
+  # overwrite exactly those tags — so the next dev `up` would silently adopt a web
+  # bundle built against the prod API URL. Distinct tags keep the two stacks from
+  # reaching into each other's images.
+  migrate:
+    image: hirelens-api:prod
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgresql+asyncpg://hirelens:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}@postgres:5432/hirelens
+      JWT_SECRET: ${JWT_SECRET:-change-me-before-deploying}
+
+  api:
+    image: hirelens-api:prod
+    restart: unless-stopped
+    # Loopback only. A real host puts a reverse proxy in front of this and
+    # terminates TLS there; publishing on every interface would serve the API over
+    # plain HTTP to the network. The port is a variable so a rehearsal can run
+    # beside the dev stack without colliding on 8000.
+    ports: !override
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    environment:
+      # APP_ENV=prod is the switch behind config.py's refusal to start on the
+      # committed placeholder secret. It is the whole reason this file can ship a
+      # default for JWT_SECRET without that being dangerous.
+      APP_ENV: prod
+      DATABASE_URL: postgresql+asyncpg://hirelens:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}@postgres:5432/hirelens
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env.prod}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.prod}
+
+  # Repeats api's overrides because the `*api_env` anchor cannot cross files.
+  # Everything else — the queue backend, the storage settings, the provider — is
+  # inherited from the base file's anchor, which still applies within that file.
+  worker:
+    image: hirelens-api:prod
+    restart: unless-stopped
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgresql+asyncpg://hirelens:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}@postgres:5432/hirelens
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env.prod}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.prod}
+
+  web:
+    image: hirelens-web:prod
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"

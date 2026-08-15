@@ -23,6 +23,10 @@ web/public/pdf.worker.min.mjs
 .env
 .env.local
 .env.*.local
+# The production secrets file. `.env.*.local` above does NOT match it — that
+# pattern needs a `.local` suffix — so without this line a file full of prod
+# credentials would be committable. `.env.prod.example` is the committed shape.
+.env.prod
 
 # Local dev storage (uploaded resumes live here before MinIO lands in M2)
 var/
