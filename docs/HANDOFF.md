@@ -1131,9 +1131,19 @@ bullets. **Every one of the five slices had something false in its written plan 
 time it was built**, which is the milestone's most reusable lesson and is recorded at the
 end of PLAN.md's M5 section.
 
-**M6 is the next question, and it is still a draft** reconstructed from the README. Review
-it with the owner before building to it, the way M3's, M4's and M5's were — the practice
-is 3 for 3 at finding claims that were false about unshipped work.
+**M6 was reviewed on 2026-08-16 and closed unbuilt.** The practice is now 4 for 4 at
+finding claims that were false about unshipped work, and this is the first time the
+finding ended the milestone rather than reshaping it: evaluating *ranking* against a BM25
+baseline is a category error `pipeline/retrieval.py:21-24` has warned about since M3, the
+lexical retriever already *is* BM25's idea, the embedding half is a paid adapter under
+`CLAUDE.md`'s hard rule, and a gold set over nine synthetic fixtures would be marking its
+own homework. All four reasons are in `docs/PLAN.md`'s M6 section, along with the two
+honest shapes it could take if it is ever revisited.
+
+**So there is no milestone in progress.** What is named and unstarted: `useAuth` owes its
+`useSyncExternalStore` rewrite, and httpOnly cookies with the refresh-token denylist —
+which `docs/RUNBOOK.md` made more pressing rather than less, since rotating `JWT_SECRET`
+is now a documented operational step and is also the *only* revocation that exists.
 
 | # | Work | Status |
 |---|---|---|

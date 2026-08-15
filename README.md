@@ -55,7 +55,8 @@ without a reason.**
 | **M2 ✅** | Async worker + queue, OCR for scans, DOCX, two-column layout fix, MinIO, evidence viewer |
 | **M3 ✅** | Job requirements, retrieval, requirement-level judging, ranking, a screening UI |
 | **M4 ✅** | Visibility timeout, RBAC, the application state machine, PDPA (export and erasure) |
-| M5 | Full recruiter UI, observability, deploy |
+| **M5 ✅** | Dropped-claims audit view, usage and quality dashboard, character geometry, pdf.js overlay, production compose and a runbook |
+| M6 | **Reviewed and closed unbuilt** (2026-08-16) — the ranking evaluation could not be built as scoped. Reasons in [docs/PLAN.md](docs/PLAN.md) |
 
 Picking the project up after a break: **[docs/HANDOFF.md](docs/HANDOFF.md)** — what
 exists, which files to read in what order, and what to do next. The full milestone
@@ -240,12 +241,32 @@ Recorded per document, with no labelling required:
 | Verified vs dropped claim counts | Same |
 | Match-kind breakdown | Which of the three matching tiers each quote needed |
 | Model calls per document | Retries spent re-asking about rejected quotes |
-| Cost and latency per document | `llm_call_logs`, one row per call, with prompt version |
+| Latency per document | `llm_call_logs`, one row per call, with prompt version |
+| Cost per document | Same — but **every figure is currently `$0.00`**, because the only live provider maps every model to a free tier. The column is real and the rule is enforced (an unknown price renders `unknown`, never `$0.00`); there is simply nothing to charge yet |
+
+All of them are on the `/metrics` dashboard, which is a query over rows the system
+already wrote and spends no model call of its own.
 
 Deliberately **not** claimed: ranking quality against a BM25 or embedding baseline.
 That needs a labelled gold set, and a project that stakes its success on beating a
-baseline it has not measured invites unbounded work. It is scoped as optional
-(M6) behind a one-week timebox.
+baseline it has not measured invites unbounded work.
+
+**Reviewed and closed unbuilt on 2026-08-16**, rather than left open as an optional
+milestone. Four things ruled it out, and they are worth stating because "we ran out of
+time" would be a different and less honest claim:
+
+- **A ranking score and a retrieval score are not comparable**, which `pipeline/retrieval.py`
+  has said in its own docstring since M3. BM25 is a *retrieval* scorer; ranking answers
+  what a candidate's citations prove. Comparing them is a category error.
+- **The lexical retriever already is BM25's idea**, minus the tuning knobs — so the
+  honest version of the question shrinks to whether tuned BM25 beats untuned BM25.
+- **An embedding baseline is a paid call**, and this project only ships a paid provider
+  together with a current price table and a recorded live verification run. That is an
+  adapter, not an evaluation.
+- **The corpus is nine synthetic resumes written to exercise the parser**, and real
+  resumes may never enter this repository. Labelling one's own documents against one's
+  own job postings produces a number nobody should trust — which is the one thing this
+  project exists to refuse.
 
 ---
 

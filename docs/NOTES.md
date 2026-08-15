@@ -82,12 +82,9 @@ never that a browser check always finds something.
 
 ### Advice for the owner
 
-- **M5 is done and M6 is the next decision, and it is still a draft** reconstructed from
-  the README. `CLAUDE.md` says review it with you first, and the practice is 3 for 3 —
-  M5's own review turned a one-line bullet into three items, two already shipped. The
-  ranking evaluation needs a labelled gold set and carries a **one-week timebox**; if the
-  timebox expires, stop. Worth asking whether it is the right next thing at all, given the
-  two frontend items below have been deferred four times.
+- **M6 was reviewed the same day and closed unbuilt** — see the section below. The scope
+  review is 4 for 4, and this is the first time its finding ended a milestone instead of
+  reshaping one.
 - **Something for you to run when convenient**: the containers were serving
   `LLM_PROVIDER=fake` while `.env` says `gemini`, left over from an earlier session's
   `export`. Harmless today and it is why this session cost zero quota — but the next
@@ -103,6 +100,38 @@ never that a browser check always finds something.
 - Two small open items, both one line each, both skipped because nothing was in the file:
   `RETRIEVAL_BACKEND` is in no `.env.example`, and `.env` has `OCR_ENGINE=tesseract` while
   `CLAUDE.md` frames it as off by default.
+
+### M6 was reviewed, and closed unbuilt
+
+The eight commits went up (`7a902da..6e583f3`) and CI run **31904311200** is green on both
+jobs with **0 annotations** — checked through the API, not read off the tick. Worth having
+done: CI had never run slice 4's `pdfjs-dist` install or its `prebuild` worker-copy hook,
+and `web/public/` is gitignored in its entirety, so a clean runner was the only thing that
+could tell us. It passed. (A correction to what I said before pushing: CI *had* already
+seen slices 2 and 3 — runs `31827797239` and `31859784282`. Only slice 4 was unseen.)
+
+Then M6 got the scope review `CLAUDE.md` asks for, and the answer was **do not build it**.
+Four reasons, all from the code rather than from judgement, and they are in `PLAN.md`'s M6
+section in full:
+
+- **`pipeline/retrieval.py:21-24` already forbids the comparison M6 is built on.** It says
+  a retrieval score and a ranking score "must not be shown as though they were
+  comparable". BM25 is a retrieval scorer; M6 proposed to evaluate *ranking* against it.
+- **`retrieval.py:165` calls the lexical retriever "BM25's idea without its tuning
+  knobs"**, with a real IDF at line 232. The coherent question shrinks to tuned-vs-untuned
+  BM25 on nine documents.
+- **The embedding half is a paid adapter**, gated by the same hard rule as
+  `LLM_PROVIDER=anthropic` — price table plus a recorded live run — not an evaluation.
+- **The corpus is nine synthetic resumes** built to exercise the parser, and real ones may
+  never enter this repo. Labelling your own documents against your own postings produces a
+  number nobody should trust, which is the one thing this project exists to refuse.
+
+**The reason is recorded, not the outcome.** "We ran out of time" and "it cannot be built
+honestly as scoped" are different claims, and only one of them is true here.
+
+`README.md` was corrected in the same commit: its metrics table listed "Cost and latency
+per document" as a shipped free metric, and cost is structurally `$0.00` — the same stale
+claim slice 2 was respecified over, still sitting one file away.
 
 ---
 

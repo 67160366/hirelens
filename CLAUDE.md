@@ -2,14 +2,20 @@
 
 HireLens — resume screening where every claim the system makes cites the exact text
 it came from. FastAPI (`api/`) + Next.js (`web/`). Thai and English resumes.
-Current milestone: **M5**, scoped with the owner on 2026-08-13 (M4 closed 2026-08-12,
-M3 the same day). Its five slices are commitments in `docs/PLAN.md`: the
-dropped-claims audit view, a cost and quality dashboard, word geometry at parse time,
-the pdf.js overlay on top of it, and production compose. **M6 is still a draft**
-reconstructed from the README — review it with the owner before building to it, the
-way M3's, M4's and M5's were; all three paid for themselves. The authoritative
-per-item status is the table in `docs/PLAN.md`. Orientation for a new session: this
-file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
+**M1–M5 are all closed** (M5 on 2026-08-16), each scoped with the owner rather than
+reconstructed. **M6 was reviewed on 2026-08-16 and closed unbuilt** — not deferred: a
+ranking evaluation against a BM25 baseline is a category error the codebase already warns
+about (`pipeline/retrieval.py:21-24`), the embedding half is a paid adapter under the
+hard rule below, and a gold set over nine synthetic fixtures would be marking its own
+homework. `docs/PLAN.md`'s M6 section carries all four reasons. **Do not reopen it by
+treating it as a backlog item**; if it is revisited, the two honest shapes are named
+there. The authoritative per-item status is the table in `docs/PLAN.md`. Orientation for a
+new session: this file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
+
+**There is no milestone in progress.** The named next items are `useAuth` owing a
+`useSyncExternalStore` rewrite, and httpOnly cookies with the refresh-token denylist —
+which `docs/RUNBOOK.md` made more pressing, since rotating `JWT_SECRET` is currently the
+only way to revoke anything and it signs everybody out at once.
 
 M5's organizing idea, the same shape as the two below: **every number on an
 observability screen is a query over rows the system already wrote, and can name the
@@ -136,9 +142,10 @@ From `web/`: `npm run dev` (:3000), `npm run typecheck`, `npm run lint`, `npm te
    `web/` changed);
    new behaviour pinned by tests; `docs/PLAN.md` status updated, and `docs/HANDOFF.md`
    refreshed when a milestone completes.
-6. **Scope discipline.** Milestones live in `docs/PLAN.md`. In particular, the
-   baseline-ranking evaluation is M6 with a one-week timebox — do not quietly pull
-   it into earlier milestones.
+6. **Scope discipline.** Milestones live in `docs/PLAN.md`. The baseline-ranking
+   evaluation was M6 and is **closed unbuilt** — do not resurrect it as a "quick win",
+   and do not let a retrieval score be presented next to a ranking score anywhere, which
+   is the confusion that killed it.
 7. **Leave the session readable.** Commit each finished slice the moment its gates
    are green rather than batching — a session that ends early should never hold work
    that only a diff explains. If a run is cut short, the dated `docs/NOTES.md` entry
