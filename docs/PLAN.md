@@ -15,8 +15,12 @@ of which were already shipped, and caught a load-bearing claim about the codebas
 was false; M6's found that the milestone contradicted a rule `pipeline/retrieval.py` has
 stated in its own docstring since M3.
 
-**There is no milestone in progress.** The only named unstarted item is httpOnly cookies
-instead of `localStorage`, under "Auth — beyond M1".
+**There is no milestone in progress, and nothing named is outstanding.** The last two
+items under "Auth — beyond M1" — a per-account token epoch, so a password change reaches
+every device, and httpOnly cookies instead of `localStorage` — both landed on 2026-08-18
+and 08-19. What remains there is one unticked box, `POST /auth/logout-everywhere`, which
+is three lines on the epoch and was deliberately not built because nothing asked for the
+route.
 
 | Milestone | Scope | Status |
 |---|---|---|
@@ -635,7 +639,7 @@ remaining third turned out to rest on a claim about the codebase that is false.
 | Whether the overlay justifies a route serving raw PII bytes | **Yes, on the ownership rule that already exists.** `_owned_resume` — the uploader, and a recruiter the candidate applied to — 404 rather than 403, `no-store`, and no filename in any log. A page that came from OCR has no geometry to overlay onto, so it falls back to the text pane **and says why**, rather than silently rendering nothing |
 | Where the overlay's geometry comes from | **Stored at parse time, in its own slice with its own migration.** See below — this is the answer that changed the shape of the milestone |
 | Observability shape | **An in-app dashboard over `llm_call_logs`.** Bounded, no new table, no new infrastructure, and it keeps "every dependency has a no-server default" intact. Shipping logs to something queryable would need a seam like `Storage`/`OCREngine`/`Retriever`, and nothing in M5 needs it yet |
-| httpOnly cookies instead of localStorage | **Deferred again**, with the refresh-token denylist it drags in. It is a storage decision, and none of M5's commitments need it |
+| httpOnly cookies instead of localStorage | **Deferred again**, with the refresh-token denylist it drags in. It is a storage decision, and none of M5's commitments need it. *(Both landed after M5 closed — the denylist 2026-08-16, the cookies 2026-08-19. This row records what was decided while scoping M5, not the current state.)* |
 | What "deploy" means | **A production compose profile on this machine, plus a runbook.** Secrets out of `.env`, restart policies, Postgres and Redis not published to the host. A real cloud host is a bigger question than this milestone |
 | jsdom in `web/` | **Not yet.** The `next@16` browser check caught everything jsdom would have and several things it could not — whether the stylesheet actually loaded, whether SSE still streams. The no-DOM property stays, and driving the browser *inside* the slice stays the check |
 
@@ -1091,8 +1095,8 @@ producing them.** Check the claims a slice rests on at the moment you build it.
   Thai requirement at 36 chars / 90 bytes, the four-row audit log with its attribution
   intact, and zero console output on an instrument proven live first. Both throwaway
   accounts erased afterwards.
-- Still open: run the compose stack in production mode, and httpOnly cookie auth
-  instead of localStorage.
+- Still open *at the time*: run the compose stack in production mode (M5 slice 5,
+  done 2026-08-16), and httpOnly cookie auth instead of localStorage (done 2026-08-19).
 
 ## Auth — beyond M1
 
@@ -1232,15 +1236,85 @@ producing them.** Check the claims a slice rests on at the moment you build it.
   endpoint nobody requested is how scope grows. Recorded here so the cost is known if it
   is ever wanted.
 
-- [ ] **httpOnly cookies instead of `localStorage`.** The other half of the auth story
-  and now the only one left: the denylist above answers *revocation*, this answers *XSS
-  token theft*. Deferred a fifth time deliberately — it changes every client call, the
-  SSE stream and the PDF fetch, and it needs a decision about whether bearer auth
-  survives alongside it, since every `curl` in `docs/RUNBOOK.md` and every verification
-  run in these documents uses one. Checked while scoping the denylist: CORS already sets
-  `allow_credentials=True`, and on localhost `:3000` → `:8000` is **same-site** for
-  cookies (ports do not affect SameSite), so dev works with `Lax` and only a
-  cross-domain deploy needs `None; Secure`.
+- [x] **httpOnly cookies instead of `localStorage`** (2026-08-19). The other half of the
+  auth story: the denylist answers *revocation*, this answers *XSS token theft*.
+  Deferred five times, and the owner's decision is what unblocked it — **bearer auth
+  stays alongside**, so every `curl` in `docs/RUNBOOK.md` and every verification run in
+  these documents is unaffected. Two commits: the server issuing and accepting cookies
+  with `web/` untouched, then the browser stopping holding a token.
+
+  **The mechanism was measured before anything was built on it**, which is the practice
+  the last five sessions each paid for. Four checks in a browser, in twenty minutes:
+  a credentialed cross-origin fetch survives Starlette's `allow_headers=["*"]` +
+  `allow_credentials=True` (200 on a forced preflight, so **CORS needed no change**);
+  Chrome accepts `Secure` on `http://localhost`, since localhost is a secure context;
+  a cookie set by `:8000` **is** stored and returned by a page on `:3000`; and — the
+  one that mattered — **it is not, from `127.0.0.1:3000`.** Cookies ignore ports, so
+  `localhost:3000` → `localhost:8000` is same-site while `127.0.0.1:3000` is a
+  different site entirely. Both origins are in `CORS_ORIGINS`, so the request succeeds
+  and only the credential goes missing: **200 from signing in and 401 from everything
+  after it.** That is why the client checks `GET /auth/me` after a sign-in and names
+  the cause rather than looking broken.
+
+  Decisions worth not re-litigating:
+  **Bearer wins when both are presented.** It keeps every existing caller behaving
+  identically and stops a stale cookie shadowing a header a script set on purpose.
+  **The refresh cookie is scoped to `/auth`**, so the credential that can mint a
+  fortnight of access tokens is not attached to every upload and PDF fetch. `/auth/refresh`
+  and `/auth/logout` read it there, because a browser cannot read its own httpOnly
+  cookie to put it in a body.
+  **A bearer caller's cookie is ignored by `/auth/logout`** rather than merely losing to
+  it: the two can be different sessions of one account, and the route ends the one the
+  caller is in. That rule kept the pre-existing "omitting the refresh token leaves the
+  session renewable" test passing unchanged, which is how it was found to be right.
+  **A cookie-authenticated write from an outside `Origin` is 403.** `SameSite=lax`
+  already blocks it, so the guard never fires by default — it is there for
+  `COOKIE_SAMESITE=none`, which a cross-domain deploy needs and which throws that
+  protection away. A security property that evaporates on a config change is not one.
+  A missing `Origin` is allowed: browsers always send it on unsafe methods, so its
+  absence means a non-browser client.
+  **`COOKIE_SAMESITE=none` without `COOKIE_SECURE=true` refuses at startup**, beside the
+  placeholder-secret guard. Browsers drop that cookie outright, so what it prevents is
+  not a weakness but authentication that silently never worked.
+  **The client keeps a non-secret identity marker in `localStorage`.** A cookie fires no
+  `storage` event, so without it one tab could not learn another had signed out and the
+  `useSyncExternalStore` store would have been traded away for nothing.
+
+  Gates: `pytest` **657 → 680** (`tests/test_cookie_auth.py` + the settings guard),
+  vitest **137 → 165**, everything else clean.
+
+  **Two mutations survived the first draft of the cookie tests, and that is the reusable
+  part.** Clearing the refresh cookie on the wrong `path` and ignoring the refresh cookie
+  during logout both left every case passing — they were covering for each other, because
+  logout revokes the token *and* clears the cookie, and either one alone produces the
+  other's symptom. They are pinned apart now: revocation by keeping the token and
+  replaying it in a body, clearing by looking in the jar. **When one mechanism can
+  produce the other's symptom, testing the symptom tests neither.**
+
+  **And the browser found one thing no gate could, for the fourth slice running.**
+  `DocumentViewer` fires two *independent* `authorized` calls, so an expired access token
+  produces two 401s milliseconds apart and two renewals — and a refresh token is
+  single-use, so whichever arrives second presents one just revoked, reads the 401 as an
+  unrenewable session, and signs the user out moments after a renewal that worked. Driven
+  against a one-minute access token both answered 200, because the first response updated
+  the cookie jar before the second request left; that is timing, not a guarantee.
+  Concurrent renewals share one in-flight request now, and both halves of that are
+  mutation-confirmed.
+
+  **Two instrument faults on the way, both caught before being reported as defects.** A
+  throwaway API container run for the short-TTL probe had **no uploads volume**, so
+  `GET /resumes/{id}/file` answered 404 while `/geometry` answered 200 — which reads
+  exactly like a broken auth path. And it signed tokens with the compose *default*
+  `JWT_SECRET` while the real stack uses `.env`'s, so restoring the real API silently
+  invalidated the browser's session. Neither was the code.
+
+  **A third almost went the other way.** `psql` showed a `refresh | LOGOUT` row and no
+  `access | LOGOUT` row after a browser sign-out, which looks like a route revoking half
+  a session. It is `purge_expired` doing its job: an access token lives thirty minutes,
+  the sweep runs hourly, and the walkthrough's row had expired two hours earlier. A
+  `curl` logout moments later produced both rows. **`revoked_tokens` is sized by
+  outstanding sessions, not by history — it cannot be read as an audit log after the
+  fact.**
 
 ## M6 — reviewed and closed unbuilt (2026-08-16)
 

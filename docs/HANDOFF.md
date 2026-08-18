@@ -15,7 +15,8 @@ the project back up — then
 `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
 Updated again 2026-08-18, when a password change stopped being something only the
-caller's own session noticed.
+caller's own session noticed, and 2026-08-19, when the browser stopped holding a
+token at all.
 
 ---
 
@@ -149,12 +150,20 @@ slices 2, 3 and 5.
 | **The build-arg trap, exercised rather than quoted** | The rehearsal ran on :8100, so `NEXT_PUBLIC_API_BASE` genuinely differed and the web image rebuilt: its served chunks carry `localhost:8100` and nothing else. `CORS_ORIGINS` had to match or every request would have failed preflight — the consent route answered 200 from the page, which is what proved it (2026-08-16) |
 | Prod and dev images stay separate | `hirelens-api:prod`/`hirelens-web:prod` vs `:local`, distinct ids in `docker images`. Without the tag override a rehearsal build overwrites `:local` and the next dev `up` silently adopts a bundle built against the rehearsal's API URL (2026-08-16) |
 | Backup carries its schema version | `pg_dump` through the container: 662 lines, 10 tables, and `alembic_version` preserved at `d0e1f2a3b4c5` — checked, because a dump that cannot say what schema it is cannot be restored with confidence (2026-08-16) |
+| **The cookie is invisible to script, on an instrument proven to speak** | The property the whole slice exists for, and an absence — so a control cookie was set from `document.cookie` and **confirmed visible first**. Then: `hirelens_access` and `hirelens_refresh` both absent from `document.cookie`, and `localStorage` holding one key, the identity marker, with no token in it (2026-08-19) |
+| **The whole journey on cookies, zero Gemini quota** | Register → consent unticked on load with the file picker disabled until ticked → `resume_th.pdf` → **10/10 verified, 0.0% unverifiable, 1 model call**, Thai citations at exact char ranges → the pdf.js overlay rendering with its boxes on the page. `navigations: 1` throughout. The SSE route answered **200, not 401**, in the API log — which is what separates "the stream authenticated" from "it 401'd and polling covered for it" (2026-08-19) |
+| **401 → renew → retry, against a real expired token** | The dev API replaced on :8000 by the same image with `JWT_ACCESS_TTL_MINUTES=1`, so the client's own cookie really expired. A raw probe **401** first, so the expiry was proven before the recovery meant anything. Then the app's own path, in the server log: four calls **401**, one `POST /auth/refresh` **200** with no body, four retries **200** — and the page never reloaded (2026-08-19) |
+| ⚠️ **The concurrent renewal, and why it passed anyway** | `DocumentViewer`'s two *independent* `authorized` calls both 401'd and both renewed: **two `POST /auth/refresh`, both 200**. They should not both be able to succeed — a refresh token is single-use — and they did only because the first response updated the cookie jar before the second request left. Timing, not a guarantee; a genuine tie signs the user out. Fixed by sharing one in-flight renewal (2026-08-19) |
+| **Cross-tab sign-out, and it reaches the server** | Two tabs signed in; Sign out in one. **Both** fell back to the sign-in form with `localStorage` empty and `navigations: 1` each. `psql` then shows the refresh token revoked with reason `LOGOUT` — so the click ended the session rather than only the tab, which is the half that `localStorage` never needed and a cookie does (2026-08-19) |
+| **Both credentials work against one running API** | `curl -b cookies.txt` **200** and `curl -H "Authorization: Bearer …"` **200**, same container, same account. The jar read off the wire shows `hirelens_access` at `path=/` and `hirelens_refresh` at `path=/auth`, both `HttpOnly` (2026-08-19) |
+| ⚠️ **Cookie auth does not work from `127.0.0.1`** | Measured, not reasoned about: the same page served from `127.0.0.1:3000` gets **401** from `/auth/me` while `localhost:3000` gets 200. Both are in `CORS_ORIGINS` and the request reaches the API — only the cookie is withheld, because ports do not make two hosts the same site. The client detects it and names the cause (2026-08-19) |
+| Compose really passes the cookie settings | `docker compose config` with `COOKIE_SECURE`/`COOKIE_SAMESITE` set **and** unset. A setting the compose file does not name never reaches the container and reports nothing — M5 slice 5's trap, and worse here: `COOKIE_SECURE` silently false on an HTTPS deploy is a session cookie in the clear (2026-08-19) |
 | **A password change, watched on two devices** | Two sessions signed in to one account against real Postgres; the password changed on one. The other's **access token 401 and its refresh token 401** — the second is the half that matters, since a refresh token could otherwise mint access tokens for a fortnight. Then signing in again with the new password: **200**, because signed out is not locked out, which is what a too-eager epoch comparison would have broken invisibly. `psql`: `token_epoch = 1`, one `PASSWORD_CHANGED` row, and the new pair carrying `epoch = 1` read out of the JWT itself (2026-08-18) |
 | **Both browser tabs fell back, and neither reloaded** | Two tabs signed in at :3000; a *third* session outside the browser changed the password. The next authenticated read in tab B went 401 → renewal 401 → `clearSession`, and **both tabs** showed the sign-in form with `localStorage` empty and `performance.getEntriesByType('navigation').length === 1` in each. The epoch and the `useSyncExternalStore` store composing, watched rather than inferred. Console clean **on an instrument proven to speak first** — a probe pair emitted and confirmed visible, because this tool only starts capturing when it is first called (2026-08-18) |
 | **The runbook's epoch bump, run before it was written down** | `update candidates set token_epoch = token_epoch + 1` → the account's access token **401** and its refresh token **401**, the same password then signing in fine, and **0** rows in `revoked_tokens` for it — which is the caveat the runbook now carries: this one leaves no record of itself (2026-08-18) |
 | Migration `0012` on both dialects | SQLite `upgrade head` → `downgrade base` under `set -e`, which is where CI runs it — and under `set -e` specifically, because a self-written `OK` echo on a command that failed is how migration `0011` nearly reported a pass. Then Postgres `upgrade head` → `downgrade -1` → `upgrade head` with `alembic check` clean, `token_epoch` read out of `information_schema` as **`integer NOT NULL` with no server default left behind**, and all **23** existing accounts backfilled to 0 (2026-08-18) |
-| `pytest -q` | **657** passed, 38 skipped as of 2026-08-18 (+6 for the token epoch, of which one *replaces* the test that pinned the limitation it closed). **651** as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
-| `npm test` | **137** in `web/` as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
+| `pytest -q` | **680** passed, 38 skipped as of 2026-08-19 (+19 for cookie auth, +4 for its settings guard). **657** as of 2026-08-18 (+6 for the token epoch, of which one *replaces* the test that pinned the limitation it closed). **651** as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `npm test` | **165** in `web/` as of 2026-08-19 (+28 for the session store on cookies: the identity marker, the memoised snapshot `useSyncExternalStore` needs, signing out reaching the server, and the shared renewal). **137** as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -1193,10 +1202,52 @@ writes no history, so without it a password change is the one revocation an oper
 see no reason for. A test pins it now. The general form: "no test fails when I delete it"
 distinguishes dead code from *untested* code only if you ask what the line is for.
 
-What is named and unstarted: **httpOnly cookies** instead of `localStorage`. That is the
-XSS half rather than the revocation half, it changes every client call including the SSE
-stream and the PDF fetch, and it needs a decision on whether bearer auth survives beside
-it — every `curl` in `docs/RUNBOOK.md` uses one.
+**And on 2026-08-19 the last named item landed: httpOnly cookies.** The browser holds no
+token anywhere script can read; what is left in `localStorage` is an identity marker
+(id, email, role), which is what `GET /auth/me` tells anyone holding the session anyway
+and which exists only because a cookie fires no `storage` event and the tabs have to
+stay in step. **Bearer auth is unchanged and wins when both are presented**, so every
+`curl` here and in the runbook is unaffected — that was the owner's decision and it is
+what made the slice two independent commits instead of one risky one.
+
+**The mechanism was measured first, in a browser, before the client half was written** —
+the practice five consecutive sessions have each paid for. CORS needed no change
+(`allow_headers=["*"]` with credentials passes a forced preflight), `Secure` works on
+`http://localhost`, and a cookie set by `:8000` is stored and returned by a page on
+`:3000`. The finding that mattered: **it is not, from `127.0.0.1:3000`** — cookies
+ignore ports, so that is a *different site*, both origins are in `CORS_ORIGINS` so the
+request succeeds, and only the credential goes missing. Sign-in returns 200 and
+everything after it 401s. `establishSession` checks `GET /auth/me` right after signing
+in for exactly that reason, and names the cause.
+
+Three things worth carrying out of it:
+
+**When one mechanism can produce the other's symptom, testing the symptom tests
+neither.** Two mutations survived the first draft of `test_cookie_auth.py` — clearing
+the refresh cookie on the wrong `path`, and ignoring the refresh cookie during logout.
+Logout revokes the token *and* asks the browser to forget it, so each masks the other's
+absence. They are pinned apart now: revocation by keeping the token and replaying it in
+a body, clearing by looking in the jar.
+
+**The browser found a defect no gate could, for the fourth slice running.**
+`DocumentViewer` fires two *independent* `authorized` calls, so an expired access token
+yields two 401s and two renewals — and a refresh token is single-use, so the second
+presents one just revoked and signs the user out moments after a renewal that worked. It
+happened not to fire, because the first response updated the cookie jar before the second
+request left. Timing, not a guarantee. Concurrent renewals share one request now.
+
+**Two instrument faults were caught before being reported as defects, and a third almost
+went the other way.** A throwaway API container had no uploads volume (so `/file` 404'd
+while `/geometry` 200'd — indistinguishable from broken auth) and signed tokens with a
+different `JWT_SECRET` than compose passes. And `psql` showed a `refresh | LOGOUT` row
+with no `access | LOGOUT` beside it, which reads as a route revoking half a session — it
+is `purge_expired` doing its job two hours later. **`revoked_tokens` is sized by
+outstanding sessions, not by history, so it cannot be read as an audit log after the
+fact.**
+
+**So the auth story is complete**, and what is left is smaller than it: a
+`POST /auth/logout-everywhere` is three lines on the token epoch and was deliberately
+not built, because nothing asked for the route.
 
 | # | Work | Status |
 |---|---|---|
@@ -1360,6 +1411,24 @@ also tracks the status of every item above.
   tool answering the wrong question, while this one is a tool answering *nothing* in
   a way that reads as good news. Any check whose passing result is an **absence** —
   no errors, no rows, no diff, no annotations — needs a positive control first.
+- **A table that is deliberately swept cannot be read as a history** (2026-08-19).
+  `psql` showed a browser sign-out having revoked the refresh token and *not* the
+  access token, which reads as a route ending half a session. Both rows are written —
+  a `curl` logout moments later proved it. The access row had simply been swept:
+  access tokens live thirty minutes, `purge_expired` runs hourly, and the walkthrough
+  had happened two hours earlier. `revoked_tokens` is sized by outstanding sessions,
+  by design, so a query against it hours later under-reports by exactly the amount the
+  sweep was built to remove. The general form, and it is not the same as the entries
+  below: the instrument was honest and the *question* had a time dimension nobody
+  stated. Ask "as of when" before reading a table that has a retention policy.
+- **A probe container is not the system** (2026-08-19). Two faults in one session,
+  both from a throwaway API run with `docker run` beside the compose stack. It had no
+  uploads volume, so `GET /resumes/{id}/file` answered **404** while `/geometry`
+  answered 200 — which is exactly what a broken auth path looks like. And it took the
+  compose *default* `JWT_SECRET` while the real stack takes `.env`'s, so restoring the
+  real API silently invalidated the browser's session mid-walkthrough. Neither was the
+  code. When a probe differs from the stack it stands in for, enumerate how before
+  believing anything it says — mounts and secrets first.
 - **A command that does two things reports on one of them** (2026-08-14). `docker
   compose up -d --build` **built both images, failed to recreate the containers, and
   exited 0** — printing the error on its last line. The containers went on serving

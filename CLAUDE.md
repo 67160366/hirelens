@@ -26,10 +26,18 @@ mismatch is refused, so one integer ends sessions nothing ever recorded.
 verifying a token without checking the denylist accepts one somebody signed out, and it
 is the pairing that makes any of it true. `assert_live` takes the account row as a
 **required** argument so that pairing stays two things rather than three; mypy refuses a
-call that has not looked up whose token it is. The one named item left is **httpOnly
-cookies** instead of `localStorage`, which answers XSS token theft rather than
-revocation, and which needs a decision about whether bearer auth survives alongside it —
-every `curl` in `docs/RUNBOOK.md` uses one.
+call that has not looked up whose token it is. **httpOnly cookies landed on 2026-08-19**
+and with them the auth story is complete: the browser holds no token at all, only a
+non-secret identity marker that the `storage` event needs so tabs stay in step.
+**Bearer auth is unchanged and still wins when both are presented** — every `curl` in
+`docs/RUNBOOK.md` works as written. Two rules fall out. **The web origin and the API
+must be the same site**: cookies ignore ports, so `localhost:3000` → `localhost:8000`
+is fine while `127.0.0.1:3000` is cross-site and the cookie is silently withheld —
+signing in succeeds and everything after it 401s, which is why `establishSession`
+checks and names that cause. And **CSRF is answered where the cookie is the
+credential and nowhere else**: an outside `Origin` on a cookie-authenticated write is
+403, while a bearer-authenticated one is not, because a cross-site page cannot set that
+header. The same precision as 403-gates-a-route / 404-gates-a-row.
 
 M5's organizing idea, the same shape as the two below: **every number on an
 observability screen is a query over rows the system already wrote, and can name the

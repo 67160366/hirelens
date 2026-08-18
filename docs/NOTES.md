@@ -6,19 +6,78 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-18 (latest) — a password change now reaches the other devices
+## 2026-08-18 → 08-19 (latest) — the auth story is finished
 
-**No milestone is in progress** — M1–M5 are closed and M6 was closed unbuilt — so this
+**No milestone was in progress** — M1–M5 are closed and M6 was closed unbuilt — so this
 session took the two named leftovers plus the env hygiene that had been carried for two
-sessions. Two commits so far, neither pushed (your call, as always).
+sessions. **Both are done, so nothing named is outstanding.** Five commits, none pushed
+(your call, as always). The session ran past midnight, hence the two dates.
 
 | # | Commit | What it is |
 |---|---|---|
 | 1 | Name the retrieval backend in the example env, and say OCR is on here | `.env.example` gains a `RETRIEVAL_BACKEND` section, `CLAUDE.md`'s OCR framing corrected. Plus `.env` back to `LLM_PROVIDER=fake` (not committed — gitignored) |
 | 2 | End every session on a password change, not only the caller's own | `Candidate.token_epoch`, migration `0012`, the `epoch` claim, `assert_live`'s new signature, 6 test cases |
+| 3 | Record that the epoch landed, and the mutation call that went the other way | Six documents, and a new `RUNBOOK` section run before it was written |
+| 4 | Accept the session as a cookie the browser will not show to script | `app/cookies.py`, the cookie settings and their startup guard, the CSRF check, `tests/test_cookie_auth.py`. **No change to `web/`** |
+| 5 | Stop the browser from holding a token at all | `lib/auth.ts` rewritten onto an identity marker, `credentials: "include"`, ~30 `api.*` signatures, 5 pages, `AuthPanel` |
 
-Gates: `pytest -q` **651 → 657**, `ruff`/`mypy` (57 files) clean. Migration `0012`
-round-trips on both dialects.
+Gates: `pytest -q` **651 → 680**, vitest **137 → 165**, `ruff`/`mypy` (58 files)/
+`typecheck`/`lint`/`build` clean. Migration `0012` round-trips on both dialects.
+**Zero Gemini quota spent** across the whole session.
+
+### The httpOnly cookie half, in short
+
+Deferred five times, and the owner's decision is what unblocked it: **bearer auth stays
+alongside**, so every `curl` in the runbook is untouched. That let it land as two
+commits — the server issuing and accepting cookies with `web/` unchanged, then the
+browser stopping holding a token — the first of which is independently verifiable.
+
+**The mechanism was measured first, in twenty minutes, before the client half existed.**
+CORS needed no change; `Secure` works on `http://localhost`; a cookie set by `:8000` is
+stored and returned by a page on `:3000`. And the one that mattered: **it is not, from
+`127.0.0.1:3000`.** Cookies ignore ports, so that is a different *site*; both origins are
+in `CORS_ORIGINS`, so the request succeeds and only the credential goes missing —
+**sign-in 200, everything after it 401**. The client now checks `GET /auth/me` right
+after signing in and names that cause instead of looking broken.
+
+### The three things worth carrying
+
+- **When one mechanism can produce the other's symptom, testing the symptom tests
+  neither.** Two mutations survived the first draft of `test_cookie_auth.py`: clearing
+  the refresh cookie on the wrong `path`, and ignoring the refresh cookie during logout.
+  Logout revokes the token *and* asks the browser to forget it, and each masks the
+  other's absence. Pinned apart now — revocation by replaying the kept token in a body,
+  clearing by looking in the jar.
+- **"No test fails when I delete it" separates dead code from *untested* code only if
+  you ask what the line is for.** Mutation said the `PASSWORD_CHANGED` revocation was
+  redundant once the epoch existed, and this repo's precedent says such a line goes —
+  the `is_revoked` fast path and `geometry.py`'s separator reset were both deleted on
+  exactly that evidence. It was **kept**: those were *guards*, this is a *record*, and
+  bumping an integer writes no history, so deleting it would make a password change the
+  one revocation an operator can see no reason for. A test pins it now.
+- **The browser found a defect no gate could, for the fourth slice running.**
+  `DocumentViewer` fires two *independent* `authorized` calls, so an expired access
+  token yields two 401s and two renewals — and a refresh token is single-use, so the
+  second presents one just revoked and signs the user out moments after a renewal that
+  worked. Driven against a one-minute access token both answered 200, because the first
+  response updated the cookie jar before the second request left. **Timing, not a
+  guarantee.** Concurrent renewals share one request now.
+
+### Three instruments lied, and none of it reached a report
+
+Worth listing because two are a new species — a *probe* differing from the thing it
+stands in for:
+
+- A throwaway API container run beside the stack had **no uploads volume**, so
+  `GET /resumes/{id}/file` answered 404 while `/geometry` answered 200. That is
+  indistinguishable from a broken auth path.
+- The same container took the compose **default `JWT_SECRET`** while the real stack takes
+  `.env`'s, so restoring the real API silently killed the browser's session mid-walk.
+- And `psql` showed a sign-out revoking the refresh token and **not** the access token,
+  which reads as a route ending half a session. It is `purge_expired` doing its job two
+  hours later: access tokens live thirty minutes and the sweep runs hourly. A `curl`
+  logout moments afterwards wrote both rows. **`revoked_tokens` is sized by outstanding
+  sessions, not by history** — it cannot be read as an audit log after the fact.
 
 ### The thing worth remembering
 
@@ -93,12 +152,20 @@ Three decisions inside it, each confirmed load-bearing by mutation (2, 4 and 3 c
 - **`POST /auth/logout-everywhere` is three lines on top of what landed** and was
   deliberately not built — nothing asked for the route. Recorded in `PLAN.md` so the cost
   is known if you want it.
-- **httpOnly cookies is the one named item left**, and it is the largest of the three: it
-  changes every client call, the SSE stream and the PDF fetch. You have decided bearer
-  auth stays alongside it. There is a measurable trap to check *before* writing the client
-  half — cookies ignore ports, so `localhost:3000 → localhost:8000` is same-site and works
-  under `SameSite=Lax`, but `127.0.0.1:3000`, which is also in `CORS_ORIGINS`, is
-  cross-site and will not.
+- ~~**httpOnly cookies is the one named item left**~~ **Done, later the same session**,
+  and the trap this bullet predicted turned out to be real: `127.0.0.1:3000` cannot sign
+  in and `localhost:3000` can. Measured before the client half was written, which is what
+  kept it from being discovered by a confused user instead.
+- **Open the app on `localhost`, not `127.0.0.1`.** It is the same machine and not the
+  same *site*, so the session cookie is withheld and sign-in appears to work and then
+  does not. The client says so by name now, but it is easier to just use `localhost`.
+- **Nothing named is outstanding.** M1–M5 closed, M6 closed unbuilt, and both auth
+  leftovers done. The next thing is whatever you decide it is — there is no backlog
+  driving it. Two candidates, neither urgent: `POST /auth/logout-everywhere` (three lines
+  on the token epoch, not built because nothing asked for the route), and the three
+  cosmetic smells that have been "do them when already in the file" since 2026-08-14.
+- **Five commits sit unpushed.** Derive it with `git rev-list --count origin/main..main`
+  rather than trusting this line — this paragraph has been wrong before.
 
 ---
 

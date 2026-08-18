@@ -516,8 +516,29 @@ app/metrics/            dashboard การใช้งานและคุณ�
   `localStorage`) — `lib/auth.ts` เป็นที่เดียวที่แตะ `localStorage`, component สองตัวบน
   หน้าเดียวกันจึงเห็น token ตรงกันเสมอ และ **sign out แท็บนึงแล้วแท็บอื่นออกตาม**
   ผ่าน `storage` event
-- token เก็บใน `localStorage` (อ่านได้ด้วย XSS) — ยอมรับได้สำหรับ dev สองต้นทาง
-  คำตอบของ production คือ httpOnly cookie ซึ่ง **ยัง defer อยู่ (ข้อเดียวที่เหลือ)**
+- **เบราเซอร์ไม่ถือ token แล้ว** (2026-08-19) — session เป็น httpOnly cookie ที่ API ออกให้
+  สคริปต์บนหน้าเว็บอ่านไม่ได้เลย จึงปิดช่อง XSS ขโมย token ซึ่งเป็นครึ่งที่ denylist ไม่ได้ตอบ
+  สิ่งที่ยังอยู่ใน `localStorage` คือ **identity marker** (id, email, role) ไม่ใช่ credential —
+  มีไว้เพราะ React ต้องมีอะไรอ่านแบบ synchronous เพื่อ render และเพราะ **cookie ไม่ยิง
+  `storage` event** แท็บอื่นจึงจะไม่รู้ว่ามีคนกด sign out ถ้าไม่มีมัน
+  **bearer auth ยังใช้ได้เหมือนเดิมและชนะเมื่อส่งมาทั้งคู่** — `curl` ทุกคำสั่งใน RUNBOOK ไม่ต้องแก้
+- **กับดักที่ต้องรู้: หน้าเว็บกับ API ต้องเป็น same-site** — cookie ไม่สนใจ port ดังนั้น
+  `localhost:3000` → `localhost:8000` ใช้ได้ แต่ `127.0.0.1:3000` เป็น **คนละ site**
+  cookie จะไม่ถูกส่ง ทั้งที่ทั้งสอง origin อยู่ใน `CORS_ORIGINS` และ request ถึง API จริง
+  อาการคือ **login สำเร็จ 200 แล้วทุกอย่างหลังจากนั้น 401** ซึ่งงงที่สุด — `establishSession`
+  จึงยิง `GET /auth/me` ต่อทันทีหลัง login เพื่อจับกรณีนี้แล้วบอกสาเหตุตรง ๆ
+  (วัดในเบราเซอร์จริง ไม่ได้เดา)
+- **CSRF ตอบเฉพาะจุดที่ cookie เป็น credential เท่านั้น** — write ที่ auth ด้วย cookie และ
+  `Origin` ไม่อยู่ใน `CORS_ORIGINS` = **403** ส่วน write ที่ auth ด้วย bearer ไม่ถูกเช็ค
+  เพราะหน้าเว็บของคนอื่นตั้ง `Authorization` header ข้าม origin ไม่ได้ตั้งแต่แรก
+  เป็นความละเอียดแบบเดียวกับ "role คุม route (403) / ownership คุม row (404)"
+  โดยปกติ `SameSite=lax` กันให้อยู่แล้ว guard นี้มีไว้สำหรับ `COOKIE_SAMESITE=none`
+  ที่ deploy ข้ามโดเมนต้องใช้ — **คุณสมบัติความปลอดภัยที่หายไปเมื่อเปลี่ยน config ไม่นับว่ามี**
+- **บทเรียนจาก test ชุดนี้: เมื่อกลไกหนึ่งสร้างอาการของอีกกลไกได้ การเทสต์ที่อาการไม่ได้เทสต์อะไรเลย**
+  mutation สองตัวรอดใน test ฉบับแรก — ลบ cookie ผิด `path` กับไม่อ่าน refresh cookie ตอน logout
+  เพราะ logout ทำสองอย่าง (เพิกถอน token + สั่งเบราเซอร์ลืม) และแต่ละอย่างบังการหายไปของอีกอย่าง
+  ตอนนี้แยกกันแล้ว: เช็คการเพิกถอนด้วยการ**เก็บ token ไว้แล้วส่งซ้ำใน body**,
+  เช็คการลบด้วยการ**ดูใน cookie jar**
 - **refresh-token denylist ทำแล้ว** (2026-08-16, migration `0011`) — `POST /auth/logout`
   มีจริงแล้ว และ refresh token ที่ใช้ไปแล้วถูกเพิกถอนจริง ก่อนหน้านี้ `README` เขียนว่า
   "single-use" แต่**ไม่จริง**: ออก pair ใหม่แล้วปล่อยตัวเก่าใช้ได้ต่ออีก 14 วัน
