@@ -6,7 +6,103 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-16 (latest) — M5 closes, and the mechanism it was scoped with did not work
+## 2026-08-18 (latest) — a password change now reaches the other devices
+
+**No milestone is in progress** — M1–M5 are closed and M6 was closed unbuilt — so this
+session took the two named leftovers plus the env hygiene that had been carried for two
+sessions. Two commits so far, neither pushed (your call, as always).
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Name the retrieval backend in the example env, and say OCR is on here | `.env.example` gains a `RETRIEVAL_BACKEND` section, `CLAUDE.md`'s OCR framing corrected. Plus `.env` back to `LLM_PROVIDER=fake` (not committed — gitignored) |
+| 2 | End every session on a password change, not only the caller's own | `Candidate.token_epoch`, migration `0012`, the `epoch` claim, `assert_live`'s new signature, 6 test cases |
+
+Gates: `pytest -q` **651 → 657**, `ruff`/`mypy` (57 files) clean. Migration `0012`
+round-trips on both dialects.
+
+### The thing worth remembering
+
+**"No test fails when I delete it" separates dead code from *untested* code only if you
+ask what the line is for.** Mutation-testing said the `PASSWORD_CHANGED` revocation in
+`change_password` was redundant — all 656 cases passed without it, because the epoch
+refuses the token first. This repo's own precedent says such a line goes: the
+`is_revoked` fast path in front of the SAVEPOINT and the separator reset in
+`geometry.py` were both deleted on exactly that evidence.
+
+It was **kept**, and the difference is what it is *for*. Those two were **guards** —
+lines whose job was correctness, which something else was already achieving. This one is
+a **record**. Bumping an integer writes no history at all, so deleting it would make a
+password change the one revocation an operator can see no reason for, and no test would
+ever have noticed. So a test was written to pin it instead. A line kept for a reason no
+test states is a line the next person deletes.
+
+### Why an epoch and not a session registry
+
+Both were named in `token_service.py`'s docstring as the honest fixes, and the cost
+decided it. A registry writes a row on every login, keeps one per live session, and needs
+its own sweep — all to answer a question a counter answers without storing anything,
+because **ending a generation does not require knowing its members**. The registry is the
+right shape only when somebody wants to *list* a person's sessions or end one
+individually, and nothing here asks for that.
+
+Three decisions inside it, each confirmed load-bearing by mutation (2, 4 and 3 cases):
+
+- **`assert_live` takes the account row as a required argument.** The standing rule is
+  that `decode_token` and `assert_live` are called together; a third paired call would be
+  the one somebody forgets. Making the row a parameter turns the invariant into a mypy
+  error — you cannot check a token without having looked up whose it is — and it costs
+  nothing, because every caller needed the row anyway.
+- **A missing `epoch` claim reads as zero**, matching the backfill, so tokens already in
+  browsers kept working. Same instinct as `0011`, where the `jti` had been there since
+  M1. They still die on the first password change, so it is not a hole.
+- **`!=`, not `<`.** A token claiming an epoch the account never reached is forged;
+  accepting it for looking newer would make the check a lower bound to overshoot.
+
+### Watched, not only tested
+
+- **Two devices, real Postgres**: password changed on one → the other's access token
+  **401** *and* its refresh token **401**. The second is the half that matters — a
+  refresh token could otherwise mint access tokens for another fortnight.
+- **Signed out is not locked out**: the same account signs in again with the new password
+  and gets a working pair. Worth its own check, because "everything is refused" is what a
+  too-eager comparison produces and it is invisible from the other test's angle.
+- **Both browser tabs fell back and neither reloaded.** A *third* session outside the
+  browser changed the password; tab B's next authenticated read went 401 → renewal 401 →
+  `clearSession`, and both tabs showed the sign-in form with `navigations: 1` each. The
+  epoch and August 16th's `useSyncExternalStore` store composing.
+- Console clean **on an instrument proven to speak first** — the probe pair, because
+  `read_console_messages` only starts capturing when first called and its silence is
+  otherwise indistinguishable from a clean page. It reported "no messages" on the first
+  read of this session, which is exactly the trap.
+- **The runbook's new statement was run before it was written down.** `docs/RUNBOOK.md`
+  gained a "sign out every session for one account" section — one `UPDATE` on
+  `token_epoch` — and both of its caveats were driven: they are signed out but not locked
+  out, and it leaves **0** rows in `revoked_tokens`, so it records nothing about itself.
+
+### Advice for the owner
+
+- **Docker was not running** when the session started, despite being reported as open —
+  no `docker*` process existed at all. `C:` had 53 GB free, so this was not the
+  2026-08-14 disk-full failure where builds succeed and container swaps silently do not.
+  Started it from `%LOCALAPPDATA%\Programs\DockerDesktop` — the install is per-user, not
+  under `C:\Program Files`, which is worth knowing next time.
+- **`.env` said `LLM_PROVIDER=gemini`** while the containers had been serving `fake` since
+  a stray `export`. It is `fake` now, as you decided, so the next `up` in a fresh shell no
+  longer flips the dev stack onto the 20/day cap. **This whole session spent zero Gemini
+  quota.**
+- **`POST /auth/logout-everywhere` is three lines on top of what landed** and was
+  deliberately not built — nothing asked for the route. Recorded in `PLAN.md` so the cost
+  is known if you want it.
+- **httpOnly cookies is the one named item left**, and it is the largest of the three: it
+  changes every client call, the SSE stream and the PDF fetch. You have decided bearer
+  auth stays alongside it. There is a measurable trap to check *before* writing the client
+  half — cookies ignore ports, so `localhost:3000 → localhost:8000` is same-site and works
+  under `SameSite=Lax`, but `127.0.0.1:3000`, which is also in `CORS_ORIGINS`, is
+  cross-site and will not.
+
+---
+
+## 2026-08-16 — M5 closes, and the mechanism it was scoped with did not work
 
 **M5 is complete.** Slice 5 — production compose and a runbook — is done, and with it the
 milestone. Four commits, none pushed (your call, as always).

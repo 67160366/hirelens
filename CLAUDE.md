@@ -19,12 +19,17 @@ component copies it into state** — `web/lib/auth.ts` is the only thing that to
 signed in. The **refresh-token denylist landed the same day** (migration `0011`,
 `services/token_service.py`), so `POST /auth/logout` is real, a spent refresh token is
 genuinely single-use, and rotating `JWT_SECRET` is no longer the only revocation there
-is. **`decode_token` and `token_service.assert_live` must always be called together** —
+is. **A password change now ends every session on every device** (2026-08-18, migration
+`0012`): `Candidate.token_epoch` is the generation a token was minted under, and a
+mismatch is refused, so one integer ends sessions nothing ever recorded.
+**`decode_token` and `token_service.assert_live` must always be called together** —
 verifying a token without checking the denylist accepts one somebody signed out, and it
-is the pairing that makes any of it true. The one named item left is **httpOnly cookies**
-instead of `localStorage`, which answers XSS token theft rather than revocation, and
-which needs a decision about whether bearer auth survives alongside it — every `curl` in
-`docs/RUNBOOK.md` uses one.
+is the pairing that makes any of it true. `assert_live` takes the account row as a
+**required** argument so that pairing stays two things rather than three; mypy refuses a
+call that has not looked up whose token it is. The one named item left is **httpOnly
+cookies** instead of `localStorage`, which answers XSS token theft rather than
+revocation, and which needs a decision about whether bearer auth survives alongside it —
+every `curl` in `docs/RUNBOOK.md` uses one.
 
 M5's organizing idea, the same shape as the two below: **every number on an
 observability screen is a query over rows the system already wrote, and can name the

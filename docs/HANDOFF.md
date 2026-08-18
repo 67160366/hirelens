@@ -14,6 +14,8 @@ work. Read this first when picking
 the project back up — then
 `CLAUDE.md` for the rules and commands, and `docs/PLAN.md` for per-item milestone
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
+Updated again 2026-08-18, when a password change stopped being something only the
+caller's own session noticed.
 
 ---
 
@@ -147,7 +149,11 @@ slices 2, 3 and 5.
 | **The build-arg trap, exercised rather than quoted** | The rehearsal ran on :8100, so `NEXT_PUBLIC_API_BASE` genuinely differed and the web image rebuilt: its served chunks carry `localhost:8100` and nothing else. `CORS_ORIGINS` had to match or every request would have failed preflight — the consent route answered 200 from the page, which is what proved it (2026-08-16) |
 | Prod and dev images stay separate | `hirelens-api:prod`/`hirelens-web:prod` vs `:local`, distinct ids in `docker images`. Without the tag override a rehearsal build overwrites `:local` and the next dev `up` silently adopts a bundle built against the rehearsal's API URL (2026-08-16) |
 | Backup carries its schema version | `pg_dump` through the container: 662 lines, 10 tables, and `alembic_version` preserved at `d0e1f2a3b4c5` — checked, because a dump that cannot say what schema it is cannot be restored with confidence (2026-08-16) |
-| `pytest -q` | **651** passed, 38 skipped as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| **A password change, watched on two devices** | Two sessions signed in to one account against real Postgres; the password changed on one. The other's **access token 401 and its refresh token 401** — the second is the half that matters, since a refresh token could otherwise mint access tokens for a fortnight. Then signing in again with the new password: **200**, because signed out is not locked out, which is what a too-eager epoch comparison would have broken invisibly. `psql`: `token_epoch = 1`, one `PASSWORD_CHANGED` row, and the new pair carrying `epoch = 1` read out of the JWT itself (2026-08-18) |
+| **Both browser tabs fell back, and neither reloaded** | Two tabs signed in at :3000; a *third* session outside the browser changed the password. The next authenticated read in tab B went 401 → renewal 401 → `clearSession`, and **both tabs** showed the sign-in form with `localStorage` empty and `performance.getEntriesByType('navigation').length === 1` in each. The epoch and the `useSyncExternalStore` store composing, watched rather than inferred. Console clean **on an instrument proven to speak first** — a probe pair emitted and confirmed visible, because this tool only starts capturing when it is first called (2026-08-18) |
+| **The runbook's epoch bump, run before it was written down** | `update candidates set token_epoch = token_epoch + 1` → the account's access token **401** and its refresh token **401**, the same password then signing in fine, and **0** rows in `revoked_tokens` for it — which is the caveat the runbook now carries: this one leaves no record of itself (2026-08-18) |
+| Migration `0012` on both dialects | SQLite `upgrade head` → `downgrade base` under `set -e`, which is where CI runs it — and under `set -e` specifically, because a self-written `OK` echo on a command that failed is how migration `0011` nearly reported a pass. Then Postgres `upgrade head` → `downgrade -1` → `upgrade head` with `alembic check` clean, `token_epoch` read out of `information_schema` as **`integer NOT NULL` with no server default left behind**, and all **23** existing accounts backfilled to 0 (2026-08-18) |
+| `pytest -q` | **657** passed, 38 skipped as of 2026-08-18 (+6 for the token epoch, of which one *replaces* the test that pinned the limitation it closed). **651** as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
 | `npm test` | **137** in `web/` as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row |
@@ -1164,6 +1170,28 @@ changed — while `README.md` described refresh tokens as "single-use" when `POS
 /auth/refresh` was leaving the presented token valid for another fourteen days. **The
 rule to hold: `decode_token` and `token_service.assert_live` are always called
 together**; either alone is a hole.
+
+**And on 2026-08-18 the limitation that slice recorded was closed.** A password change
+could not sign out the account's *other* devices, because a denylist stores tokens that
+are dead and never tokens that are outstanding — so there was no list to walk. The fix is
+the second of the two shapes `token_service.py` named: **a per-account epoch**
+(`Candidate.token_epoch`, migration `0012`). Every token carries the generation it was
+minted under; the row carries the current one; a mismatch is refused. Bumping one integer
+therefore ends every session outstanding for that account without anything having to have
+recorded them. The registry was the alternative and costs a write per login and a table
+to sweep, to answer a question a counter answers without storing anything.
+
+Two things worth carrying out of it. **`assert_live` takes the account row as a required
+argument** rather than growing a third paired call — the standing rule is that
+`decode_token` and `assert_live` go together, and a third thing to remember is the one
+somebody forgets, so the invariant is a mypy error instead. And **the mutation pass
+disagreed with this project's own precedent, correctly**: deleting the
+`PASSWORD_CHANGED` revocation breaks no test, because the epoch refuses the token first —
+but it was *kept*, unlike the `is_revoked` fast path and `geometry.py`'s separator reset.
+Those were guards that could not fail; this is a **record**, and bumping an integer
+writes no history, so without it a password change is the one revocation an operator can
+see no reason for. A test pins it now. The general form: "no test fails when I delete it"
+distinguishes dead code from *untested* code only if you ask what the line is for.
 
 What is named and unstarted: **httpOnly cookies** instead of `localStorage`. That is the
 XSS half rather than the revocation half, it changes every client call including the SSE

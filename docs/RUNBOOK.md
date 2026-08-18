@@ -309,10 +309,30 @@ docker compose ... exec -T postgres psql -U hirelens -d hirelens \
   -c "select reason, token_type, count(*) from revoked_tokens group by 1,2;"
 ```
 
-**What this cannot do: sign out somebody's *other* devices.** The denylist stores only
-tokens that are dead, never the ones outstanding, so there is no list to walk. If you
-need every session for one person gone and you cannot ask them to log out on each device,
-the only tool is rotating `JWT_SECRET` — which signs out everybody.
+### End *every* session for one account
+
+There is no route for it, but a password change does exactly this, and so does the one
+statement behind it:
+
+```bash
+docker compose ... exec -T postgres psql -U hirelens -d hirelens \
+  -c "update candidates set token_epoch = token_epoch + 1 where email = 'them@example.com';"
+```
+
+Every token that account holds — on every device, access and refresh alike — is refused
+from the next request onward, because each carries the generation it was minted under and
+the row no longer matches. Nothing had to know which sessions existed, which is the whole
+reason it works: the denylist records only tokens that are *dead*, never the ones
+outstanding.
+
+Two things to know before running it. **They are signed out, not locked out** — their
+password still works and signing in gives them a current pair. And **it leaves no record
+of itself**: bumping an integer writes no history, so unlike a logout or a password change
+there will be no row in `revoked_tokens` explaining what happened. Note in your own
+incident log why you ran it.
+
+Rotating `JWT_SECRET` still exists and is still the bigger hammer: it signs out
+*everybody*, and it is the right tool only when the secret itself is what leaked.
 
 ## 7. When a document does not come out
 

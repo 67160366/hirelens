@@ -300,14 +300,17 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
 - **Ambiguous citations are flagged, not resolved.** A quote such as `Python` that
   appears in both a bullet and a skills list is reported as ambiguous rather than
   guessed at.
-- **A password change does not sign out the account's *other* devices.** It revokes the
-  token that made the call, and `/auth/logout` ends the session it is given — but the
-  denylist stores only tokens that are *dead*, never tokens that are outstanding, so
-  there is no list of other sessions to walk. One on another machine keeps working until
-  its own token expires. Closing this needs a session registry or a per-account epoch
-  inside the token payload, and neither is built. Pinned by
-  `tests/test_api.py::TestChangePassword::test_a_session_on_another_device_survives_a_password_change`,
-  which is written to fail the day it is fixed.
+- **A password change signs out every device, and one thing about it is still worth
+  knowing.** Each token carries the generation it was minted under (`epoch`), the account
+  row carries the current one, and a mismatch is refused — so bumping one integer ends
+  every session outstanding for that account without anything having to have recorded
+  them. What it does *not* do is end them on any schedule but the next request: a token
+  is refused when it is next presented, which for a client sitting idle means the session
+  looks alive until it tries something. Pinned by
+  `tests/test_api.py::TestChangePassword::test_a_session_on_another_device_is_signed_out_by_a_password_change`,
+  which replaced the test that used to pin the opposite as a known limitation.
+- **There is no "sign out everywhere" route**, though the epoch above makes one cheap.
+  `/auth/logout` deliberately ends only the session it is given.
 - **Anyone may register as a recruiter.** The role is a field on `POST /auth/register`,
   because there is no other way to become one. Verifying that somebody really
   represents the company they claim to is an identity problem this project has no

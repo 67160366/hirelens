@@ -1167,7 +1167,70 @@ producing them.** Check the claims a slice rests on at the moment you build it.
   and never outstanding ones, so there is no list to walk. That needs a session registry
   or a per-account epoch in the payload. `README.md` carries it, and
   `test_a_session_on_another_device_survives_a_password_change` pins it so it fails the
-  day somebody fixes it.
+  day somebody fixes it. **Closed 2026-08-18 — see below.**
+
+- [x] **A password change signs out every device** (2026-08-18). The limitation above,
+  closed with the second of the two shapes it named: a per-account epoch, not a session
+  registry. `Candidate.token_epoch` (migration `0012`), an `epoch` claim in every token,
+  and the comparison folded into `token_service.assert_live`.
+
+  **Why the epoch and not the registry**, decided on cost rather than taste: a registry
+  means a write on every login, a row per live session, and a second thing to sweep — and
+  it exists only to answer a question a counter answers without storing anything. Ending
+  a *generation* does not require knowing its members. The registry is the right shape
+  only if somebody later wants to *list* a person's sessions or end one of them
+  individually, which nothing here asks for.
+
+  Three decisions:
+  **`assert_live` takes the account row as a required argument.** The standing rule is
+  that `decode_token` and `assert_live` are called together; a third paired call would be
+  the one somebody forgets, so the invariant became a mypy error instead — you cannot
+  check a token without having looked up whose it is. It costs nothing, because every
+  caller needed the row anyway and the identity map makes the second `session.get` free.
+  **A missing `epoch` claim reads as zero**, and the backfill starts every account at
+  zero, so tokens already in browsers kept working — exactly as `0011` changed nothing
+  about tokens already issued. They are not grandfathered past anything: the first
+  password change moves the row to one and refuses them with the rest. Contrast `jti`,
+  whose absence still means forgery.
+  **The comparison is `!=`, not `<`.** A token claiming an epoch the account has never
+  reached is forged or replayed, and accepting it for looking *newer* would turn an
+  identity check into a lower bound an attacker only has to overshoot.
+
+  Gates: `pytest` **651 → 657**. Three decisions confirmed load-bearing by mutation (2, 4
+  and 3 cases fail when the bump, the comparison and the payload claim are removed in
+  turn). **A fourth was confirmed *not* to be, and kept anyway**: deleting the
+  `PASSWORD_CHANGED` revocation breaks nothing, because the epoch refuses the token
+  first. It stays because bumping an integer writes no history, so without that row a
+  password change is the one revocation an operator can see no reason for — and a test
+  now pins it, since a line kept for a reason no test states is a line the next person
+  deletes. That is the opposite call from the `is_revoked` fast path and the
+  `geometry.py` separator reset, and the difference is that those were *guards* while
+  this is a *record*.
+
+  `test_a_session_on_another_device_survives_a_password_change` failed, which was its
+  job, and is now `…_is_signed_out_by_a_password_change` — the third use of that device
+  here. Migration `0012` round-trips on both dialects: SQLite under `set -e` where CI
+  runs it, and Postgres with `alembic check` clean, the column read from
+  `information_schema` as `integer NOT NULL` with **no server default left behind**, and
+  all 23 existing accounts backfilled to 0.
+
+  Driven against the containers and real Postgres: two devices signed in, a password
+  change on one, and the other's **access token 401 and its refresh token 401** — the
+  half that matters, since the refresh token is what could otherwise mint access tokens
+  for a fortnight. Then in a browser, with a third session changing the password from
+  outside it: both tabs fell back to the sign-in form with storage cleared and
+  **`navigations: 1` in each** — neither reloaded, so the `useSyncExternalStore` store
+  and the epoch compose. Console clean on an instrument proven to speak first.
+
+  **`docs/RUNBOOK.md` gained a "sign out every session for one account" section**, which
+  is one `UPDATE` on `token_epoch` — run verbatim before it was written down, including
+  both of its caveats: they are signed out but not locked out, and it leaves no record of
+  itself.
+
+- [ ] **`POST /auth/logout-everywhere`.** Three lines on top of the epoch above, and
+  deliberately not built with it: nothing asked for the route, and a slice that ships an
+  endpoint nobody requested is how scope grows. Recorded here so the cost is known if it
+  is ever wanted.
 
 - [ ] **httpOnly cookies instead of `localStorage`.** The other half of the auth story
   and now the only one left: the denylist above answers *revocation*, this answers *XSS
