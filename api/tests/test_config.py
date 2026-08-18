@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.config import DEFAULT_JWT_SECRET, AppEnv, Settings
+from app.config import DEFAULT_JWT_SECRET, AppEnv, CookieSameSite, Settings
 
 
 class TestJwtSecretGuard:
@@ -44,3 +44,28 @@ class TestCorsOrigins:
     def test_a_real_list_still_works(self):
         settings = Settings(_env_file=None, cors_origins=["http://example.test"])
         assert settings.cors_origins == ["http://example.test"]
+
+
+class TestCookieGuard:
+    """`SameSite=None` without `Secure` is not weakly held — every browser drops it.
+
+    So the failure this refuses is not a security hole, it is authentication that
+    silently does not work at all, on the one configuration somebody reaches for
+    *because* the ordinary one would not do. Same instinct as the JWT_SECRET guard:
+    fail where somebody is looking.
+    """
+
+    def test_samesite_none_without_secure_is_refused(self):
+        with pytest.raises(ValidationError, match="COOKIE_SAMESITE"):
+            Settings(_env_file=None, cookie_samesite=CookieSameSite.NONE, cookie_secure=False)
+
+    def test_samesite_none_with_secure_is_accepted(self):
+        settings = Settings(_env_file=None, cookie_samesite=CookieSameSite.NONE, cookie_secure=True)
+        assert settings.cookie_samesite is CookieSameSite.NONE
+
+    def test_the_default_needs_no_secure_flag(self):
+        """Dev is plain http, and lax carries its own protection — so the default
+        pair has to be one a fresh clone can actually run."""
+        settings = Settings(_env_file=None)
+        assert settings.cookie_samesite is CookieSameSite.LAX
+        assert settings.cookie_secure is False

@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings, get_settings
+from app.cookies import ACCESS_COOKIE
 from app.db import get_session
 from app.llm.base import StructuredExtractor
 from app.models import Candidate, Role
@@ -23,6 +24,62 @@ _bearer = HTTPBearer(auto_error=False)
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+def _present_credential(
+    request: Request, credentials: HTTPAuthorizationCredentials | None
+) -> tuple[str, bool] | None:
+    """The access token this request offers, and whether it came from a cookie.
+
+    **Bearer wins when both are present**, which keeps every existing caller — the
+    whole test suite, every `curl` in the runbook, every recorded verification run —
+    behaving exactly as it did, and makes a stale cookie in some browser unable to
+    shadow a header a script deliberately set.
+
+    Returning *where* it came from is not bookkeeping: it decides whether the CSRF
+    check below applies. A cookie is attached by the browser whatever page asked; an
+    `Authorization` header can only be set by script that already has the token, and
+    a cross-site page cannot set one without a preflight this API refuses.
+    """
+    if credentials is not None:
+        return credentials.credentials, False
+    from_cookie = request.cookies.get(ACCESS_COOKIE)
+    if from_cookie:
+        return from_cookie, True
+    return None
+
+
+def _refuse_cross_site_write(request: Request, settings: Settings) -> None:
+    """Refuse a cookie-authenticated write that came from somewhere else's page.
+
+    `SameSite=lax` already stops the browser attaching these cookies to a cross-site
+    write, so on the default configuration this guard never fires. It exists for the
+    configuration where that protection is deliberately switched off:
+    `COOKIE_SAMESITE=none`, which a genuinely cross-domain deploy needs and which
+    removes the only thing standing between a cookie and a forged write. Without
+    this, turning that knob would open CSRF and nothing would say so — a security
+    property that evaporates on a config change is not one.
+
+    **A missing `Origin` is allowed, and that is the deliberate part.** Browsers
+    attach `Origin` to every unsafe method, so its absence means a non-browser
+    client — `curl` with a cookie jar, a script, the runbook — and those are not what
+    CSRF is. Refusing them would break real callers to defend against an attacker who
+    cannot reach this code path anyway.
+
+    Only unsafe methods are checked. Nothing here mutates on `GET`, so a cross-site
+    navigation to one would leak nothing an attacker could read.
+    """
+    if request.method in _SAFE_METHODS:
+        return
+    origin = request.headers.get("origin")
+    if origin is None or origin in settings.cors_origins:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Cookie authentication is not accepted for a request from another origin.",
+    )
 
 
 def get_storage(request: Request) -> Storage:
@@ -70,19 +127,24 @@ SessionFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_sess
 
 
 async def get_current_candidate(
+    request: Request,
     session: SessionDep,
     settings: SettingsDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> AsyncIterator[Candidate]:
-    if credentials is None:
+    presented = _present_credential(request, credentials)
+    if presented is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    token, from_cookie = presented
+    if from_cookie:
+        _refuse_cross_site_write(request, settings)
 
     try:
-        claims = decode_token(settings, credentials.credentials, expected_type=TOKEN_TYPE_ACCESS)
+        claims = decode_token(settings, token, expected_type=TOKEN_TYPE_ACCESS)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -122,6 +184,7 @@ CandidateDep = Annotated[Candidate, Depends(get_current_candidate)]
 
 
 async def get_current_claims(
+    request: Request,
     session: SessionDep,
     settings: SettingsDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -142,14 +205,19 @@ async def get_current_claims(
     It is spelled out anyway rather than assumed, for the reason above — there is no
     promised order between two dependencies of one route.
     """
-    if credentials is None:
+    presented = _present_credential(request, credentials)
+    if presented is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    token, from_cookie = presented
+    if from_cookie:
+        _refuse_cross_site_write(request, settings)
+
     try:
-        claims = decode_token(settings, credentials.credentials, expected_type=TOKEN_TYPE_ACCESS)
+        claims = decode_token(settings, token, expected_type=TOKEN_TYPE_ACCESS)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

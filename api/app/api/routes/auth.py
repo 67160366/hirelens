@@ -9,13 +9,15 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app import cookies
 from app.api.deps import CandidateDep, ClaimsDep, SessionDep, SettingsDep, StorageDep
 from app.config import Settings
+from app.cookies import REFRESH_COOKIE
 from app.models import Candidate, RevocationReason, Role
 from app.security import (
     TOKEN_TYPE_REFRESH,
@@ -68,19 +70,31 @@ class TokenPair(BaseModel):
     token_type: str = "bearer"
 
 
-def _issue(settings: Settings, candidate: Candidate) -> TokenPair:
-    """Mint a pair under the account's *current* epoch.
+def _issue(settings: Settings, candidate: Candidate, response: Response) -> TokenPair:
+    """Mint a pair under the account's *current* epoch, and deliver it both ways.
 
     One helper rather than four call sites spelling it out, because a pair minted
     under a stale epoch is refused on its first use — a failure that reads as a bug
     in authentication rather than as the omission it is. `change_password` in
     particular has to bump the row **before** calling this, or it hands back
     credentials it has just invalidated.
+
+    **The same pair goes into the body and into httpOnly cookies.** A browser can
+    then ignore the body entirely and never hold a token where script can read it,
+    while a script keeps the body and ignores the cookies — one route serving both,
+    rather than a second set of endpoints that would drift from these.
     """
-    return TokenPair(
+    pair = TokenPair(
         access_token=create_access_token(settings, candidate.id, candidate.token_epoch),
         refresh_token=create_refresh_token(settings, candidate.id, candidate.token_epoch),
     )
+    cookies.set_session(
+        response,
+        settings=settings,
+        access_token=pair.access_token,
+        refresh_token=pair.refresh_token,
+    )
+    return pair
 
 
 class RefreshRequest(BaseModel):
@@ -110,7 +124,7 @@ class CandidateOut(BaseModel):
 
 @router.post("/register", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
 async def register(
-    payload: RegisterRequest, session: SessionDep, settings: SettingsDep
+    payload: RegisterRequest, response: Response, session: SessionDep, settings: SettingsDep
 ) -> TokenPair:
     candidate = Candidate(
         email=payload.email.lower(),
@@ -127,11 +141,13 @@ async def register(
             status_code=status.HTTP_409_CONFLICT, detail="Email is already registered"
         ) from exc
 
-    return _issue(settings, candidate)
+    return _issue(settings, candidate, response)
 
 
 @router.post("/login", response_model=TokenPair)
-async def login(payload: LoginRequest, session: SessionDep, settings: SettingsDep) -> TokenPair:
+async def login(
+    payload: LoginRequest, response: Response, session: SessionDep, settings: SettingsDep
+) -> TokenPair:
     result = await session.execute(
         select(Candidate).where(Candidate.email == payload.email.lower())
     )
@@ -146,22 +162,40 @@ async def login(payload: LoginRequest, session: SessionDep, settings: SettingsDe
     if not verify_password(payload.password, candidate.password_hash):
         raise invalid
 
-    return _issue(settings, candidate)
+    return _issue(settings, candidate, response)
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(payload: RefreshRequest, session: SessionDep, settings: SettingsDep) -> TokenPair:
+async def refresh(
+    request: Request,
+    response: Response,
+    session: SessionDep,
+    settings: SettingsDep,
+    payload: RefreshRequest | None = None,
+) -> TokenPair:
     """Trade a refresh token for a fresh pair.
 
     The refresh token is rotated on every use; `decode_token` enforces the type,
     so an access token presented here is rejected just as a refresh token is on
     protected routes.
+
+    **The body is optional, because a cookie client has nothing to put in it.** The
+    refresh cookie is httpOnly by design, so the page that wants to renew cannot read
+    the token to send it — the browser attaches it and the server reads it there. The
+    body still wins when present, so every script and every `curl` in the runbook is
+    unaffected.
     """
     invalid = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
     )
+    presented = (
+        payload.refresh_token if payload is not None else request.cookies.get(REFRESH_COOKIE)
+    )
+    if not presented:
+        raise invalid
+
     try:
-        claims = decode_token(settings, payload.refresh_token, expected_type=TOKEN_TYPE_REFRESH)
+        claims = decode_token(settings, presented, expected_type=TOKEN_TYPE_REFRESH)
     except AuthError as exc:
         raise invalid from exc
 
@@ -184,16 +218,18 @@ async def refresh(payload: RefreshRequest, session: SessionDep, settings: Settin
     await token_service.revoke(session, claims, RevocationReason.REFRESH_ROTATED)
     await session.commit()
 
-    return _issue(settings, candidate)
+    return _issue(settings, candidate, response)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
-    payload: LogoutRequest,
+    request: Request,
+    response: Response,
     claims: ClaimsDep,
     candidate: CandidateDep,
     session: SessionDep,
     settings: SettingsDep,
+    payload: LogoutRequest | None = None,
 ) -> None:
     """End this session: the access token that authenticated the call, and the
     refresh token behind it.
@@ -201,11 +237,17 @@ async def logout(
     **The first time this route can mean anything.** It did not exist before, and
     deliberately so — with no denylist, a `/auth/logout` that only asked the client to
     forget its token would report success while the token went on working, which is a
-    worse answer than not offering the route at all.
+    worse answer than not offering the route at all. The cookies are cleared here too,
+    and that clearing is the *cosmetic* half: it makes the browser forget a token that
+    the revocation above has already made useless. In that order, never the reverse.
 
     The refresh token is the one that matters, because it is what can mint new access
-    tokens for the next fourteen days. It is taken in the body rather than inferred,
-    since the server never sees it otherwise.
+    tokens for the next fourteen days. It comes from the body, or — for a browser,
+    which cannot read its own httpOnly cookie to put it there — from the cookie, but
+    only when the cookie is also what authenticated the call. See
+    `cookies.refresh_token_of_this_session` for why a bearer caller's cookie is
+    ignored rather than used: they can be two different sessions of one account, and
+    this route ends the one the caller is in.
 
     A refresh token belonging to **somebody else is ignored rather than revoked**, or
     this route would be a way to sign out any account whose refresh token you had
@@ -214,11 +256,12 @@ async def logout(
     """
     await token_service.revoke(session, claims, RevocationReason.LOGOUT)
 
-    if payload.refresh_token is not None:
+    presented = cookies.refresh_token_of_this_session(
+        request, payload.refresh_token if payload is not None else None
+    )
+    if presented is not None:
         try:
-            refresh_claims = decode_token(
-                settings, payload.refresh_token, expected_type=TOKEN_TYPE_REFRESH
-            )
+            refresh_claims = decode_token(settings, presented, expected_type=TOKEN_TYPE_REFRESH)
         except AuthError:
             # A malformed or expired refresh token is nothing to do: it cannot mint
             # anything. The access token is already revoked above, so the session is
@@ -228,11 +271,13 @@ async def logout(
             await token_service.revoke(session, refresh_claims, RevocationReason.LOGOUT)
 
     await session.commit()
+    cookies.clear_session(response, settings=settings)
 
 
 @router.post("/change-password", response_model=TokenPair)
 async def change_password(
     payload: ChangePasswordRequest,
+    response: Response,
     claims: ClaimsDep,
     candidate: CandidateDep,
     session: SessionDep,
@@ -276,7 +321,9 @@ async def change_password(
     await token_service.revoke(session, claims, RevocationReason.PASSWORD_CHANGED)
     await session.commit()
 
-    return _issue(settings, candidate)
+    # `_issue` re-sets the cookies too, so the browser that made this call keeps
+    # working on the new generation rather than being signed out by its own change.
+    return _issue(settings, candidate, response)
 
 
 @router.get("/me", response_model=CandidateOut)
@@ -316,7 +363,11 @@ async def export_me(candidate: CandidateDep, session: SessionDep) -> dict[str, A
 
 @router.delete("/me", response_model=ErasureOut)
 async def delete_me(
-    candidate: CandidateDep, session: SessionDep, storage: StorageDep
+    response: Response,
+    candidate: CandidateDep,
+    session: SessionDep,
+    storage: StorageDep,
+    settings: SettingsDep,
 ) -> ErasureOut:
     """Erase this account and everything that cascades from it. Not undoable.
 
@@ -348,6 +399,11 @@ async def delete_me(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
+
+    # Only once the erasure has actually succeeded. On the 503 path nothing was
+    # deleted, so signing the caller out of an account that still exists would be a
+    # second thing gone wrong on top of the first.
+    cookies.clear_session(response, settings=settings)
 
     return ErasureOut(
         account_id=account_id,

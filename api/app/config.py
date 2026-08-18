@@ -60,6 +60,33 @@ class RetrievalBackend(StrEnum):
     with a price table and a live verification run, like a paid LLM adapter."""
 
 
+class CookieSameSite(StrEnum):
+    """How far the browser will carry the session cookies.
+
+    This is the CSRF control, not a preference. A cookie is attached by the browser
+    whether or not the page asking for it is yours, which a bearer header is not —
+    so the moment a cookie can authenticate a write, something has to say where the
+    request may have come from.
+    """
+
+    LAX = "lax"
+    """Sent on same-site requests and on top-level navigations only, so a cross-site
+    POST carries nothing. The default, and sufficient here: the browser and the API
+    share a host in every setup this project has (ports do not affect same-site)."""
+
+    STRICT = "strict"
+    """Also withheld from top-level navigations *into* the app. Safe, and it means a
+    link from an email lands on a signed-out page."""
+
+    NONE = "none"
+    """Sent cross-site, which is what a browser and an API on genuinely different
+    domains need — and which throws away the protection above, so the Origin check in
+    `deps.py` becomes the only thing standing between a cookie and a forged write.
+    Requires `COOKIE_SECURE=true`; the settings validator refuses the pair without
+    it, because a browser silently drops such a cookie and the operator would see
+    authentication that simply does not work."""
+
+
 DEFAULT_JWT_SECRET = "change-me-before-deploying"
 
 
@@ -126,6 +153,22 @@ class Settings(BaseSettings):
     jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_access_ttl_minutes: int = 30
     jwt_refresh_ttl_days: int = 14
+
+    # The same tokens, delivered as httpOnly cookies so a browser never holds one
+    # anywhere script can read it. Bearer auth is unchanged and still accepted —
+    # every `curl` in docs/RUNBOOK.md uses one, and a header cannot be attached
+    # cross-site, which is why only the cookie path needs the Origin check.
+    cookie_secure: bool = False
+    """`Secure`, so the cookie is only ever sent over HTTPS. False by default because
+    dev is plain http — and note that Chrome treats `http://localhost` as a secure
+    context, so `true` works there too. Any real deployment sets it."""
+
+    cookie_samesite: CookieSameSite = CookieSameSite.LAX
+
+    cookie_domain: str | None = None
+    """Left unset so the cookie is host-only, which is what a single-host deploy
+    wants. Setting it shares the cookie with every subdomain, including any that is
+    not yours to trust."""
 
     # OCR for pages with no text layer. Off by default for the same reason the
     # extractor defaults to `fake`: Tesseract is a system binary, CI will never
@@ -225,6 +268,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"JWT_SECRET is still the placeholder while APP_ENV={self.app_env}. "
                 'Generate one: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_samesite_none_without_secure(self) -> Self:
+        # A `SameSite=None` cookie without `Secure` is not weakly held — every
+        # browser drops it outright. So the failure this prevents is not a security
+        # hole, it is an authentication system that silently does not work at all,
+        # on the one configuration somebody reaches for precisely because the
+        # ordinary one would not do. Refusing at startup is the same instinct as the
+        # placeholder-secret guard above: fail where somebody is looking.
+        if self.cookie_samesite is CookieSameSite.NONE and not self.cookie_secure:
+            raise ValueError(
+                "COOKIE_SAMESITE=none requires COOKIE_SECURE=true — browsers reject "
+                "the combination and the session cookie would never be stored."
             )
         return self
 
