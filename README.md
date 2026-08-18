@@ -129,15 +129,18 @@ answers `pending` and the client follows the progress stream.
 
 ## REST API
 
-Every route is authenticated with a bearer token except `/health` and the two
-credential endpoints. Full schema at `/docs`.
+Every route is authenticated except `/health` and the two credential endpoints, and
+there are **two ways to present the same session**. A `Bearer` header is what every
+`curl` here and in `docs/RUNBOOK.md` uses. The credential routes *also* set httpOnly
+cookies, which is what the web client runs on — so a browser never holds a token
+anywhere script can read it. Bearer wins when both are sent. Full schema at `/docs`.
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/auth/register` | Create an account; returns an access + refresh pair. `role` is `candidate` (default) or `recruiter` — see the limitation below |
-| `POST` | `/auth/login` | Exchange credentials for a token pair |
-| `POST` | `/auth/refresh` | Rotate the pair; the token presented is revoked, so it is genuinely single-use |
-| `POST` | `/auth/logout` | End this session — the access token, and the refresh token behind it |
+| `POST` | `/auth/register` | Create an account; returns an access + refresh pair **and** sets it as cookies. `role` is `candidate` (default) or `recruiter` — see the limitation below |
+| `POST` | `/auth/login` | Exchange credentials for a token pair, in the body and in cookies |
+| `POST` | `/auth/refresh` | Rotate the pair; the token presented is revoked, so it is genuinely single-use. The body is optional — a browser cannot read its own httpOnly cookie to send one, so the cookie is used instead |
+| `POST` | `/auth/logout` | End this session — the access token, the refresh token behind it, and the cookies carrying them |
 | `POST` | `/auth/change-password` | Prove the old password, set a new one |
 | `GET` | `/auth/me` | The signed-in account, and its role |
 | `GET` | `/auth/me/export` | Everything held about you, as one JSON document |
@@ -319,8 +322,17 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
   reach a recruiter route at all, and `admin` is deliberately **not** self-selectable —
   an account that can grant itself admin is not a role system. Pinned by
   `tests/test_rbac.py`.
-- **The access token is kept in `localStorage`,** which is XSS-readable. Acceptable
-  for a two-origin dev setup; the production answer is an httpOnly cookie.
+- **The web client's session is an httpOnly cookie**, so no token is reachable from
+  script. What is left in `localStorage` is an identity marker — id, email, role —
+  which React renders from and which is how one tab learns another signed out, since
+  a cookie fires no `storage` event. Reading it gains nobody any ability to act.
+  Two things follow that are worth knowing rather than discovering. **The browser and
+  the API must be same-site**: cookies ignore ports, so `localhost:3000` reaching
+  `localhost:8000` is fine, but `127.0.0.1:3000` is a different site and the cookie
+  is withheld — the client names that cause rather than looking broken. And a
+  cross-domain deploy needs `COOKIE_SAMESITE=none`, which throws away the CSRF
+  protection `lax` provides; the `Origin` check on cookie-authenticated writes is
+  what stands in for it.
 
 ## Test data
 

@@ -25,7 +25,7 @@ function progressMessage(resume: Resume | null): string {
 }
 
 export default function Home() {
-  const { token, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, signOut, authorized } = useAuth();
   const [result, setResult] = useState<ProfileResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,9 +48,9 @@ export default function Home() {
     setError(null);
     setBusy(true);
     try {
-      await authorized(async (accessToken) => {
-        setProgress(await api.retryResume(result.resume.id, accessToken));
-        setResult(await api.waitForProfile(result.resume.id, accessToken, setProgress));
+      await authorized(async () => {
+        setProgress(await api.retryResume(result.resume.id));
+        setResult(await api.waitForProfile(result.resume.id, setProgress));
       });
     } catch (caught) {
       setError(errorMessage(caught, "Could not retry"));
@@ -68,10 +68,10 @@ export default function Home() {
     try {
       // Upload only stores the file and queues the work, so the result has to be
       // waited for rather than read straight out of the response.
-      const uploaded = await authorized(async (accessToken) => {
-        const resume = await api.uploadResume(file, accessToken, consented);
+      const uploaded = await authorized(async () => {
+        const resume = await api.uploadResume(file, consented);
         setProgress(resume);
-        return api.waitForProfile(resume.id, accessToken, setProgress);
+        return api.waitForProfile(resume.id, setProgress);
       });
       setResult(uploaded);
     } catch (caught) {
@@ -92,7 +92,7 @@ export default function Home() {
         </p>
       </header>
 
-      {!ready ? null : !token ? (
+      {!ready ? null : !session ? (
         <AuthPanel onAuthenticated={authenticate} />
       ) : (
         <div className="space-y-6">
@@ -153,7 +153,11 @@ export default function Home() {
                   // Drop the result with the session: signing back in as someone
                   // else must not find the previous account's resume still on screen.
                   setResult(null);
-                  signOut();
+                  // `void`, not `await`: signing out now reaches the API to revoke
+                  // the session, and the screen must not wait on a network call to
+                  // stop showing a signed-in state. The local clear happens either
+                  // way — see `signOut` in `lib/auth.ts`.
+                  void signOut();
                 }}
                 className="text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
               >

@@ -278,9 +278,39 @@ happened to survive the conflicts.
 
 - **`JWT_SECRET`** — change it in `.env.prod`, then `up -d api worker`. Every existing
   token stops working immediately. **This is no longer the only revocation available**
-  (it was, until 2026-08-16): `POST /auth/logout` ends one session, and a password change
-  revokes the token that made it. Reach for the secret only when you need *everybody*
-  signed out at once — a suspected key compromise — because that is what it does.
+  (it was, until 2026-08-16): `POST /auth/logout` ends one session, a password change
+  ends every session that account has, and bumping `token_epoch` by hand ends them for
+  anyone. Reach for the secret only when you need *everybody* signed out at once — a
+  suspected key compromise — because that is what it does.
+
+---
+
+### Cookies, and the one thing that will bite a deploy
+
+The browser signs in with httpOnly cookies; scripts and every `curl` here still use a
+`Bearer` header, and both work against the same API. Two settings govern the cookies:
+
+| Setting | Default | When to change it |
+|---|---|---|
+| `COOKIE_SECURE` | `false` | **`true` for any real deployment.** The cookie is then only sent over HTTPS |
+| `COOKIE_SAMESITE` | `lax` | `none` only if the browser and the API are on different registrable domains — see below |
+
+**The web origin and the API origin must be the same site, or nobody can sign in.**
+Cookies ignore ports, so `app.example.com` → `app.example.com:8000` is fine and so is
+`localhost:3000` → `localhost:8000`. What is *not* fine is a different host:
+`127.0.0.1:3000` reaching `localhost:8000` is cross-site however identical it looks, and
+`SameSite=lax` withholds the cookie. Measured, not assumed — and the symptom is nasty
+enough to be worth recognising: **signing in succeeds and every request afterwards is
+401**, because the credential, not the request, is what went missing. The web client
+detects exactly this and says so by name.
+
+If a deploy genuinely needs different domains, set `COOKIE_SAMESITE=none` **and**
+`COOKIE_SECURE=true` — the API refuses to start on `none` without `secure`, because
+browsers drop that cookie outright and you would be debugging an auth system that never
+had a chance. Know what you give up: `lax` is what stops a browser attaching the session
+to a cross-site write, and `none` removes it. What remains is the `Origin` check on
+cookie-authenticated writes, so `CORS_ORIGINS` stops being only a CORS list and becomes
+a security control — keep it exact.
 - **`POSTGRES_PASSWORD`** — changing it in `.env.prod` does **not** change the password
   in an existing database volume; `POSTGRES_PASSWORD` only initialises a fresh one. Do it
   with `ALTER ROLE` inside psql *and* in `.env.prod`, or the stack will not reconnect.

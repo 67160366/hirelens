@@ -425,13 +425,25 @@ export class ApiError extends Error {
   }
 }
 
-async function send(path: string, init: RequestInit = {}, token?: string): Promise<Response> {
-  const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
+/**
+ * Every request this client makes, and the only `fetch` in the app.
+ *
+ * **`credentials: "include"` is the authentication.** The API issues the session as
+ * httpOnly cookies, so there is no token here to attach and nothing for an XSS
+ * payload on this page to steal — the browser carries the credential and never shows
+ * it to script. It has to be set explicitly on every call because the default is
+ * `same-origin` and the API is a different origin (`:8000` to the page's `:3000`).
+ *
+ * Note what "different origin" is not: cookies ignore ports, so `localhost:3000` and
+ * `localhost:8000` are the same *site* and `SameSite=Lax` sends the cookie between
+ * them. `127.0.0.1:3000` is a different site and it does not, which is measured
+ * rather than assumed and is why `auth.establishSession` checks that the session
+ * survived signing in.
+ */
+async function send(path: string, init: RequestInit = {}): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    response = await fetch(`${API_BASE}${path}`, { ...init, credentials: "include" });
   } catch {
     // A network-level failure is almost always "the API is not running" during
     // development, so say that rather than surfacing a bare TypeError.
@@ -444,8 +456,8 @@ async function send(path: string, init: RequestInit = {}, token?: string): Promi
   return response;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
-  return (await send(path, init, token)).json() as Promise<T>;
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await send(path, init)).json() as Promise<T>;
 }
 
 /** A JSON request body, which every write on this API except the upload takes. */
@@ -562,47 +574,60 @@ export const api = {
   login: (email: string, password: string) =>
     request<TokenPair>("/auth/login", json("POST", { email, password })),
 
-  refresh: (refreshToken: string) =>
-    request<TokenPair>("/auth/refresh", json("POST", { refresh_token: refreshToken })),
+  /** Rotate the session. **No body**: the refresh token is an httpOnly cookie the
+   * browser attaches and this page is not allowed to read, which is the point of it
+   * being httpOnly. Sending `{}` would not do — the server would validate it against
+   * a schema requiring the token and answer 422 before it ever looked at the cookie. */
+  refresh: () => request<TokenPair>("/auth/refresh", { method: "POST" }),
+
+  /** End this session on the server, not merely in this tab. Without it a sign-out
+   * would leave the refresh token mintable for another fortnight — the hole
+   * `/auth/logout` exists to close, and the cookie client is the one that cannot
+   * send the token in a body to close it itself. */
+  logout: async (): Promise<void> => {
+    await send("/auth/logout", { method: "POST" });
+  },
 
   /** The wording an upload's `consent` agrees to. Unauthenticated, so it can be
    * shown before anyone has an account — and fetched rather than duplicated here,
    * so what somebody agreed to and what they were shown cannot drift apart. */
   getConsent: () => request<ConsentTerms>("/resumes/consent", {}),
 
-  uploadResume: (file: File, token: string, consent: boolean) => {
+  uploadResume: (file: File, consent: boolean) => {
     const form = new FormData();
     form.append("file", file);
     // Required by the server since M4 slice 4, and sent as what the box actually
     // says rather than a hard-coded "true": a client that always sends true has
     // turned a consent field into a formality.
     form.append("consent", String(consent));
-    return request<Resume>("/resumes", { method: "POST", body: form }, token);
+    return request<Resume>("/resumes", { method: "POST", body: form });
   },
 
-  listResumes: (token: string) => request<Resume[]>("/resumes", {}, token),
+  listResumes: () => request<Resume[]>("/resumes", {}),
 
   /** Put a stopped resume back on the queue — the dead-letter replay path. */
-  retryResume: (id: string, token: string) =>
-    request<Resume>(`/resumes/${id}/retry`, { method: "POST" }, token),
+  retryResume: (id: string) =>
+    request<Resume>(`/resumes/${id}/retry`, { method: "POST" }),
 
-  getProfile: (id: string, token: string) => request<ProfileResponse>(`/resumes/${id}`, {}, token),
+  getProfile: (id: string) => request<ProfileResponse>(`/resumes/${id}`, {}),
 
   /**
    * The original bytes, fetched rather than handed to pdf.js as a URL.
    *
-   * pdf.js would happily take the URL, and then the bearer token would have to
-   * travel in the query string — into proxy access logs and browser history, in a
-   * project whose rules forbid logging personal data. It is the same trade
-   * `waitForProfile` makes by parsing SSE by hand instead of using `EventSource`,
-   * and it keeps the `ApiError` taxonomy and the 401-refresh path working here too.
+   * The reason has outlived the bearer token it was written about. It used to be
+   * that a URL handed to pdf.js would put the token in the query string, and so in
+   * proxy access logs and browser history; the session is a cookie now and would
+   * travel fine. What still holds is the rest of it: fetching keeps the `ApiError`
+   * taxonomy and the 401-renew-and-retry path, which a URL pdf.js opens itself
+   * would bypass entirely — a expired session would render a broken viewer instead
+   * of renewing.
    */
-  getResumeFile: async (id: string, token: string): Promise<ArrayBuffer> =>
-    (await send(`/resumes/${id}/file`, {}, token)).arrayBuffer(),
+  getResumeFile: async (id: string): Promise<ArrayBuffer> =>
+    (await send(`/resumes/${id}/file`, {})).arrayBuffer(),
 
   /** Where each character of the document sits, for the overlay to draw. */
-  getResumeGeometry: (id: string, token: string) =>
-    request<GeometryReport>(`/resumes/${id}/geometry`, {}, token),
+  getResumeGeometry: (id: string) =>
+    request<GeometryReport>(`/resumes/${id}/geometry`, {}),
 
   /* ---------------------------------------------------------------------- */
   /* Jobs and their requirements                                             */
@@ -611,9 +636,9 @@ export const api = {
   /** The signed-in account, including its role — which is what lets the UI show a
    * candidate their applications and a recruiter their postings, instead of
    * offering both and letting one of them 403. */
-  me: (token: string) => request<Account>("/auth/me", {}, token),
+  me: () => request<Account>("/auth/me", {}),
 
-  listJobs: (token: string) => request<Job[]>("/jobs", {}, token),
+  listJobs: () => request<Job[]>("/jobs", {}),
 
   /* ---------------------------------------------------------------------- */
   /* Applications                                                            */
@@ -621,13 +646,13 @@ export const api = {
 
   /** Apply to a job. 201 when created, 200 when you had already applied — the
    * natural key carrying the idempotency, so calling it twice is safe. */
-  applyToJob: (jobId: string, resumeId: string, token: string) =>
-    request<Application>(`/jobs/${jobId}/applications`, json("POST", { resume_id: resumeId }), token),
+  applyToJob: (jobId: string, resumeId: string) =>
+    request<Application>(`/jobs/${jobId}/applications`, json("POST", { resume_id: resumeId })),
 
-  listJobApplications: (jobId: string, token: string) =>
-    request<Application[]>(`/jobs/${jobId}/applications`, {}, token),
+  listJobApplications: (jobId: string) =>
+    request<Application[]>(`/jobs/${jobId}/applications`, {}),
 
-  listMyApplications: (token: string) => request<Application[]>("/me/applications", {}, token),
+  listMyApplications: () => request<Application[]>("/me/applications", {}),
 
   /** Move an application. The server answers **409 with the reason** when the move
    * is not allowed, which surfaces here as an `ApiError` carrying that sentence —
@@ -640,30 +665,28 @@ export const api = {
   moveApplication: (
     applicationId: string,
     toState: ApplicationState,
-    token: string,
     reason?: string,
   ) =>
     request<Application>(
       `/applications/${applicationId}/transitions`,
       json("POST", { to_state: toState, reason: reason ?? null }),
-      token,
     ),
 
-  listApplicationEvents: (applicationId: string, token: string) =>
-    request<ApplicationEvent[]>(`/applications/${applicationId}/events`, {}, token),
+  listApplicationEvents: (applicationId: string) =>
+    request<ApplicationEvent[]>(`/applications/${applicationId}/events`, {}),
 
-  getJob: (id: string, token: string) => request<Job>(`/jobs/${id}`, {}, token),
+  getJob: (id: string) => request<Job>(`/jobs/${id}`, {}),
 
   /** Title, description and the whole requirement list in one call. */
-  createJob: (payload: JobInput, token: string) =>
-    request<Job>("/jobs", json("POST", payload), token),
+  createJob: (payload: JobInput) =>
+    request<Job>("/jobs", json("POST", payload)),
 
-  deleteJob: async (id: string, token: string): Promise<void> => {
-    await send(`/jobs/${id}`, { method: "DELETE" }, token);
+  deleteJob: async (id: string): Promise<void> => {
+    await send(`/jobs/${id}`, { method: "DELETE" });
   },
 
-  addRequirement: (jobId: string, payload: RequirementInput, token: string) =>
-    request<Requirement>(`/jobs/${jobId}/requirements`, json("POST", payload), token),
+  addRequirement: (jobId: string, payload: RequirementInput) =>
+    request<Requirement>(`/jobs/${jobId}/requirements`, json("POST", payload)),
 
   /**
    * Change one requirement.
@@ -677,20 +700,17 @@ export const api = {
     jobId: string,
     requirementId: string,
     patch: RequirementPatch,
-    token: string,
   ) =>
     request<Requirement>(
       `/jobs/${jobId}/requirements/${requirementId}`,
       json("PATCH", patch),
-      token,
     ),
 
   deleteRequirement: async (
     jobId: string,
     requirementId: string,
-    token: string,
   ): Promise<void> => {
-    await send(`/jobs/${jobId}/requirements/${requirementId}`, { method: "DELETE" }, token);
+    await send(`/jobs/${jobId}/requirements/${requirementId}`, { method: "DELETE" });
   },
 
   /* ---------------------------------------------------------------------- */
@@ -708,12 +728,10 @@ export const api = {
   async createScreening(
     jobId: string,
     resumeId: string,
-    token: string,
   ): Promise<{ screening: Screening; queued: boolean }> {
     const response = await send(
       `/jobs/${jobId}/screenings`,
       json("POST", { resume_id: resumeId }),
-      token,
     );
     return {
       screening: (await response.json()) as Screening,
@@ -722,14 +740,14 @@ export const api = {
   },
 
   /** The raw list, including the ones still running and the ones that failed. */
-  listScreenings: (jobId: string, token: string) =>
-    request<Screening[]>(`/jobs/${jobId}/screenings`, {}, token),
+  listScreenings: (jobId: string) =>
+    request<Screening[]>(`/jobs/${jobId}/screenings`, {}),
 
-  getScreening: (id: string, token: string) =>
-    request<ScreeningDetail>(`/screenings/${id}`, {}, token),
+  getScreening: (id: string) =>
+    request<ScreeningDetail>(`/screenings/${id}`, {}),
 
-  retryScreening: (id: string, token: string) =>
-    request<Screening>(`/screenings/${id}/retry`, { method: "POST" }, token),
+  retryScreening: (id: string) =>
+    request<Screening>(`/screenings/${id}/retry`, { method: "POST" }),
 
   /**
    * The ordered answer, computed on read.
@@ -737,8 +755,8 @@ export const api = {
    * Costs one query and no model call, which is what lets a weight edit reorder the
    * list immediately while every screening stays current. Re-fetch it freely.
    */
-  getRanking: (jobId: string, token: string) =>
-    request<Ranking>(`/jobs/${jobId}/ranking`, {}, token),
+  getRanking: (jobId: string) =>
+    request<Ranking>(`/jobs/${jobId}/ranking`, {}),
 
   /**
    * What this account's model calls consumed, and how well the guardrail held.
@@ -746,24 +764,26 @@ export const api = {
    * Reports; never re-asks. Every figure is a query over rows the system already
    * wrote, so refreshing this screen costs a query and **never a model call**.
    */
-  getUsage: (token: string) => request<UsageReport>("/metrics/usage", {}, token),
+  getUsage: () => request<UsageReport>("/metrics/usage", {}),
 
   /**
    * Follow a resume over the progress stream until it reaches a resting state.
    *
-   * `EventSource` would be less code, but it cannot set an `Authorization`
-   * header — which leaves the token in the query string, and so in proxy access
-   * logs and browser history. `fetch` keeps the bearer header and reuses the
-   * error handling every other call goes through; parsing the frames is the price.
+   * `EventSource` was refused because it cannot set an `Authorization` header,
+   * which would have left the token in the query string and so in proxy access logs
+   * and browser history. **That objection is gone** — the session is a cookie and
+   * `EventSource` sends cookies with `withCredentials`. It stays on `fetch` anyway,
+   * for the reason that outlived the first: `EventSource` reports every failure as
+   * one opaque `error` event, so a 401 could not reach `authorized` to be renewed
+   * and a stream would simply stop. Parsing the frames is what buys that.
    *
    * Resolves with the settled resume, or `null` when the stream ended without one:
    * the server capped the connection, or the row is gone. The caller falls back.
    */
-  async streamResume(id: string, token: string, onProgress?: ProgressHandler) {
+  async streamResume(id: string, onProgress?: ProgressHandler) {
     const response = await send(
       `/resumes/${id}/events`,
       { headers: { Accept: "text/event-stream" } },
-      token,
     );
     if (!response.body) return null;
 
@@ -790,28 +810,26 @@ export const api = {
    */
   async waitForProfile(
     id: string,
-    token: string,
     onProgress?: ProgressHandler,
   ): Promise<ProfileResponse> {
     try {
-      const settled = await api.streamResume(id, token, onProgress);
-      if (settled) return await api.getProfile(id, token);
+      const settled = await api.streamResume(id, onProgress);
+      if (settled) return await api.getProfile(id);
     } catch (caught) {
       if (caught instanceof ApiError) throw caught;
     }
-    return pollForProfile(id, token, onProgress);
+    return pollForProfile(id, onProgress);
   },
 };
 
 /** The fallback: what the client did before the stream existed. */
 async function pollForProfile(
   id: string,
-  token: string,
   onProgress?: ProgressHandler,
 ): Promise<ProfileResponse> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   for (;;) {
-    const response = await api.getProfile(id, token);
+    const response = await api.getProfile(id);
     onProgress?.(response.resume);
     if (isSettled(response.resume.status)) return response;
     if (Date.now() >= deadline) {

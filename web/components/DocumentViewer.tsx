@@ -35,7 +35,7 @@ export function DocumentViewer({
   text: string;
   references: EvidenceRef[];
   /** `useAuth().authorized`, so these reads inherit the refresh-once-on-401 path. */
-  authorized: <T>(call: (token: string) => Promise<T>) => Promise<T>;
+  authorized: <T>(call: () => Promise<T>) => Promise<T>;
 }) {
   const [showOriginal, setShowOriginal] = useState(false);
   const [file, setFile] = useState<ArrayBuffer | null>(null);
@@ -54,8 +54,8 @@ export function DocumentViewer({
     void (async () => {
       try {
         const [bytes, report] = await Promise.all([
-          authorized((token) => api.getResumeFile(resumeId, token)),
-          authorized((token) => api.getResumeGeometry(resumeId, token)),
+          authorized(() => api.getResumeFile(resumeId)),
+          authorized(() => api.getResumeGeometry(resumeId)),
         ]);
         if (cancelled) return;
         setFile(bytes);

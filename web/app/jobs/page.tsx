@@ -15,7 +15,7 @@ import { errorMessage, useAuth } from "@/lib/auth";
 import { BLANK_REQUIREMENT } from "@/lib/requirements";
 
 export default function JobsPage() {
-  const { token, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, signOut, authorized } = useAuth();
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,7 +26,7 @@ export default function JobsPage() {
 
   const load = useCallback(async () => {
     try {
-      setJobs(await authorized((accessToken) => api.listJobs(accessToken)));
+      setJobs(await authorized(() => api.listJobs()));
     } catch (caught) {
       setError(errorMessage(caught, "Could not load jobs"));
     }
@@ -37,8 +37,8 @@ export default function JobsPage() {
     // `await`, so nothing is set synchronously in this effect body — the rule's
     // analysis does not follow the await boundary. Fetch-on-mount is the job here.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (token) void load();
-  }, [token, load]);
+    if (session) void load();
+  }, [session, load]);
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
@@ -48,10 +48,9 @@ export default function JobsPage() {
       // A requirement with no label is a row the user started and abandoned, not a
       // requirement. The API would refuse it; dropping it here keeps the form usable.
       const requirements = drafts.filter((draft) => draft.label.trim() !== "");
-      const job = await authorized((accessToken) =>
+      const job = await authorized(() =>
         api.createJob(
           { title, description: description.trim() || null, requirements },
-          accessToken,
         ),
       );
       setJobs((current) => [job, ...(current ?? [])]);
@@ -66,7 +65,7 @@ export default function JobsPage() {
   }
 
   if (!ready) return null;
-  if (!token) {
+  if (!session) {
     return (
       <main className="mx-auto max-w-6xl px-5 py-12">
         <AuthPanel onAuthenticated={authenticate} />
@@ -94,7 +93,7 @@ export default function JobsPage() {
           </Link>
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void signOut()}
             className="text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
           >
             Sign out

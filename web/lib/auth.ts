@@ -4,44 +4,51 @@
  * The session, shared by every page.
  *
  * This lived inside `app/page.tsx` while there was only one page. Five routes cannot
- * share component state, and each of them needs the same three things: the current
- * token, a way to sign out, and the refresh-once-on-401 dance that keeps a long-lived
- * tab working after the access token expires.
+ * share component state, and each of them needs the same three things: who is signed
+ * in, a way to sign out, and the refresh-once-on-401 dance that keeps a long-lived tab
+ * working after the access token expires.
  *
- * **The session is an external store, not component state.** `localStorage` is the
- * thing that actually holds it, so React subscribes to it through
- * `useSyncExternalStore` rather than copying it into `useState` on mount. The old
- * shape read storage in an effect and called `setToken`, which meant a cascading
- * render on every route and carried this project's one genuine
- * `react-hooks/set-state-in-effect` suppression. Three things fall out of the change,
- * and only the first was the reason for it:
+ * **The browser no longer holds a token at all.** The API issues the pair as httpOnly
+ * cookies, so the credential lives somewhere no script on this page can read — which
+ * is the answer to the XSS half of the auth story, the one the refresh-token denylist
+ * deliberately did not address. `authorized` therefore takes a call with no argument:
+ * there is nothing to pass, and a signature that still handed a token around would be
+ * describing a client that no longer exists.
  *
- *   * **The suppression is gone**, because nothing sets state in an effect any more.
- *   * **Two components on one page now agree.** Every `useAuth()` call used to own a
- *     private copy of the token, so a sign-in in one component left any other
- *     component on that page still holding `null` until something re-mounted it.
- *     Today only `AuthPanel` and its page do this, which is why nobody has seen it —
- *     but `DocumentViewer` already takes `authorized` as a prop for exactly this
- *     reason, and the next component that reaches for the hook directly would have
- *     found the bug rather than the seam.
- *   * **Tabs stay in step.** Signing out in one tab now signs out the others, because
- *     the store also listens for the `storage` event. A revoked session that stays
- *     live in a second tab is the kind of thing nobody tests and everybody assumes.
+ * **What is in `localStorage` now is an identity, not a credential.** `id`, `email`
+ * and `role` — exactly what `GET /auth/me` will tell anyone holding the session
+ * anyway. It is here for two reasons and neither is authentication: React needs
+ * something synchronous to render "signed in as" from, and the `storage` event is the
+ * only way one tab learns that another signed out. A cookie fires no such event. So
+ * XSS reading this marker learns a display name and gains no ability to act.
  *
- * Tokens stay in `localStorage`, which is readable by any script on the page. That is
- * a known trade recorded since M1, and it is *still* the trade: the production answer
- * is an httpOnly, SameSite cookie issued by the API, which drags in the refresh-token
- * denylist and is its own piece of work. Moving to `useSyncExternalStore` does not
- * change where the token lives — it changes who is allowed to believe a stale copy of
- * it.
+ * **The session is an external store, not component state.** `useSyncExternalStore`
+ * subscribes to that marker rather than copying it into `useState` on mount. Three
+ * things fall out, and only the first was the reason for the change:
+ *
+ *   * **No `set-state-in-effect` suppression**, because nothing sets state in an
+ *     effect.
+ *   * **Two components on one page agree.** Every `useAuth()` call used to own a
+ *     private copy, so a sign-in in one left another holding `null` until something
+ *     re-mounted it. `DocumentViewer` takes `authorized` as a prop for exactly that
+ *     reason.
+ *   * **Tabs stay in step.** Signing out in one signs out the others.
+ *
+ * The marker and the cookie can disagree — the cookie expires, or another browser
+ * ends the session, or a password change bumps the account's token epoch. That is not
+ * a flaw to design away: the marker is a hint about what to render, and the server is
+ * the only thing that decides whether a request is allowed. `authorized` reconciles
+ * them, by clearing the marker the moment a renewal fails.
  */
 
 import { useSyncExternalStore } from "react";
 
-import { ApiError, api, type TokenPair } from "@/lib/api";
+import { ApiError, api, type Account } from "@/lib/api";
 
-const TOKEN_KEY = "hirelens.access_token";
-const REFRESH_KEY = "hirelens.refresh_token";
+const SESSION_KEY = "hirelens.session";
+
+/** Who is signed in, as far as this tab knows. Never a credential. */
+export type Session = Account;
 
 /**
  * The session ended and could not be renewed.
@@ -53,6 +60,28 @@ export class SessionExpired extends Error {
   constructor() {
     super("Your session expired. Sign in again.");
     this.name = "SessionExpired";
+  }
+}
+
+/**
+ * Signing in worked and the session did not survive the round trip.
+ *
+ * Its own error because the cause is almost always one specific thing and the
+ * symptom is baffling: the API answered 200, set its cookies, and the browser
+ * declined to keep them. On this project that happens when the page is served from a
+ * different *site* than the API — `127.0.0.1:3000` reaching `localhost:8000` is
+ * cross-site however identical the two look, and `SameSite=Lax` withholds the cookie.
+ * Both origins are in `CORS_ORIGINS`, so the request itself succeeds and only the
+ * credential goes missing. Measured in a browser, not reasoned about.
+ */
+export class SessionNotStored extends Error {
+  constructor() {
+    super(
+      "Signed in, but the browser did not keep the session. If this page is on " +
+        "127.0.0.1, open it on localhost instead — the API treats them as different " +
+        "sites and withholds the session cookie.",
+    );
+    this.name = "SessionNotStored";
   }
 }
 
@@ -92,21 +121,34 @@ export function subscribeToSession(listener: Listener): () => void {
   };
 }
 
-/**
- * The current access token, or null.
- *
- * Read straight from storage every time rather than cached: `useSyncExternalStore`
- * compares snapshots itself, and a string or null compares by value, so there is no
- * identity to keep stable and no cache to go stale.
- */
-export function readAccessToken(): string | null {
+// `useSyncExternalStore` re-renders whenever the snapshot is not `Object.is`-equal to
+// the last one, so a getter that parsed the JSON afresh each call would hand React a
+// new object every time and loop forever. The old store returned a string, which
+// compares by value and needed none of this. Parsing is therefore memoised on the raw
+// text: same text, same object identity.
+let parsedFrom: string | null = null;
+let parsed: Session | null = null;
+
+/** Who this tab believes is signed in, or null. */
+export function readSession(): Session | null {
   if (typeof localStorage === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (raw === parsedFrom) return parsed;
+  parsedFrom = raw;
+  parsed = raw ? (safeParse(raw) as Session | null) : null;
+  return parsed;
 }
 
-function readRefreshToken(): string | null {
-  if (typeof localStorage === "undefined") return null;
-  return localStorage.getItem(REFRESH_KEY);
+/**
+ * A marker written by an older version of this app, or by anything else, must not
+ * take a page down. It is a rendering hint; the server decides what is allowed.
+ */
+function safeParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 /** There is no session during SSR, because there is no storage to read one from. */
@@ -114,79 +156,151 @@ function noSessionOnServer(): null {
   return null;
 }
 
-/** Store a freshly issued pair and wake everything reading it. */
-export function writeSession(tokens: TokenPair): void {
-  localStorage.setItem(TOKEN_KEY, tokens.access_token);
-  localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
+/** Record who signed in and wake everything reading it. */
+export function writeSession(session: Session): void {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   emit();
 }
 
 /** Forget the session and wake everything reading it. */
 export function clearSession(): void {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(SESSION_KEY);
   emit();
 }
 
-/** Trade the refresh token for a new pair; null means the session is over. */
-async function tryRefresh(): Promise<string | null> {
-  const stored = readRefreshToken();
-  if (!stored) return null;
+/**
+ * Sign out for real, which now means telling the server.
+ *
+ * Under `localStorage` this was one line — drop the token and it was gone, because
+ * the browser was the only place it lived. A cookie is not like that: forgetting the
+ * marker leaves the credential sitting in the jar, still valid, still sent with every
+ * request, and the next page load would sign you straight back in. So the route is
+ * called, which revokes both tokens and clears both cookies.
+ *
+ * **The local clear happens whatever the call did.** A user who pressed Sign out has
+ * to end up signed out on this screen; a network failure means the server-side
+ * session outlives the click, which is a smaller wrong than a button that visibly
+ * does nothing. The revocation is what makes it eventually true either way — the
+ * access token expires in thirty minutes.
+ */
+export async function signOut(): Promise<void> {
   try {
-    const tokens = await api.refresh(stored);
-    writeSession(tokens);
-    return tokens.access_token;
+    await api.logout();
   } catch {
-    return null;
+    // Deliberately swallowed — see above.
   }
+  clearSession();
+}
+
+/**
+ * Sign in, then confirm the browser actually kept the session.
+ *
+ * The second call is not belt-and-braces. `/auth/login` answering 200 says the
+ * password was right, not that the cookie was stored — and when it is not, every
+ * later call 401s while the screen says you are signed in, which is the most
+ * confusing state this client can be in. One round trip converts it into a sentence
+ * naming the cause. It also supplies the identity, which the token pair does not
+ * carry.
+ */
+export async function establishSession(signIn: () => Promise<unknown>): Promise<Session> {
+  await signIn();
+  let who: Session;
+  try {
+    who = await api.me();
+  } catch (caught) {
+    if (caught instanceof ApiError && caught.status === 401) throw new SessionNotStored();
+    throw caught;
+  }
+  writeSession(who);
+  return who;
+}
+
+// Concurrent renewals share one request. `authorized` is called independently by
+// each of `DocumentViewer`'s two loads, so an expired access token produces two 401s
+// within milliseconds of each other and two calls to renew.
+//
+// **That is not merely wasteful, it signs the user out.** A refresh token is
+// single-use: the server revokes the presented one and issues a new pair. Whichever
+// of the two racing requests arrives second presents a token that has just been
+// revoked, gets a 401, and `authorized` reads that as a session it cannot renew —
+// clearing the marker and throwing `SessionExpired` in the middle of a working
+// session, moments after a renewal that actually succeeded.
+//
+// Watched rather than reasoned about: driven in a browser against a one-minute
+// access token, both renewals happened to answer 200, because the first response
+// updated the cookie jar before the second request left. That is timing, not a
+// guarantee — and a bug that depends on which of two requests wins is the kind that
+// never reproduces when somebody goes looking.
+let renewal: Promise<boolean> | null = null;
+
+/** Ask the API to rotate the session cookies. False means the session is over. */
+function tryRefresh(): Promise<boolean> {
+  renewal ??= (async () => {
+    try {
+      await api.refresh();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      // Cleared once this settles, so the *next* expiry renews again rather than
+      // reusing a stale answer. Everyone who joined while it was in flight has
+      // already taken the promise.
+      renewal = null;
+    }
+  })();
+  return renewal;
 }
 
 /**
  * Run an authenticated call, renewing once and retrying if the token has expired.
  *
- * A module function rather than a `useCallback`, because it closes over nothing: it
- * reads the token out of storage, which is the same place the rendered value comes
- * from. The old version took `token` from state and then read through to storage
- * anyway, to defend against a handler holding the token from the render it closed
- * over — that defence is what the external store makes unnecessary.
+ * A module function rather than a `useCallback`, because it closes over nothing —
+ * the credential is a cookie the browser attaches, so there is no token to read, to
+ * pass, or to hold stale from an earlier render.
+ *
+ * It still checks the marker first, and that check is a courtesy rather than a
+ * gate: it turns "signed out" into `SessionExpired` without a round trip. A request
+ * made anyway would simply 401, which is the same answer from the only authority
+ * that has one.
  */
-export async function authorized<T>(call: (token: string) => Promise<T>): Promise<T> {
-  const current = readAccessToken();
-  if (!current) throw new SessionExpired();
+export async function authorized<T>(call: () => Promise<T>): Promise<T> {
+  if (!readSession()) throw new SessionExpired();
 
   try {
-    return await call(current);
+    return await call();
   } catch (caught) {
     if (!(caught instanceof ApiError) || caught.status !== 401) throw caught;
 
     // The access token expires long before the refresh token does, so one renewal
     // and one retry is the difference between a working tab and a sign-in prompt
     // the user did not need.
-    const fresh = await tryRefresh();
-    if (!fresh) {
+    if (!(await tryRefresh())) {
       clearSession();
       throw new SessionExpired();
     }
-    return call(fresh);
+    return call();
   }
 }
 
 // --- the hook --------------------------------------------------------------
 
 export interface Auth {
-  token: string | null;
+  /** Who is signed in, as far as this tab knows, or null. */
+  session: Session | null;
   /** False until the client has hydrated, since SSR has no storage to read. */
   ready: boolean;
-  authenticate: (tokens: TokenPair) => void;
-  signOut: () => void;
+  authenticate: (session: Session) => void;
+  /** Ends the session on the server as well as in this tab — a cookie outlives a
+   * cleared marker, so the local half alone would sign nobody out. */
+  signOut: () => Promise<void>;
   /**
-   * Run an authenticated call, trading the refresh token for a new pair and
-   * retrying once if the access token has expired.
+   * Run an authenticated call, rotating the session cookies and retrying once if
+   * the access token has expired.
    *
    * Every page goes through this rather than reimplementing the retry, and a
    * session that cannot be renewed raises `SessionExpired` instead of a bare 401.
    */
-  authorized: <T>(call: (token: string) => Promise<T>) => Promise<T>;
+  authorized: <T>(call: () => Promise<T>) => Promise<T>;
 }
 
 /** Client-side snapshot of "has this hydrated yet". */
@@ -200,19 +314,20 @@ function notHydrated(): boolean {
 }
 
 export function useAuth(): Auth {
-  const token = useSyncExternalStore(subscribeToSession, readAccessToken, noSessionOnServer);
-  // `ready` is the same question `useSyncExternalStore` already answers for the token
-  // — "are we past hydration" — asked separately because every page branches on it
-  // before deciding somebody is signed out. React returns the server snapshot during
-  // hydration and re-renders with the client one after, which is the transition the
-  // old effect was hand-rolling.
+  const session = useSyncExternalStore(subscribeToSession, readSession, noSessionOnServer);
+  // `ready` is the same question `useSyncExternalStore` already answers for the
+  // session — "are we past hydration" — asked separately because every page branches
+  // on it before deciding somebody is signed out. React returns the server snapshot
+  // during hydration and re-renders with the client one after, which is the
+  // transition the old effect was hand-rolling.
   const ready = useSyncExternalStore(subscribeToSession, hydrated, notHydrated);
 
-  return { token, ready, authenticate: writeSession, signOut: clearSession, authorized };
+  return { session, ready, authenticate: writeSession, signOut, authorized };
 }
 
 /** What to show the user for anything a call can throw. */
 export function errorMessage(caught: unknown, fallback: string): string {
+  if (caught instanceof SessionNotStored) return caught.message;
   if (caught instanceof SessionExpired) return caught.message;
   if (caught instanceof ApiError) return caught.message;
   return fallback;

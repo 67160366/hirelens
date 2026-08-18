@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import { ApiError, api, type SelfServiceRole, type TokenPair } from "@/lib/api";
+import { api, type SelfServiceRole } from "@/lib/api";
+import { errorMessage, establishSession, type Session } from "@/lib/auth";
 
 type Mode = "login" | "register";
 
@@ -25,7 +26,7 @@ const ROLE_CHOICES: { value: SelfServiceRole; label: string; blurb: string }[] =
  * Every recruiter screen was therefore unreachable without going around the UI.
  * `admin` is not offered, and `SelfServiceRole` is why it cannot be.
  */
-export function AuthPanel({ onAuthenticated }: { onAuthenticated: (tokens: TokenPair) => void }) {
+export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Session) => void }) {
   const [mode, setMode] = useState<Mode>("register");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -38,13 +39,19 @@ export function AuthPanel({ onAuthenticated }: { onAuthenticated: (tokens: Token
     setError(null);
     setBusy(true);
     try {
-      const tokens =
+      // The panel no longer receives a token — the API puts the session in httpOnly
+      // cookies the browser keeps and this page cannot read. `establishSession` then
+      // asks who that is, which doubles as proof the cookie was actually stored:
+      // signing in successfully and being unauthenticated a moment later is the most
+      // confusing state this client has, and it names the cause instead.
+      const session = await establishSession(() =>
         mode === "register"
-          ? await api.register(email, password, role)
-          : await api.login(email, password);
-      onAuthenticated(tokens);
+          ? api.register(email, password, role)
+          : api.login(email, password),
+      );
+      onAuthenticated(session);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Something went wrong");
+      setError(errorMessage(caught, "Something went wrong"));
     } finally {
       setBusy(false);
     }

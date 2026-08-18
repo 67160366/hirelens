@@ -40,7 +40,7 @@ import {
  * day a paid provider lands.
  */
 export default function MetricsPage() {
-  const { token, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, signOut, authorized } = useAuth();
   const [report, setReport] = useState<UsageReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -48,7 +48,7 @@ export default function MetricsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setReport(await authorized((accessToken) => api.getUsage(accessToken)));
+      setReport(await authorized(() => api.getUsage()));
       setError(null);
     } catch (caught) {
       setError(errorMessage(caught, "Could not load your usage"));
@@ -61,11 +61,11 @@ export default function MetricsPage() {
     // A false positive: `load` is async and every `setState` in it runs after an
     // `await`, so nothing is set synchronously in this effect body.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (token) void load();
-  }, [token, load]);
+    if (session) void load();
+  }, [session, load]);
 
   if (!ready) return null;
-  if (!token) {
+  if (!session) {
     return (
       <main className="mx-auto max-w-4xl px-5 py-12">
         <AuthPanel onAuthenticated={authenticate} />
@@ -108,7 +108,7 @@ export default function MetricsPage() {
           </button>
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void signOut()}
             className="text-xs text-stone-500 underline dark:text-stone-400"
           >
             Sign out

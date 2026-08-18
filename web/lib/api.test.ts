@@ -132,19 +132,19 @@ describe("createScreening", () => {
 
   it("reports 202 as work that was queued and billed", async () => {
     respondWith(202);
-    const { queued } = await api.createScreening("job-1", "resume-1", "token");
+    const { queued } = await api.createScreening("job-1", "resume-1");
     expect(queued).toBe(true);
   });
 
   it("reports 200 as an answer that already existed", async () => {
     respondWith(200);
-    const { queued } = await api.createScreening("job-1", "resume-1", "token");
+    const { queued } = await api.createScreening("job-1", "resume-1");
     expect(queued).toBe(false);
   });
 
   it("returns the screening either way", async () => {
     respondWith(200);
-    const { screening } = await api.createScreening("job-1", "resume-1", "token");
+    const { screening } = await api.createScreening("job-1", "resume-1");
     expect(screening.id).toBe("s1");
   });
 });
@@ -177,7 +177,7 @@ describe("uploadResume", () => {
 
   async function uploadWith(consent: boolean): Promise<FormData> {
     const sent = capture();
-    await api.uploadResume(new File(["%PDF-"], "cv.pdf"), "token", consent);
+    await api.uploadResume(new File(["%PDF-"], "cv.pdf"), consent);
     const body = sent[0];
     expect(body).toBeDefined();
     return body as FormData;
@@ -229,11 +229,11 @@ describe("every JSON write sets Content-Type", () => {
   });
 
   const writes: [string, () => Promise<unknown>][] = [
-    ["moveApplication", () => api.moveApplication("a1", "shortlisted", "token")],
-    ["moveApplication with a reason", () => api.moveApplication("a1", "rejected", "token", "no")],
-    ["applyToJob", () => api.applyToJob("j1", "r1", "token")],
-    ["createJob", () => api.createJob({ title: "t", description: null, requirements: [] }, "token")],
-    ["createScreening", () => api.createScreening("j1", "r1", "token")],
+    ["moveApplication", () => api.moveApplication("a1", "shortlisted")],
+    ["moveApplication with a reason", () => api.moveApplication("a1", "rejected", "no")],
+    ["applyToJob", () => api.applyToJob("j1", "r1")],
+    ["createJob", () => api.createJob({ title: "t", description: null, requirements: [] })],
+    ["createScreening", () => api.createScreening("j1", "r1")],
     ["register", () => api.register("a@example.com", "a-good-password")],
     ["login", () => api.login("a@example.com", "a-good-password")],
   ];
@@ -247,6 +247,67 @@ describe("every JSON write sets Content-Type", () => {
     expect(typeof init?.body).toBe("string");
     const headers = new Headers(init?.headers);
     expect(headers.get("Content-Type")).toBe("application/json");
+  });
+});
+
+/**
+ * Every request must ask the browser to send the session.
+ *
+ * The same table, one layer down, and for the same reason it exists at all: the
+ * credential is now an httpOnly cookie, `fetch` defaults to `credentials:
+ * "same-origin"`, and the API is a different origin — so a call that omits the
+ * option is simply unauthenticated. It fails as a 401, which every screen already
+ * knows how to render as "your session expired", so the symptom would point at the
+ * session rather than at the call that forgot to ask for it.
+ *
+ * Reads are in the list too. The `Content-Type` table above could stay with writes
+ * because only a write has a body; this one cannot, because every call needs the
+ * cookie. And it covers the two that do not go through `json()` — the multipart
+ * upload and the SSE stream — since those are exactly where a hand-built
+ * `RequestInit` has caught this project out before.
+ */
+describe("every request asks for the session cookie", () => {
+  function captureInit() {
+    const sent: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(init);
+        return new Response(JSON.stringify({}), { status: 200 });
+      }),
+    );
+    return sent;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const calls: [string, () => Promise<unknown>][] = [
+    ["me", () => api.me()],
+    ["login", () => api.login("a@example.com", "a-good-password")],
+    ["refresh", () => api.refresh()],
+    ["logout", () => api.logout()],
+    ["listResumes", () => api.listResumes()],
+    ["getProfile", () => api.getProfile("r1")],
+    ["retryResume", () => api.retryResume("r1")],
+    ["getResumeGeometry", () => api.getResumeGeometry("r1")],
+    ["listJobs", () => api.listJobs()],
+    ["getJob", () => api.getJob("j1")],
+    ["getRanking", () => api.getRanking("j1")],
+    ["getUsage", () => api.getUsage()],
+    ["listMyApplications", () => api.listMyApplications()],
+    ["listJobApplications", () => api.listJobApplications("j1")],
+    ["uploadResume", () => api.uploadResume(new File(["%PDF-"], "cv.pdf"), true)],
+    ["createJob", () => api.createJob({ title: "t", description: null, requirements: [] })],
+    ["moveApplication", () => api.moveApplication("a1", "shortlisted")],
+  ];
+
+  it.each(calls)("%s", async (_name, call) => {
+    const sent = captureInit();
+    await call().catch(() => undefined);
+
+    expect(sent[0]?.credentials).toBe("include");
   });
 });
 

@@ -26,7 +26,7 @@ import { errorMessage, useAuth } from "@/lib/auth";
  * written to stop repeating.
  */
 export default function ApplicationsPage() {
-  const { token, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, signOut, authorized } = useAuth();
   const [me, setMe] = useState<Account | null>(null);
   const [applications, setApplications] = useState<Application[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -38,12 +38,12 @@ export default function ApplicationsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [account, mine, allJobs, myResumes] = await authorized(async (accessToken) =>
+      const [account, mine, allJobs, myResumes] = await authorized(async () =>
         Promise.all([
-          api.me(accessToken),
-          api.listMyApplications(accessToken),
-          api.listJobs(accessToken),
-          api.listResumes(accessToken),
+          api.me(),
+          api.listMyApplications(),
+          api.listJobs(),
+          api.listResumes(),
         ]),
       );
       setMe(account);
@@ -60,8 +60,8 @@ export default function ApplicationsPage() {
     // `await`, so nothing is set synchronously in this effect body — the rule's
     // analysis does not follow the await boundary. Fetch-on-mount is the job here.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (token) void load();
-  }, [token, load]);
+    if (session) void load();
+  }, [session, load]);
 
   async function openHistory(applicationId: string) {
     if (openId === applicationId) {
@@ -70,7 +70,7 @@ export default function ApplicationsPage() {
     }
     setOpenId(applicationId);
     try {
-      setEvents(await authorized((t) => api.listApplicationEvents(applicationId, t)));
+      setEvents(await authorized(() => api.listApplicationEvents(applicationId)));
     } catch (caught) {
       setError(errorMessage(caught, "Could not load the history"));
     }
@@ -80,7 +80,7 @@ export default function ApplicationsPage() {
     setError(null);
     setBusy(true);
     try {
-      await authorized((t) => api.applyToJob(jobId, resumeId, t));
+      await authorized(() => api.applyToJob(jobId, resumeId));
       await load();
     } catch (caught) {
       setError(errorMessage(caught, "Could not apply"));
@@ -93,10 +93,10 @@ export default function ApplicationsPage() {
     setError(null);
     setBusy(true);
     try {
-      await authorized((t) => api.moveApplication(applicationId, to, t, reason));
+      await authorized(() => api.moveApplication(applicationId, to, reason));
       await load();
       if (openId === applicationId) {
-        setEvents(await authorized((t) => api.listApplicationEvents(applicationId, t)));
+        setEvents(await authorized(() => api.listApplicationEvents(applicationId)));
       }
     } catch (caught) {
       // A 409 carries the server's own sentence, written for a person to read.
@@ -112,7 +112,7 @@ export default function ApplicationsPage() {
   const extracted = resumes.filter((resume) => resume.status === "extracted");
 
   if (!ready) return null;
-  if (!token) {
+  if (!session) {
     return (
       <main className="mx-auto max-w-3xl px-5 py-12">
         <AuthPanel onAuthenticated={authenticate} />
@@ -138,7 +138,7 @@ export default function ApplicationsPage() {
           </Link>
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void signOut()}
             className="text-xs text-stone-500 underline dark:text-stone-400"
           >
             Sign out

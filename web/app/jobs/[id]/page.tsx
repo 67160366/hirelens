@@ -44,7 +44,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function JobPage() {
   const jobId = String(useParams().id);
-  const { token, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, signOut, authorized } = useAuth();
 
   const [job, setJob] = useState<Job | null>(null);
   const [me, setMe] = useState<Account | null>(null);
@@ -67,7 +67,7 @@ export default function JobPage() {
   /** Everything this screen reads. Six queries, none of which bills a model call. */
   const load = useCallback(async () => {
     try {
-      await authorized(async (accessToken) => {
+      await authorized(async () => {
         const [
           loadedJob,
           loadedResumes,
@@ -76,12 +76,12 @@ export default function JobPage() {
           loadedApplications,
           account,
         ] = await Promise.all([
-          api.getJob(jobId, accessToken),
-          api.listResumes(accessToken),
-          api.listScreenings(jobId, accessToken),
-          api.getRanking(jobId, accessToken),
-          api.listJobApplications(jobId, accessToken),
-          api.me(accessToken),
+          api.getJob(jobId),
+          api.listResumes(),
+          api.listScreenings(jobId),
+          api.getRanking(jobId),
+          api.listJobApplications(jobId),
+          api.me(),
         ]);
         setJob(loadedJob);
         setResumes(loadedResumes);
@@ -104,11 +104,11 @@ export default function JobPage() {
     setError(null);
     setPending(true);
     try {
-      await authorized((t) => api.moveApplication(applicationId, to, t, reason));
-      setApplications(await authorized((t) => api.listJobApplications(jobId, t)));
+      await authorized(() => api.moveApplication(applicationId, to, reason));
+      setApplications(await authorized(() => api.listJobApplications(jobId)));
       if (openApplicationId === applicationId) {
         setApplicationEvents(
-          await authorized((t) => api.listApplicationEvents(applicationId, t)),
+          await authorized(() => api.listApplicationEvents(applicationId)),
         );
       }
     } catch (caught) {
@@ -129,7 +129,7 @@ export default function JobPage() {
     setOpenApplicationId(applicationId);
     try {
       setApplicationEvents(
-        await authorized((t) => api.listApplicationEvents(applicationId, t)),
+        await authorized(() => api.listApplicationEvents(applicationId)),
       );
     } catch (caught) {
       setError(errorMessage(caught, "Could not load the history"));
@@ -141,16 +141,16 @@ export default function JobPage() {
     // `await`, so nothing is set synchronously in this effect body — the rule's
     // analysis does not follow the await boundary. Fetch-on-mount is the job here.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (token) void load();
-  }, [token, load]);
+    if (session) void load();
+  }, [session, load]);
 
   /** Re-read only what a requirement edit can move. Still no model call. */
   const refreshAfterEdit = useCallback(async () => {
-    await authorized(async (accessToken) => {
+    await authorized(async () => {
       const [loadedJob, loadedScreenings, loadedRanking] = await Promise.all([
-        api.getJob(jobId, accessToken),
-        api.listScreenings(jobId, accessToken),
-        api.getRanking(jobId, accessToken),
+        api.getJob(jobId),
+        api.listScreenings(jobId),
+        api.getRanking(jobId),
       ]);
       setJob(loadedJob);
       setScreenings(loadedScreenings);
@@ -218,11 +218,11 @@ export default function JobPage() {
    */
   const refreshAfterScreening = useCallback(
     () =>
-      authorized(async (accessToken) => {
-        const loadedScreenings = await api.listScreenings(jobId, accessToken);
+      authorized(async () => {
+        const loadedScreenings = await api.listScreenings(jobId);
         const [loadedRanking, loadedApplications] = await Promise.all([
-          api.getRanking(jobId, accessToken),
-          api.listJobApplications(jobId, accessToken),
+          api.getRanking(jobId),
+          api.listJobApplications(jobId),
         ]);
         setScreenings(loadedScreenings);
         setRanking(loadedRanking);
@@ -264,8 +264,8 @@ export default function JobPage() {
     setNotice(null);
     setBusyResumeId(resumeId);
     try {
-      const { queued } = await authorized((accessToken) =>
-        api.createScreening(jobId, resumeId, accessToken),
+      const { queued } = await authorized(() =>
+        api.createScreening(jobId, resumeId),
       );
       setNotice(
         queued
@@ -288,8 +288,8 @@ export default function JobPage() {
   async function saveRequirement(requirementId: string, patch: RequirementPatch) {
     setError(null);
     try {
-      await authorized((accessToken) =>
-        api.updateRequirement(jobId, requirementId, patch, accessToken),
+      await authorized(() =>
+        api.updateRequirement(jobId, requirementId, patch),
       );
       await refreshAfterEdit();
     } catch (caught) {
@@ -300,7 +300,7 @@ export default function JobPage() {
   async function removeRequirement(requirementId: string) {
     setError(null);
     try {
-      await authorized((accessToken) => api.deleteRequirement(jobId, requirementId, accessToken));
+      await authorized(() => api.deleteRequirement(jobId, requirementId));
       await refreshAfterEdit();
     } catch (caught) {
       setError(errorMessage(caught, "Could not delete the requirement"));
@@ -312,7 +312,7 @@ export default function JobPage() {
     setError(null);
     setPending(true);
     try {
-      await authorized((accessToken) => api.addRequirement(jobId, draft, accessToken));
+      await authorized(() => api.addRequirement(jobId, draft));
       setDraft({ ...BLANK_REQUIREMENT });
       await refreshAfterEdit();
     } catch (caught) {
@@ -334,7 +334,7 @@ export default function JobPage() {
       // those frozen at judging time. The distinction is not a rule about the
       // route, it is a rule about which fields go stale: nothing re-keys a dropped
       // claim, so it reads the same from either source.
-      setDetail(await authorized((accessToken) => api.getScreening(screeningId, accessToken)));
+      setDetail(await authorized(() => api.getScreening(screeningId)));
     } catch (caught) {
       setError(errorMessage(caught, "Could not load the screening"));
     }
@@ -351,7 +351,7 @@ export default function JobPage() {
   );
 
   if (!ready) return null;
-  if (!token) {
+  if (!session) {
     return (
       <main className="mx-auto max-w-6xl px-5 py-12">
         <AuthPanel onAuthenticated={authenticate} />
@@ -379,7 +379,7 @@ export default function JobPage() {
           </Link>
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void signOut()}
             className="text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
           >
             Sign out

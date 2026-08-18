@@ -159,6 +159,15 @@ services:
 
       JWT_SECRET: ${JWT_SECRET:-change-me-before-deploying}
 
+      # The browser's session cookies. Named here rather than left to `.env`,
+      # because a setting this file does not name never reaches the container at
+      # all — it sits at the code's default while `.env.prod` says otherwise and
+      # nothing reports the disagreement. That is the trap M5 slice 5 measured, and
+      # it is worse here: `COOKIE_SECURE` silently false on an HTTPS deploy is a
+      # session cookie travelling in the clear.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
+
       # Tesseract and its Thai pack are installed in the image, so turning OCR on
       # is this one variable — no OCR_COMMAND path needed. Off by default, as on
       # the host: a scan should fail loudly rather than depend on a hidden default.
