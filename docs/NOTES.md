@@ -10,8 +10,10 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 **No milestone was in progress** — M1–M5 are closed and M6 was closed unbuilt — so this
 session took the two named leftovers plus the env hygiene that had been carried for two
-sessions. **Both are done, so nothing named is outstanding.** Six commits, none pushed
-(your call, as always). The session ran past midnight, hence the two dates.
+sessions. **Both are done, so nothing named is outstanding.** Nothing was pushed (your call, as
+always); for how much is waiting, run `git rev-list --count origin/main..main` — this
+note deliberately does not say, because the number was wrong within minutes each of the
+three times it did. The session ran past midnight, hence the two dates.
 
 | # | Commit | What it is |
 |---|---|---|
@@ -165,8 +167,10 @@ Three decisions inside it, each confirmed load-bearing by mutation (2, 4 and 3 c
   driving it. Two candidates, neither urgent: `POST /auth/logout-everywhere` (three lines
   on the token epoch, not built because nothing asked for the route), and the three
   cosmetic smells that have been "do them when already in the file" since 2026-08-14.
-- **Six commits sit unpushed.** Derive it with `git rev-list --count origin/main..main`
-  rather than trusting this line — this paragraph has been wrong before.
+- **Commits are sitting unpushed; `git rev-list --count origin/main..main` says how
+  many.** No number here on purpose. A count written at the end of a session is stale by
+  the next commit, and this paragraph has been wrong three times for exactly that reason
+  — including once *within this session*, when correcting it made it wrong again.
 
 ---
 
