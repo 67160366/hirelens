@@ -10,7 +10,7 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 **No milestone was in progress** — M1–M5 are closed and M6 was closed unbuilt — so this
 session took the two named leftovers plus the env hygiene that had been carried for two
-sessions. **Both are done, so nothing named is outstanding.** Five commits, none pushed
+sessions. **Both are done, so nothing named is outstanding.** Six commits, none pushed
 (your call, as always). The session ran past midnight, hence the two dates.
 
 | # | Commit | What it is |
@@ -20,6 +20,7 @@ sessions. **Both are done, so nothing named is outstanding.** Five commits, none
 | 3 | Record that the epoch landed, and the mutation call that went the other way | Six documents, and a new `RUNBOOK` section run before it was written |
 | 4 | Accept the session as a cookie the browser will not show to script | `app/cookies.py`, the cookie settings and their startup guard, the CSRF check, `tests/test_cookie_auth.py`. **No change to `web/`** |
 | 5 | Stop the browser from holding a token at all | `lib/auth.ts` rewritten onto an identity marker, `credentials: "include"`, ~30 `api.*` signatures, 5 pages, `AuthPanel` |
+| 6 | Close the auth story, and record the three lessons it cost | These docs, plus `HANDOFF.md` §10 gaining two new instrument entries |
 
 Gates: `pytest -q` **651 → 680**, vitest **137 → 165**, `ruff`/`mypy` (58 files)/
 `typecheck`/`lint`/`build` clean. Migration `0012` round-trips on both dialects.
@@ -164,7 +165,7 @@ Three decisions inside it, each confirmed load-bearing by mutation (2, 4 and 3 c
   driving it. Two candidates, neither urgent: `POST /auth/logout-everywhere` (three lines
   on the token epoch, not built because nothing asked for the route), and the three
   cosmetic smells that have been "do them when already in the file" since 2026-08-14.
-- **Five commits sit unpushed.** Derive it with `git rev-list --count origin/main..main`
+- **Six commits sit unpushed.** Derive it with `git rev-list --count origin/main..main`
   rather than trusting this line — this paragraph has been wrong before.
 
 ---
