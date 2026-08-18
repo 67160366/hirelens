@@ -83,11 +83,6 @@ async def get_current_candidate(
 
     try:
         claims = decode_token(settings, credentials.credentials, expected_type=TOKEN_TYPE_ACCESS)
-        # Verify, then check it has not been taken back. `decode_token` answers what
-        # the token says; only the database knows whether it still counts. Both
-        # raise `AuthError`, so a revoked token and a forged one look identical to
-        # whoever presented them — which is the right amount to disclose.
-        await token_service.assert_live(session, claims)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -95,6 +90,9 @@ async def get_current_candidate(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    # The account is loaded before the token is accepted, not after: `assert_live`
+    # needs the row to compare the token's epoch against, and requiring it as an
+    # argument is what stops the epoch check from being a third thing to remember.
     candidate = await session.get(Candidate, claims.subject)
     if candidate is None:
         # A valid signature for a deleted account. 401, not 404: the token itself
@@ -102,6 +100,20 @@ async def get_current_candidate(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Account no longer exists"
         )
+
+    try:
+        # Verify, then check it still counts. `decode_token` answers what the token
+        # says; only the database knows whether it has been taken back or belongs to
+        # a generation a password change ended. Every failure raises `AuthError`, so
+        # a revoked, superseded and forged token look identical to whoever presented
+        # one — which is the right amount to disclose.
+        await token_service.assert_live(session, claims, candidate)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
 
     yield candidate
 
@@ -124,6 +136,11 @@ async def get_current_claims(
     Decoding twice costs one HMAC verification. Only `/auth/logout` needs this — the
     one route whose job is to act on the token itself rather than on the account
     behind it.
+
+    The `session.get` below is not a second query in practice: both routes using
+    this also depend on `CandidateDep`, so the row is already in the identity map.
+    It is spelled out anyway rather than assumed, for the reason above — there is no
+    promised order between two dependencies of one route.
     """
     if credentials is None:
         raise HTTPException(
@@ -133,7 +150,21 @@ async def get_current_claims(
         )
     try:
         claims = decode_token(settings, credentials.credentials, expected_type=TOKEN_TYPE_ACCESS)
-        await token_service.assert_live(session, claims)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    candidate = await session.get(Candidate, claims.subject)
+    if candidate is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Account no longer exists"
+        )
+
+    try:
+        await token_service.assert_live(session, claims, candidate)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

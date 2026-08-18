@@ -89,6 +89,20 @@ class Candidate(UUIDPrimaryKey, Timestamps, Base):
         Enum(Role, native_enum=False, length=20), default=Role.CANDIDATE, nullable=False
     )
 
+    token_epoch: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Which generation of this account's tokens is still valid.
+
+    Every token carries the epoch it was minted under; `token_service.assert_live`
+    refuses one whose epoch is not this. Bumping it therefore invalidates every
+    token outstanding for this account — on every device, access and refresh alike
+    — without anything having to enumerate them, which is what the denylist cannot
+    do: it records only tokens that are *dead*, never tokens that are outstanding.
+
+    Read from the row on every request rather than trusted from the token, for the
+    same reason `role` is: the effect has to be immediate, not whenever an access
+    token happens to expire.
+    """
+
     resumes: Mapped[list[Resume]] = relationship(
         back_populates="candidate", cascade="all, delete-orphan"
     )

@@ -15,6 +15,7 @@ when it is not.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -22,7 +23,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import RevocationReason, RevokedToken
+from app.models import Candidate, RevocationReason, RevokedToken
 from app.security import TOKEN_TYPE_ACCESS, TOKEN_TYPE_REFRESH, AuthError, decode_token
 from app.services import token_service
 
@@ -224,6 +225,37 @@ class TestTheRowsBehindIt:
 
         assert reasons == {RevocationReason.REFRESH_ROTATED, RevocationReason.LOGOUT}
 
+    async def test_a_password_change_leaves_a_record_of_why(
+        self,
+        authed_client: AsyncClient,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """This row exists for the operator, not for the guard, and the distinction
+        is the whole reason the case is here.
+
+        `Candidate.token_epoch` is what actually ends the session — mutation-testing
+        proved it: deleting the `revoke` call below leaves all 656 cases passing,
+        because the epoch refuses the token first and nothing else was looking. That
+        makes this line untested rather than dead, which are different things.
+        Without it a password change is the one revocation that leaves **no trace at
+        all**, since bumping an integer writes no history, and the operator query in
+        `docs/RUNBOOK.md` would quietly stop reporting the reason people are most
+        likely to ask about.
+
+        So it stays, and this pins it. A line kept for a reason no test states is a
+        line the next person deletes.
+        """
+        await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
+        )
+
+        async with sessionmaker_for_tests() as session:
+            rows = (await session.execute(select(RevokedToken))).scalars().all()
+
+        assert [row.reason for row in rows] == [RevocationReason.PASSWORD_CHANGED]
+        assert rows[0].token_type == TOKEN_TYPE_ACCESS
+
     async def test_erasing_the_account_takes_its_revocations_with_it(
         self,
         authed_client: AsyncClient,
@@ -322,13 +354,66 @@ class TestTheService:
         claims = decode_token(_settings_of(authed_client), token, expected_type=TOKEN_TYPE_ACCESS)
 
         async with sessionmaker_for_tests() as session:
-            await token_service.assert_live(session, claims)  # not revoked: silent
+            candidate = await session.get(Candidate, claims.subject)
+            assert candidate is not None
+            await token_service.assert_live(session, claims, candidate)  # not revoked: silent
 
             await token_service.revoke(session, claims, RevocationReason.LOGOUT)
             await session.commit()
 
             with pytest.raises(AuthError):
-                await token_service.assert_live(session, claims)
+                await token_service.assert_live(session, claims, candidate)
+
+    async def test_a_stale_epoch_raises_that_same_error_too(
+        self,
+        authed_client: AsyncClient,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """The second half of `assert_live`, and it has to fail the same way.
+
+        A token superseded by a password change is refused for a different reason
+        than one that was signed out, but whoever presented it learns neither — both
+        are `AuthError`, and every route already turns that into one 401. A distinct
+        exception here would eventually become a distinct status code somewhere, and
+        that would tell an attacker which of the two happened.
+        """
+        token = authed_client.headers["Authorization"].removeprefix("Bearer ")
+        claims = decode_token(_settings_of(authed_client), token, expected_type=TOKEN_TYPE_ACCESS)
+
+        async with sessionmaker_for_tests() as session:
+            candidate = await session.get(Candidate, claims.subject)
+            assert candidate is not None
+            await token_service.assert_live(session, claims, candidate)  # in step: silent
+
+            # What `POST /auth/change-password` does, without the HTTP layer.
+            candidate.token_epoch += 1
+            await session.commit()
+
+            with pytest.raises(AuthError):
+                await token_service.assert_live(session, claims, candidate)
+
+    async def test_a_token_from_a_later_epoch_is_refused_as_well(
+        self,
+        authed_client: AsyncClient,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
+        """Not `<`, but `!=`.
+
+        A token claiming an epoch the account has never reached is forged or
+        replayed from somewhere, and accepting it because it looks *newer* would
+        make the check a lower bound rather than an identity — which an attacker
+        who can mint tokens would only have to overshoot.
+        """
+        token = authed_client.headers["Authorization"].removeprefix("Bearer ")
+        claims = decode_token(_settings_of(authed_client), token, expected_type=TOKEN_TYPE_ACCESS)
+        from_the_future = replace(claims, epoch=claims.epoch + 5)
+
+        async with sessionmaker_for_tests() as session:
+            candidate = await session.get(Candidate, claims.subject)
+            assert candidate is not None
+
+            with pytest.raises(AuthError):
+                await token_service.assert_live(session, from_the_future, candidate)
 
 
 class TestTokenClaims:

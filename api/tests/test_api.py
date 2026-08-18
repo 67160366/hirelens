@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
 
@@ -187,30 +190,131 @@ class TestChangePassword:
         authed_client.headers["Authorization"] = f"Bearer {changed.json()['access_token']}"
         assert (await authed_client.get("/auth/me")).status_code == 200
 
-    async def test_a_session_on_another_device_survives_a_password_change(
+    async def test_a_session_on_another_device_is_signed_out_by_a_password_change(
         self, authed_client: AsyncClient, client: AsyncClient
     ):
-        """KNOWN LIMITATION, pinned so it stays a deliberate state.
+        """The opposite of the test that used to stand here, which is the point.
 
-        The denylist stores only tokens that are dead, never tokens that are
-        outstanding, so a password change has no list of other sessions to walk. A
-        session signed in on another device keeps working until its own token
-        expires. Closing this needs a session registry or a per-account epoch inside
-        the token payload; `README.md` carries the limitation.
+        It read `test_a_session_on_another_device_survives_a_password_change` and
+        pinned a **known limitation**: the denylist records tokens that are dead and
+        never tokens that are outstanding, so a password change had no list of other
+        sessions to walk and one on another machine kept working for the refresh
+        token's full fourteen days. Its docstring named the two fixes and said that
+        when one landed this should fail and be replaced with its opposite. On
+        2026-08-18 it did fail, for exactly that reason: `Candidate.token_epoch`.
 
-        Pinned rather than commented for the same reason as the test above: when it
-        is fixed, this should fail and be replaced with its opposite.
+        Third time this device has been used here, after
+        `test_columns_should_read_one_after_the_other` and
+        `test_the_token_that_changed_the_password_stops_working`.
+
+        Both halves of the pair are checked, not just the access token: the refresh
+        token is the one that could otherwise mint new access tokens for a fortnight,
+        so a change that only killed the access token would have looked like a fix
+        for thirty minutes and then quietly not been one.
         """
         credentials = {"email": "candidate@example.com", "password": "correct horse battery"}
-        elsewhere = (await client.post("/auth/login", json=credentials)).json()["access_token"]
+        elsewhere = (await client.post("/auth/login", json=credentials)).json()
 
         await authed_client.post(
             "/auth/change-password",
             json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
         )
 
-        client.headers["Authorization"] = f"Bearer {elsewhere}"
+        client.headers["Authorization"] = f"Bearer {elsewhere['access_token']}"
+        assert (await client.get("/auth/me")).status_code == 401
+
+        refreshed = await client.post(
+            "/auth/refresh", json={"refresh_token": elsewhere["refresh_token"]}
+        )
+        assert refreshed.status_code == 401
+
+    async def test_the_other_device_can_sign_in_again_with_the_new_password(
+        self, authed_client: AsyncClient, client: AsyncClient
+    ):
+        """Signed out is not locked out.
+
+        The epoch ends a generation of tokens, not the account — so the check above
+        would also pass if a password change had bricked it. Worth its own case,
+        because "everything is refused" is the failure mode a too-eager epoch
+        comparison produces and it looks identical from the other test's angle.
+        """
+        await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
+        )
+
+        again = await client.post(
+            "/auth/login",
+            json={"email": "candidate@example.com", "password": "a-brand-new-one"},
+        )
+        assert again.status_code == 200
+
+        client.headers["Authorization"] = f"Bearer {again.json()['access_token']}"
         assert (await client.get("/auth/me")).status_code == 200
+
+    async def test_two_password_changes_do_not_reopen_the_first_generation(
+        self, authed_client: AsyncClient, client: AsyncClient
+    ):
+        """A counter, not a toggle.
+
+        The epoch is compared for equality against a row that only ever increases,
+        so a second change cannot bring a token from before the first one back. This
+        is the case that would fail if the epoch were ever stored as a boolean or
+        reset on any path.
+        """
+        credentials = {"email": "candidate@example.com", "password": "correct horse battery"}
+        oldest = (await client.post("/auth/login", json=credentials)).json()["access_token"]
+
+        first = await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "second-password"},
+        )
+        assert first.status_code == 200
+
+        authed_client.headers["Authorization"] = f"Bearer {first.json()['access_token']}"
+        second = await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "second-password", "new_password": "third-password"},
+        )
+        assert second.status_code == 200
+
+        client.headers["Authorization"] = f"Bearer {oldest}"
+        assert (await client.get("/auth/me")).status_code == 401
+
+    async def test_a_token_minted_before_the_epoch_existed_still_works(
+        self, authed_client: AsyncClient, client: AsyncClient
+    ):
+        """Tokens already in browsers when this landed carry no `epoch` claim.
+
+        `decode_token` reads a missing one as zero and the migration starts every
+        account at zero, so they match — nothing signed anybody out on deploy, the
+        same way the denylist changed nothing about tokens already issued. They are
+        not grandfathered past anything: the case below is the same token after a
+        password change, and it is refused with everything else.
+        """
+        import jwt
+
+        settings = client._transport.app.state.settings  # type: ignore[union-attr]
+        subject = (await authed_client.get("/auth/me")).json()["id"]
+        legacy = jwt.encode(
+            {
+                "sub": subject,
+                "type": "access",
+                "exp": datetime.now(UTC) + timedelta(minutes=5),
+                "jti": uuid.uuid4().hex,
+            },
+            settings.jwt_secret,
+            algorithm="HS256",
+        )
+
+        client.headers["Authorization"] = f"Bearer {legacy}"
+        assert (await client.get("/auth/me")).status_code == 200
+
+        await authed_client.post(
+            "/auth/change-password",
+            json={"current_password": "correct horse battery", "new_password": "a-brand-new-one"},
+        )
+        assert (await client.get("/auth/me")).status_code == 401
 
 
 class TestUpload:

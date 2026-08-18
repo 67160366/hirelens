@@ -6,7 +6,14 @@ revoked is a fact about the system rather than about the token, so it lives here
 
 The pairing to keep: **`decode_token` then `assert_live`.** Either alone is a hole.
 Verifying without checking revocation accepts a token somebody signed out; checking
-revocation without verifying trusts a `jti` an attacker chose.
+revocation without verifying trusts a `jti` an attacker chose. `assert_live` takes
+the account row as a required argument so the pairing stays two things rather than
+three — see its docstring.
+
+**Two mechanisms live here, not one.** The denylist below answers "was *this token*
+taken back". `Candidate.token_epoch` answers "is this token's whole *generation*
+over", which is the question a password change asks and which no list of dead
+tokens can answer.
 
 Three things revoke, and they are `RevocationReason`'s three values:
 
@@ -18,11 +25,14 @@ Three things revoke, and they are `RevocationReason`'s three values:
     user had rotated it. This is the concrete hole the slice closes.
   * **password change** — the pair the caller presented.
 
-**What this cannot do, stated rather than implied:** revoking *other devices'*
-sessions on a password change. Nothing records which tokens are outstanding — only
-which are dead — so there is no list to revoke. Doing it properly needs a session
-registry (a row per issued refresh token) or a per-account epoch in the token
-payload, and both are larger than this slice. `README.md` carries the limitation.
+**Other devices are the epoch's job, not the denylist's.** That used to be recorded
+here as a limitation: nothing knows which tokens are outstanding, only which are
+dead, so a password change had no list to walk. The fix named at the time was "a
+session registry or a per-account epoch", and it is the epoch — bumping one integer
+on the account ends every generation before it, with nothing enumerated. The two
+mechanisms stay separate on purpose: one is about a token, the other about an
+account, and collapsing them would mean either storing every live session or
+signing out every device on an ordinary logout.
 """
 
 from __future__ import annotations
@@ -34,7 +44,7 @@ from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import RevocationReason, RevokedToken
+from app.models import Candidate, RevocationReason, RevokedToken
 from app.models.base import utcnow
 from app.security import AuthError, TokenClaims
 
@@ -94,16 +104,32 @@ async def is_revoked(session: AsyncSession, jti: str) -> bool:
     return found is not None
 
 
-async def assert_live(session: AsyncSession, claims: TokenClaims) -> None:
-    """Raise `AuthError` if this token has been revoked.
+async def assert_live(session: AsyncSession, claims: TokenClaims, candidate: Candidate) -> None:
+    """Raise `AuthError` unless this token is still good: not revoked, and minted
+    under the account's current epoch.
 
     Raises the same exception `decode_token` does, so every call site that already
     turns an `AuthError` into a 401 keeps working without learning a second failure
-    mode — and a revoked token is indistinguishable from an invalid one to whoever
-    presented it, which is the right amount to say.
+    mode — and a revoked, stale or invalid token are all indistinguishable to
+    whoever presented one, which is the right amount to say.
+
+    **`candidate` is required rather than looked up here, and that is the design.**
+    The standing rule is that `decode_token` and `assert_live` are called together;
+    a third thing to remember would be the one somebody forgets, so instead the
+    account row is a parameter and mypy refuses a call that has not loaded it. You
+    cannot check a token without having looked up whose it is. It costs nothing:
+    every caller needs the row anyway, and SQLAlchemy's identity map means a second
+    `session.get` for the same id is not a second query.
+
+    The two halves answer different questions. The denylist knows about *this
+    token* — it was signed out, or spent on a refresh. The epoch knows about *this
+    account* — everything issued before a password change is over, including the
+    sessions nothing recorded.
     """
     if await is_revoked(session, claims.jti):
         raise AuthError("Invalid token: revoked")
+    if claims.epoch != candidate.token_epoch:
+        raise AuthError("Invalid token: superseded")
 
 
 async def purge_expired(session: AsyncSession) -> int:

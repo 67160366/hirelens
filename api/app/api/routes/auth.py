@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CandidateDep, ClaimsDep, SessionDep, SettingsDep, StorageDep
+from app.config import Settings
 from app.models import Candidate, RevocationReason, Role
 from app.security import (
     TOKEN_TYPE_REFRESH,
@@ -67,6 +68,21 @@ class TokenPair(BaseModel):
     token_type: str = "bearer"
 
 
+def _issue(settings: Settings, candidate: Candidate) -> TokenPair:
+    """Mint a pair under the account's *current* epoch.
+
+    One helper rather than four call sites spelling it out, because a pair minted
+    under a stale epoch is refused on its first use — a failure that reads as a bug
+    in authentication rather than as the omission it is. `change_password` in
+    particular has to bump the row **before** calling this, or it hands back
+    credentials it has just invalidated.
+    """
+    return TokenPair(
+        access_token=create_access_token(settings, candidate.id, candidate.token_epoch),
+        refresh_token=create_refresh_token(settings, candidate.id, candidate.token_epoch),
+    )
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -111,10 +127,7 @@ async def register(
             status_code=status.HTTP_409_CONFLICT, detail="Email is already registered"
         ) from exc
 
-    return TokenPair(
-        access_token=create_access_token(settings, candidate.id),
-        refresh_token=create_refresh_token(settings, candidate.id),
-    )
+    return _issue(settings, candidate)
 
 
 @router.post("/login", response_model=TokenPair)
@@ -133,10 +146,7 @@ async def login(payload: LoginRequest, session: SessionDep, settings: SettingsDe
     if not verify_password(payload.password, candidate.password_hash):
         raise invalid
 
-    return TokenPair(
-        access_token=create_access_token(settings, candidate.id),
-        refresh_token=create_refresh_token(settings, candidate.id),
-    )
+    return _issue(settings, candidate)
 
 
 @router.post("/refresh", response_model=TokenPair)
@@ -147,19 +157,25 @@ async def refresh(payload: RefreshRequest, session: SessionDep, settings: Settin
     so an access token presented here is rejected just as a refresh token is on
     protected routes.
     """
+    invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
+    )
     try:
         claims = decode_token(settings, payload.refresh_token, expected_type=TOKEN_TYPE_REFRESH)
-        await token_service.assert_live(session, claims)
     except AuthError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
-        ) from exc
+        raise invalid from exc
 
     candidate = await session.get(Candidate, claims.subject)
     if candidate is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
-        )
+        raise invalid
+
+    try:
+        # Loaded first, then checked — `assert_live` compares the token's epoch
+        # against the row, so a refresh token from a device that never saw the
+        # password change is refused here rather than minting a fresh pair for it.
+        await token_service.assert_live(session, claims, candidate)
+    except AuthError as exc:
+        raise invalid from exc
 
     # Rotation only means something if the token that was spent stops working. Until
     # this line, `refresh` issued a new pair and left the presented one valid for the
@@ -168,10 +184,7 @@ async def refresh(payload: RefreshRequest, session: SessionDep, settings: Settin
     await token_service.revoke(session, claims, RevocationReason.REFRESH_ROTATED)
     await session.commit()
 
-    return TokenPair(
-        access_token=create_access_token(settings, candidate.id),
-        refresh_token=create_refresh_token(settings, candidate.id),
-    )
+    return _issue(settings, candidate)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -227,18 +240,17 @@ async def change_password(
 ) -> TokenPair:
     """Change the signed-in account's password, proving the old one first.
 
-    Returns a fresh token pair so a client can swap without a second round trip, and
-    revokes the access token that authenticated this call — the old password's
-    credential should not outlive the old password.
+    **Every session on every device ends here**, including ones this server has no
+    record of. That is `Candidate.token_epoch`: each token carries the generation it
+    was minted under, the bump below moves the account past all of them, and the
+    next request any of them makes is refused. The old password's credentials should
+    not outlive the old password, and until this landed only the caller's own did —
+    a session on another machine kept working for the refresh token's full fourteen
+    days, which was pinned as a known limitation rather than left to be discovered.
 
-    **What this still does not do, and it is a real limitation rather than a
-    rounding error: it cannot sign out the account's *other* devices.** Nothing
-    records which tokens are outstanding — the denylist stores only the dead — so
-    there is no list to walk. A session on another machine keeps working until its
-    refresh token expires. Closing that needs a session registry or a per-account
-    epoch inside the token payload; both are bigger than the denylist, and
-    `README.md` carries the limitation rather than this route implying a guarantee
-    it cannot make.
+    Returns a fresh pair so the caller is not signed out by their own password
+    change. The bump has to happen **before** the pair is minted, or `_issue` stamps
+    the old epoch onto tokens that are already invalid.
     """
     if candidate.password_hash is None:
         raise HTTPException(
@@ -254,13 +266,17 @@ async def change_password(
         )
 
     candidate.password_hash = hash_password(payload.new_password)
+    candidate.token_epoch += 1
+    # Redundant as a guard — the bump above already refuses this token — and kept
+    # anyway, because it is the only *record* that the change ended anything.
+    # Bumping an integer writes no history, so without this row a password change is
+    # the one revocation an operator cannot see a reason for. Mutation-testing says
+    # so plainly: deleting this line breaks no test, which is why one was written to
+    # pin it rather than leaving a line nobody can justify.
     await token_service.revoke(session, claims, RevocationReason.PASSWORD_CHANGED)
     await session.commit()
 
-    return TokenPair(
-        access_token=create_access_token(settings, candidate.id),
-        refresh_token=create_refresh_token(settings, candidate.id),
-    )
+    return _issue(settings, candidate)
 
 
 @router.get("/me", response_model=CandidateOut)
