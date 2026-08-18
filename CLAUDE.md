@@ -184,11 +184,14 @@ in-memory SQLite with `QUEUE_BACKEND=inline` and never needs a server. `.env`
 selects the LLM provider — `fake` needs no key; `FAKE_MODE=hallucinating` demos
 the dropped-claims path.
 
-OCR is **off by default** (`OCR_ENGINE=none`) because Tesseract is a system binary
-and CI will never have one — the same reasoning as the fake provider. To turn it on
-here, `OCR_ENGINE=tesseract` plus `OCR_COMMAND=C:\Users\golfv\tesseract.exe`: this
-machine's Tesseract is a portable install and is **not on PATH**, so the bare name
-will not resolve. A missing language pack is refused at startup rather than
+OCR is **off by the code's default** (`OCR_ENGINE=none`) because Tesseract is a
+system binary and CI will never have one — the same reasoning as the fake provider.
+**This machine's `.env` already turns it on**, with `OCR_ENGINE=tesseract` plus
+`OCR_COMMAND=C:\Users\golfv\tesseract.exe`: its Tesseract is a portable install and
+is **not on PATH**, so the bare name will not resolve. So a scanned upload here is
+read rather than reported, which a fresh clone's would not be — and inside the
+container it resolves differently again, from the bare name the API image installs
+on `PATH`. A missing language pack is refused at startup rather than
 returning noise for Thai, so `OCR_LANGUAGES` must name packs that are installed
 (`eng`, `tha`, `osd` are). A page whose mean per-word confidence falls below
 `OCR_MIN_CONFIDENCE` (75) is refused rather than reported — a blurred scan yields
