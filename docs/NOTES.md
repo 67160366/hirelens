@@ -6,7 +6,190 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-18 → 08-19 (latest) — the auth story is finished
+## 2026-08-20 (latest) — two of the three trust defects, watched at last
+
+**Still nothing committed.** The working tree is unchanged from the entry below; this
+records what was *verified*, so the next session does not re-derive it.
+
+Both of last session's blockers were gone before the first command: the **Chrome extension
+is connected**, and the dev server on :3000 was healthy (its 00:11 parse error was a
+mid-edit state, compiled clean at 00:12). There is **no `web` container** — :3000 is
+`npm run dev` serving the working tree directly, so no rebuild stands between the code and
+the browser, and the usual "is the container serving the new bundle?" trap does not apply.
+
+Gates re-run first, because group D landed after the last full run: `typecheck` clean,
+`lint` clean, vitest **168**. Nothing under `api/` touched, so `pytest` was not re-run.
+
+Driven on `LLM_PROVIDER=fake` — **zero Gemini quota**. Console instrument proven to speak
+first (a `console.log`/`console.error` probe pair, both confirmed visible) before any
+absence was believed.
+
+| Check | Result |
+|---|---|
+| **A1 — switching candidates with the Original tab open** | `resume_th.pdf` renders its PDF with **4** citation boxes (widths 126.25 / 25.30 / 13.77 / 42.22). Selecting `resume_en.pdf` renders a visibly different document (`Somchai Jaidee`, Latin) with **8** boxes of entirely different widths, on the English quote line. Switching back reproduces the Thai four **exactly**. No stale bytes, no stale geometry |
+| **A1, the mechanism** | The pane returns to *Extracted text* on every switch — `key={selected.screening_id}` remounting the provider. So the `loadedFor` ref is defence in depth rather than the visible half, which is worth knowing before anyone "simplifies" either guard away |
+| **A2 — two fast clicks on ranked rows** | **The race was forced rather than hoped for**: `fetch` patched so the `resume_th` screening answered **4 s late**, then th and en clicked 76 ms apart. Console confirms both requests fired and that **th's late answer genuinely arrived**. The screen still reads `resume_en.pdf`, the English `document_text`, and the English quote at `p1 · chars 150–213 · exact`. The stale answer was dropped |
+| **A2, why the remount does not cover for it** | `detail` is state on the *page*, not inside the keyed subtree, so a late `setDetail` would have landed regardless of the remount and paired en's verdicts with th's text. The `requestedScreeningId` guard is what does the work |
+| **A4 — the served filename** | The ranking table names `resume_th.pdf` / `resume_en.pdf` from `RankedEntry.resume_filename`, with no client-side join |
+| ⚠️ **A3 — `/applications` history keyed by id** | **Not watched.** It needs one account holding **two** applications; the two in the dev database belong to two different candidates whose passwords are recorded nowhere. Needs a fresh throwaway candidate, one upload and two applications — see below |
+| B, the six UX fixes | **Not watched yet.** Ranking rows do read as real `button` elements in the accessibility tree, which is the structural half of the keyboard fix |
+
+**Instrument note, unchanged and still costing time:** the extension reports a viewport of
+**2133×987** while screenshots come back **1568×726**, so a coordinate click lands in the
+wrong place — the first click of the session missed by ~115 px. Drive with refs.
+
+### Next step, in order
+
+1. **Finish A3 and B in the browser.** A3 needs a fresh candidate account, `resume_th.pdf`
+   uploaded with consent, and applications to two of the three postings; then open History
+   on each. The sharp version is the *failure* half — patch `fetch` to fail the second
+   history request and confirm the row reads "Loading the history…" rather than the first
+   row's timeline, which is the state that used to persist.
+2. **Then commit A, then B, then C+D**, per the entry below. `RankingTable.tsx` and
+   `app/page.tsx` carry hunks belonging to both A and B, so it wants `git add -p`.
+3. **Then record the careers-site direction in `docs/PLAN.md`**, which still ends at M6 —
+   including the owner's decision this session that the public pages are **Thai-first**
+   (`<html lang="th">`, Thai headline with a short English line beneath, one set of copy),
+   *not* a `[locale]` segment.
+
+---
+
+## 2026-08-19 → 08-20 — a direction, and the UI work it implies, started
+
+**Nothing is committed.** Everything below is uncommitted in the working tree, and the
+session was cut short before any of it was watched in a browser. This entry is the
+record rule 7 in `CLAUDE.md` asks for.
+
+The session began as a competitive question and became a direction decision.
+
+**1. Where HireLens actually sits.** Not among job boards (JobsDB/SEEK, JobThai,
+JobTopGun) but in **AI screening / matching**, beside Manatal (Bangkok), Findem and
+Sapia. The differentiator nobody in that market claims is **locate-then-keep**:
+competitors ship model-generated justifications, and none verifies that the quoted text
+exists in the document or publishes a hallucination rate. The regulatory tailwind is
+real — EU AI Act Annex III makes CV screening high-risk, Art. 26(11) requires telling
+candidates and Art. 86 gives them a right to an explanation; NYC Local Law 144 requires
+bias audits — and HireLens has the explainability half of that and none of the audit half.
+
+**2. An audit of `web/` found 119 issues, 8 blocking.** Three of them make the product
+state something false about a person, and are fixed below.
+
+**3. The shape was decided:** a careers site whose employer is HireLens itself, with the
+screening system as a **published feature** rather than a hidden back office, organised
+around a **Screening Receipt** the applicant can open. That closes the founding pain
+point (`README.md:8-9`) instead of decorating around it — and the position is already in
+the code: `privacy_service.py:116-117` says a verdict about you is yours to see, so it is
+exportable and merely not viewable. The full plan, with 11 slices and the refusals, is in
+this session's plan file, kept outside the repo.
+
+**4. The visual direction the owner chose is "precision instrument"** — ink and paper,
+one indigo accent for actions, and the meaning colours (cited / ambiguous / dropped)
+reserved, so nothing the product *asserts* can be mistaken for a button. Motion explains
+the mechanism rather than decorating it. This **replaces** the conservative design system
+originally scoped.
+
+### What is in the tree
+
+**A. Three trust defects, plus the filename the server already serves.** Each verified by
+reading the code rather than taken from a report.
+
+- `DocumentViewer.tsx` guarded on `file !== null`, so selecting a second candidate with
+  the Original tab open drew **that candidate's citation boxes onto the previous
+  candidate's PDF**. Now a `loadedFor` ref compared against `resumeId`, cleared before the
+  fetch.
+- `select()` in `app/jobs/[id]/page.tsx` awaited with no cancellation, so two quick clicks
+  paired one candidate's verdicts with another's `document_text`. Now guarded by a
+  `requestedScreeningId` ref, and the pane is keyed on `screening_id` so it remounts.
+- `app/applications/page.tsx` held **one** events array for the whole page, so one
+  person's rejection reason rendered under another's job title — permanently, if the
+  request failed. Now keyed by application id.
+- `RankedEntry.resume_filename` is served (`schemas/ranking.py:53,64`, with a docstring
+  saying why) and the client re-derived it anyway. Now used, through `resumeLabel()`.
+
+**B. Six standalone UX fixes** — `.docx` accepted by the file picker; the single `<label>`
+that wrapped both the consent checkbox and the file input split apart; a real error state
+with a retry on `/jobs`; keyboard access, `scope="col"` and horizontal scroll on the
+ranking table; a two-step requirement delete naming how many screenings go stale; and a
+`ResizeObserver` on the PDF overlay, which computed scale **once**, so every citation box
+landed off its text after a resize.
+
+**C. The design system, begun and not yet applied.** `app/globals.css` rewritten as
+tokens — palette, type steps, radii, motion curves, `@utility` recipes. `app/layout.tsx`
+finally loads Inter, IBM Plex Sans Thai (`thai` subset) and JetBrains Mono through
+`next/font`: the stylesheet had named them since M1 and served none, so on Windows
+everything fell through to Segoe UI, **which has no Thai glyphs**. Plus `lib/cn.ts` and
+`components/ui/{Card,Button,Banner,Badge,Stat}.tsx`.
+
+Gates on the last full run: `typecheck` clean, `lint` clean, vitest **165 → 168**. Nothing
+under `api/` was touched, so `pytest` was not re-run. **No page has been migrated onto the
+tokens yet** — the primitives are unused and every screen still renders on its ~300
+hand-typed `dark:` utilities.
+
+**D. The design foundation** — written after the token work, because the token work had
+started at the wrong end. `docs/DESIGN.md` is new and is what the redesign now answers to:
+the one rule (colour carries meaning before style — `cited` / `ambiguous` / `dropped` are
+reserved, and `accent` is a different hue on purpose so nothing the product *asserts* can
+be mistaken for a button), the typography decision, a measured contrast table, the motion
+doctrine, the accessibility floors, and what is refused.
+
+Two corrections to what this same session had already committed to the tree:
+
+- **The typeface pairing was wrong.** Inter beside IBM Plex Sans Thai is two different
+  x-heights in one line. IBM Plex Sans is the Latin companion Plex Thai was drawn against,
+  so the whole superfamily is loaded now — Plex Sans, **Plex Sans Thai Looped** (the
+  conventional Thai reading form for body text) and Plex Mono. Verified served: 31
+  `@font-face` rules, with Inter and JetBrains gone.
+- **`ink-faint` measures 4.59:1** on paper. It passes AA and it is the tightest value in
+  the palette — and it was what the *smallest* text used. The citation coordinate line
+  moved to `ink-muted` (7.30:1), which is free. Every other token clears AA in both themes;
+  the table is in `DESIGN.md` and the computation is repeatable.
+
+**A design canvas was published** — five artboards in the precision-instrument direction:
+landing, public posting, the **Screening Receipt**, the recruiter workbench, and the
+how-we-screen explainer. It is built on the same tokens as the code and it is clickable
+rather than static: selecting a requirement sweeps its quote into place in the document
+beside it, and the explainer toggles a faithful model against a fabricating one so the
+strike-through is watched being drawn. Link:
+<https://claude.ai/code/artifact/370834a7-f7a8-4bde-837c-67254cc2552a>
+
+The canvas working files (`*.dc.html`, `canvas.json`, `build.mjs`) live in the session
+scratchpad, deliberately not in the repo. A later session edits the canvas by reading the
+published page back with the `design` skill's `--extract`, not by hunting for those files.
+
+### Next step
+
+In order, and the first one blocks the rest:
+
+1. **Reconnect the Chrome extension, then watch A and B.** It was down all session, so
+   **nothing in A or B has been seen rendering** — and A is exactly the class of defect a
+   green suite cannot see. Demo data is seeded and waiting: recruiter
+   `slice1-check@example.com` / `slice1-check-pw`, one job with three requirements, and two
+   completed screenings (`resume_th.pdf` and `resume_en.pdf`, chosen so a wrong document is
+   obvious at a glance). Three checks: switch candidates with the Original tab open; click
+   two ranked rows fast; open History on two applications.
+2. **Commit A as one slice**, then B, then C+D. Nothing is committed yet. `web/AGENTS.md`
+   and `web/CLAUDE.md` are untracked and should go in with the first commit — `next dev`
+   regenerates them every run otherwise.
+3. **Review the canvas** and iterate on it before writing any more screen code.
+4. **Then migrate the pages onto the tokens**, one screen per commit, in the slice order
+   above. The primitives in `web/components/ui/` are written and still have no callers.
+
+One decision is open and does not block 1-3: **which language leads the public pages.**
+Thai-first is the recommendation — `<html lang="th">`, Thai headline with a short English
+line beneath, one set of copy. Bilingual behind a `[locale]` segment is more Next.js to
+learn and costs roughly one extra large slice plus permanent copy maintenance. Due before
+the public-demo slice.
+
+One environment note worth keeping: a `next dev` server left running overnight answered
+every request with `Jest worker encountered 2 child process exceptions`, because its
+worker children had died while the machine slept. The tell is in
+`web/.next/dev/logs/next-development.log`, where the last `Compiling` line sits hours
+before the first error — so the edited files had never been compiled and the error was not
+about them. `taskkill /PID <pid> /T /F` and restart; no need to clear `.next`.
+
+---
+
+## 2026-08-18 → 08-19 — the auth story is finished
 
 **No milestone was in progress** — M1–M5 are closed and M6 was closed unbuilt — so this
 session took the two named leftovers plus the env hygiene that had been carried for two

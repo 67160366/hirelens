@@ -1,0 +1,173 @@
+# Design
+
+What HireLens looks like, and why. Written before the screens were built rather than
+reconstructed from them — a design system that lives only in a stylesheet is a set of
+decisions nobody can review.
+
+Read this with `CLAUDE.md` (the product's one idea) and `docs/NOTES.md` (where the
+product is going). The tokens themselves live in `web/app/globals.css`, which is the
+single source of truth; this file says what they mean.
+
+**Direction: precision instrument.** Ink and paper, dense, calm, confident. The product
+sells the claim that it only says what it can prove, so the interface has to look like an
+instrument rather than a pitch. That is not an argument for plain — it is an argument for
+a particular kind of polish.
+
+---
+
+## 1. The one rule
+
+**Colour carries meaning before it carries style.**
+
+Three colours are reserved for what the system says about a document, and may never be
+spent on decoration:
+
+| token | means |
+|---|---|
+| `cited` | a quote the application located in the source document |
+| `ambiguous` | a quote that matched in more than one place, reported rather than guessed at |
+| `dropped` | a claim that could not be located, and was refused |
+
+`accent` — the indigo used for navigation and actions — is deliberately a **different
+hue** from all three. Nothing the product *asserts* about a person may ever be mistaken
+for a button, and no button may borrow the colour of a verdict.
+
+The one sanctioned exception is a destructive control, which borrows `dropped`: refusing
+a claim and destroying a row read the same way to a person, which is *this cannot be
+undone*.
+
+---
+
+## 2. Typography
+
+**The whole IBM Plex superfamily**: Plex Sans for Latin, **Plex Sans Thai Looped** for
+Thai, Plex Mono for quotes and offsets. Loaded through `next/font/google` in
+`web/app/layout.tsx` and self-hosted from there.
+
+Three reasons, in order of how much they matter:
+
+1. **Thai and Latin have to look like one typeface.** Plex Sans is the Latin companion
+   Plex Thai was drawn against, so a résumé line mixing Thai and English sits on one
+   rhythm instead of visibly switching fonts mid-sentence. Pairing Plex Thai with Inter —
+   which this repo did briefly — gives two different x-heights and stem weights in the
+   same line.
+2. **Looped is the conventional Thai reading form for body text.** The loopless cut reads
+   as display or "tech"; on a site addressed to Thai applicants, body copy is looped.
+3. **Every quote and every character offset is set in mono, with tabular figures.** A
+   citation is a claim about exact characters, and two offsets differing by one must not
+   be able to look identical.
+
+Plex Sans Thai has **no variable weight** (checked in
+`next/dist/compiled/@next/font/dist/google/font-data.json`), so 400 / 500 / 600 are
+enumerated — exactly what the tree uses.
+
+### Scale
+
+`micro` 11px · `xs` 12px · `sm` 14px (body) · `section` 15px (panel headings) ·
+`lg`/`xl` for page titles · `display` fluid, for the landing headline only.
+
+`text-[10px]` and `text-[12.5px]` are retired: an arbitrary size is a decision nobody
+recorded.
+
+---
+
+## 3. Palette, measured
+
+Every value was computed rather than asserted (WCAG 2.x relative luminance, this repo's
+own tokens against its own grounds):
+
+| token | light, on paper | dark, on paper |
+|---|---|---|
+| `ink` | 18.09:1 | 17.32:1 |
+| `ink-muted` | 7.30:1 | 12.69:1 |
+| `ink-faint` | **4.59:1** | 7.49:1 |
+| `accent` | 6.02:1 | 6.33:1 |
+| `cited` | 5.25:1 | 9.83:1 |
+| `ambiguous` | 4.81:1 | 11.32:1 |
+| `dropped` | 6.02:1 | 7.02:1 |
+
+Every token clears WCAG AA (4.5:1) in both themes.
+
+`ink-faint` at 4.59:1 is the tightest in the set, and it is what the *smallest* text
+uses. So one rule falls out of the table:
+
+> **The citation coordinate line uses `ink-muted`, never `ink-faint`.**
+
+`p1 · chars 161–214 · exact` is the product's claim of traceability. Before this it was
+10px at roughly 2.6:1 — the least legible text on a screen whose entire purpose is that
+line. It is defined once, as `.evidence-coordinates`, so it cannot drift back.
+
+---
+
+## 4. Motion
+
+**Motion explains the mechanism. It never decorates.**
+
+- Durations: `--duration-fast` 120ms for a control responding, `--duration-base` 220ms for
+  a state change, `--duration-slow` 420ms for something entering.
+- Ease-out entering, ease-in leaving, ease-in-out for a thing moving between its own
+  states.
+- Animate `transform` and `opacity`. Nothing else.
+- Everything is neutralised under `prefers-reduced-motion: reduce`, in one block at the
+  bottom of `globals.css`. Motion is an enhancement; the product works without it.
+
+### The four motions that *are* the product
+
+The rest of the interface stays still. These four earn their place because each one shows
+something the product would otherwise merely assert:
+
+1. **A citation is selected** → its span sweeps in left-to-right in the document pane and
+   the coordinate line reveals beneath it. The eye is led *to* the text, not away from it.
+2. **A claim is dropped** → the strike-through is **drawn** rather than appearing.
+   Watching a fabrication get refused is the whole argument; a strike that is simply
+   there is a styling choice.
+3. **Verdicts land** in list order with a short stagger, so a reader sees they were
+   decided one requirement at a time rather than handed down as a block.
+4. **Dashboard figures count up** from zero — a number that was queried, not asserted.
+
+Anything else that moves has to justify itself against this list.
+
+---
+
+## 5. Floors
+
+Each of these is written down because this codebase has already failed it once, and the
+audit that found them is summarised in `docs/NOTES.md`.
+
+- **4.5:1 minimum**, both themes, measured not guessed.
+- **A real focus indicator on every control.** `outline-none` plus a 1px border tint is
+  not perceivable and fails WCAG 2.4.11. One recipe, `ring-focus`, applied everywhere.
+- **24×24 minimum target**, and 32×32 for anything destructive.
+- **Colour is never the only signal.** A tone always arrives with a word.
+- **A live region exists before it has anything to say** — a container mounted at the
+  same moment as its text is not announced. `Banner` derives its `role` from its tone, so
+  six separate omissions became one decision made once.
+- **Every interactive row is reachable from a keyboard.** `aria-current` on an element
+  nothing can focus is worse than silence.
+
+---
+
+## 6. Refused
+
+Recorded so they read as decisions rather than oversights:
+
+- Gradient heroes, glassmorphism, glow, decorative parallax.
+- Any colour serving both meaning and decoration.
+- Any animation attached to a claim that is not that claim's own evidence.
+- Marketing polish that outruns what the system can back up. A screening product that
+  looks like a crypto landing page argues against its own thesis — the same instinct as
+  refusing to publish a hallucination rate measured on our own synthetic corpus.
+
+---
+
+## 7. Primitives
+
+`web/components/ui/` — `Card`, `Button`, `Banner`, `Badge`, `Stat`, plus `lib/cn.ts`.
+
+They exist because the tree grew 14 button recipes for five intents, 21 hand-written card
+strings across nine padding recipes, eight banner recipes across three tones, and two
+different components both named `Panel`. A caller may still pass `className`; it is
+appended, so it wins by CSS order rather than by a merge algorithm nobody can predict
+from the call site.
+
+The rule that keeps them: a page may not hand-write a card, a button or a banner.
