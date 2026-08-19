@@ -10,12 +10,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { EvidenceRef, ExcludedEntry, RequirementJudgment } from "./api";
+import type { EvidenceRef, ExcludedEntry, RankedEntry, RequirementJudgment } from "./api";
 import {
   NOT_EVIDENCED_EXPLANATION,
   collectJudgmentEvidence,
   exclusionMessage,
   makesScreeningsStale,
+  resumeLabel,
   scorePercent,
 } from "./screening";
 
@@ -53,7 +54,7 @@ function notEvidenced(label: string): RequirementJudgment {
 }
 
 function excluded(reason: ExcludedEntry["reason"], status = "completed"): ExcludedEntry {
-  return { screening_id: "s1", resume_id: "r1", status, reason };
+  return { screening_id: "s1", resume_id: "r1", resume_filename: "cv.pdf", status, reason };
 }
 
 describe("collectJudgmentEvidence", () => {
@@ -170,6 +171,7 @@ describe("scorePercent", () => {
       rank: 1,
       screening_id: "s1",
       resume_id: "r1",
+      resume_filename: "cv.pdf",
       gate_passed: true,
       score: 0.6,
       must_haves_met: 2,
@@ -181,5 +183,36 @@ describe("scorePercent", () => {
 
     expect(scorePercent(entry)).toBe("60.0%");
     expect(scorePercent({ ...entry, score: 0.9167 })).toBe("91.7%");
+  });
+});
+
+describe("resumeLabel", () => {
+  const entry: RankedEntry = {
+    rank: 1,
+    screening_id: "s1",
+    resume_id: "1234567890abcdef",
+    resume_filename: "somchai-cv.pdf",
+    gate_passed: true,
+    score: 1,
+    must_haves_met: 1,
+    must_haves_total: 1,
+    requirements_met: 1,
+    requirements_total: 1,
+    requirements: [],
+  };
+
+  it("uses the name the server served", () => {
+    expect(resumeLabel(entry)).toBe("somchai-cv.pdf");
+  });
+
+  it("shortens the id when there is no name, rather than inventing one", () => {
+    // Deliberately not a plausible filename: `canRenderOriginal` must go on
+    // declining the original-document tab for it, and a reader must be able to see
+    // at a glance that this is an id and not what the applicant called their file.
+    expect(resumeLabel({ ...entry, resume_filename: null })).toBe("12345678");
+  });
+
+  it("answers for an excluded entry too, which carries the same field", () => {
+    expect(resumeLabel(excluded("stale"))).toBe("cv.pdf");
   });
 });

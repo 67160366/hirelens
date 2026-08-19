@@ -24,10 +24,20 @@ export default function JobsPage() {
   const [description, setDescription] = useState("");
   const [drafts, setDrafts] = useState<RequirementInput[]>([{ ...BLANK_REQUIREMENT }]);
 
+  /** Whether the last attempt to read the list failed, as opposed to not having
+   *  finished. `jobs === null` alone could not tell those apart, so a failure left
+   *  "Loading…" on screen forever with only a browser reload to recover. */
+  const [loadFailed, setLoadFailed] = useState(false);
+
   const load = useCallback(async () => {
+    // Cleared on every attempt: without this a banner from one transient failure
+    // outlived every subsequent successful load.
+    setError(null);
+    setLoadFailed(false);
     try {
       setJobs(await authorized(() => api.listJobs()));
     } catch (caught) {
+      setLoadFailed(true);
       setError(errorMessage(caught, "Could not load jobs"));
     }
   }, [authorized]);
@@ -156,7 +166,7 @@ export default function JobsPage() {
                 onClick={() => setDrafts((current) => current.filter((_, at) => at !== index))}
                 disabled={drafts.length === 1}
                 aria-label="Remove requirement"
-                className="mt-1 px-1.5 text-sm text-stone-400 hover:text-red-600 disabled:opacity-30 dark:hover:text-red-400"
+                className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm text-stone-500 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:opacity-30 dark:text-stone-400 dark:hover:text-red-400"
               >
                 ×
               </button>
@@ -183,7 +193,25 @@ export default function JobsPage() {
       </form>
 
       {jobs === null ? (
-        <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>
+        // A list that has never loaded offers the retry. One that has stays on
+        // screen and lets the banner above carry the failure — discarding a working
+        // list over a transient blip helps nobody.
+        loadFailed ? (
+          <div className="flex items-center gap-3 rounded-lg border border-stone-200 px-4 py-3 text-sm dark:border-stone-800">
+            <span className="text-stone-600 dark:text-stone-400">
+              The list of jobs could not be loaded.
+            </span>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
+            >
+              Try again
+            </button>
+          </div>
+        ) : (
+          <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>
+        )
       ) : jobs.length === 0 ? (
         <p className="text-sm text-stone-500 dark:text-stone-400">
           No jobs yet. Create one above, then screen your uploaded resumes against it.

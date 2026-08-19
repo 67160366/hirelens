@@ -41,15 +41,25 @@ export function RequirementEditor({
   requirement,
   onSave,
   onDelete,
+  screeningCount,
   disabled = false,
 }: {
   requirement: Requirement;
   onSave: (patch: RequirementPatch) => Promise<void>;
   onDelete: () => Promise<void>;
+  /** Completed screenings on this job, so the confirmation can name what the delete
+   *  actually costs instead of gesturing at it. Omitted where the caller does not
+   *  know — the sentence then states the consequence without a number rather than
+   *  guessing one. */
+  screeningCount?: number;
   disabled?: boolean;
 }) {
   const [draft, setDraft] = useState<RequirementInput>(() => toInput(requirement));
   const [saving, setSaving] = useState(false);
+  /** A delete is one click and irreversible, and it invalidates every screening on
+   *  the job — while the far cheaper *edit* beside it is staged behind Save with a
+   *  warning. The cost gradient was inverted; this rights it. */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const patch = changedFields(requirement, draft);
   const dirty = Object.keys(patch).length > 0;
@@ -72,15 +82,45 @@ export function RequirementEditor({
         </div>
         <button
           type="button"
-          onClick={() => void onDelete()}
-          disabled={disabled || saving}
+          onClick={() => setConfirmingDelete(true)}
+          disabled={disabled || saving || confirmingDelete}
           aria-label={`Delete requirement ${requirement.label}`}
           title="Deleting a requirement changes the question, so every screening becomes stale."
-          className="mt-1 px-1.5 text-sm text-stone-400 hover:text-red-600 disabled:opacity-30 dark:hover:text-red-400"
+          className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm text-stone-500 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:opacity-30 dark:text-stone-400 dark:hover:text-red-400"
         >
           ×
         </button>
       </div>
+
+      {confirmingDelete && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-300 bg-red-50 px-2.5 py-2 dark:border-red-900/60 dark:bg-red-950/30">
+          <span className="text-xs text-red-800 dark:text-red-300">
+            Delete “{requirement.label}”?{" "}
+            {screeningCount === undefined
+              ? "Every screening on this job becomes stale and has to be run again."
+              : screeningCount === 0
+                ? "No screening has run yet, so nothing has to be run again."
+                : `${screeningCount} ${screeningCount === 1 ? "screening" : "screenings"} become stale and have to be run again — one model call each.`}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmingDelete(false);
+              void onDelete();
+            }}
+            className="rounded-md bg-red-700 px-2.5 py-1 text-xs font-medium text-white dark:bg-red-600"
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmingDelete(false)}
+            className="text-xs text-stone-600 underline-offset-2 hover:underline dark:text-stone-400"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       {dirty && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5">

@@ -332,6 +332,7 @@ export type ExclusionReason = "stale" | "not_completed" | "malformed";
 export interface ExcludedEntry {
   screening_id: string;
   resume_id: string;
+  resume_filename: string | null;
   status: string;
   reason: ExclusionReason;
 }
@@ -340,6 +341,11 @@ export interface RankedEntry {
   rank: number;
   screening_id: string;
   resume_id: string;
+  /** Served, not joined. `GET /resumes` returns only the caller's own uploads, so a
+   * client-side join is true right up until an application puts somebody else's
+   * resume in the ranking — which `api/app/schemas/ranking.py` says on the field. Null
+   * where the row is gone, and a null must never be turned into a made-up name. */
+  resume_filename: string | null;
   /** Every `must_have` requirement is met. A gate, not a score contribution. */
   gate_passed: boolean;
   /** Weighted share of requirements met, in [0, 1]. Orders *within* a tier only. */

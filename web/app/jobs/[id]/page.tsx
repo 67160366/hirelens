@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApplicationActions } from "@/components/ApplicationActions";
 import { ApplicationTimeline } from "@/components/ApplicationTimeline";
@@ -322,8 +322,21 @@ export default function JobPage() {
     }
   }
 
+  /**
+   * Which candidate the user last asked for.
+   *
+   * `select` awaits a request that nothing cancels, so two quick clicks race and the
+   * slower answer used to win `detail` — while `selected` is always the last row
+   * clicked. That pairs one candidate's verdicts with another candidate's
+   * `document_text`, and `buildSegments` then discards the offsets that fall past the
+   * end of the wrong string and highlights arbitrary text with the rest. Silent, and
+   * the same class of wrong as an unlocatable quote reaching a response.
+   */
+  const requestedScreeningId = useRef<string | null>(null);
+
   /** The document behind the selected candidate, for the highlighting pane. */
   async function select(screeningId: string) {
+    requestedScreeningId.current = screeningId;
     setSelectedId(screeningId);
     setDetail(null);
     try {
@@ -334,8 +347,14 @@ export default function JobPage() {
       // those frozen at judging time. The distinction is not a rule about the
       // route, it is a rule about which fields go stale: nothing re-keys a dropped
       // claim, so it reads the same from either source.
-      setDetail(await authorized(() => api.getScreening(screeningId)));
+      const loaded = await authorized(() => api.getScreening(screeningId));
+      // Answered a question nobody is asking any more. Dropping it is the only
+      // correct move: committing it would render these verdicts beside a different
+      // candidate's document.
+      if (requestedScreeningId.current !== screeningId) return;
+      setDetail(loaded);
     } catch (caught) {
+      if (requestedScreeningId.current !== screeningId) return;
       setError(errorMessage(caught, "Could not load the screening"));
     }
   }
@@ -415,6 +434,7 @@ export default function JobPage() {
                 requirement={requirement}
                 onSave={(patch) => saveRequirement(requirement.id, patch)}
                 onDelete={() => removeRequirement(requirement.id)}
+                screeningCount={screenings.length}
               />
             ))}
           </div>
@@ -564,7 +584,6 @@ export default function JobPage() {
         {ranking && (
           <RankingTable
             ranking={ranking}
-            resumeName={resumeName}
             selectedScreeningId={selectedId}
             onSelect={(screeningId) => void select(screeningId)}
             onScreenAgain={(resumeId) => void screen(resumeId)}
@@ -574,7 +593,12 @@ export default function JobPage() {
 
         {/* The rationale, beside the document it was quoted from ------------ */}
         {selected && (
-          <EvidenceSelectionProvider>
+          // Keyed, so switching candidates remounts the whole pane rather than
+          // re-rendering it: the citation selection, the fetched PDF and its geometry
+          // all belong to one screening and none of them may outlive it. The guards
+          // inside `select` and `DocumentViewer` make each piece correct on its own;
+          // this makes the seam between them correct too, with no intermediate frame.
+          <EvidenceSelectionProvider key={selected.screening_id}>
             <div className="grid items-start gap-5 lg:grid-cols-2">
               <div className="space-y-4">
                 {/* The guardrail's own evidence for this screening, in the same
@@ -589,11 +613,13 @@ export default function JobPage() {
               {detail?.document_text ? (
                 <DocumentViewer
                   resumeId={selected.resume_id}
-                  // `resumeName` answers an id prefix when the filename is not in
-                  // this recruiter's list, and `canRenderOriginal` then declines to
-                  // offer the tab — failing closed, since nothing here can prove the
-                  // document is a PDF.
-                  filename={resumeName(selected.resume_id)}
+                  // Served on the entry rather than joined from `GET /resumes` here,
+                  // for the reason `schemas/ranking.py` gives on the field itself: that
+                  // route returns the caller's own uploads, so the join is true only
+                  // until somebody else's resume enters the list. A null still falls
+                  // through `canRenderOriginal`, which declines the tab rather than
+                  // guessing — failing closed, since nothing here can prove it is a PDF.
+                  filename={selected.resume_filename}
                   text={detail.document_text}
                   references={collectJudgmentEvidence(selected.requirements)}
                   authorized={authorized}

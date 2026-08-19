@@ -82,6 +82,22 @@ const NOT_COMPLETED_MESSAGES: Record<string, string> = {
   dead_lettered: "Stopped after retrying. Worth replaying once the cause is fixed.",
 };
 
+/**
+ * What to call the resume behind a ranking entry.
+ *
+ * The name is **served** on the entry (`api/app/schemas/ranking.py`) rather than
+ * joined client-side against `GET /resumes`, which returns only the caller's own
+ * uploads — a join that is correct right up to the moment an applicant's resume
+ * enters the ranking, and then quietly answers an id prefix instead. A null is
+ * shortened to an id rather than invented: an id is visibly not a filename, so
+ * nothing downstream mistakes it for one. `canRenderOriginal` then declines the
+ * original-document tab for it, which is the failing-closed behaviour it was
+ * written for.
+ */
+export function resumeLabel(entry: RankedEntry | ExcludedEntry): string {
+  return entry.resume_filename ?? entry.resume_id.slice(0, 8);
+}
+
 /** The weighted share of requirements met, as a percentage for display. */
 export function scorePercent(entry: RankedEntry): string {
   return `${(entry.score * 100).toFixed(1)}%`;

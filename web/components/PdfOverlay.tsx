@@ -29,6 +29,16 @@ import { spanKey, useEvidenceSelection } from "./DocumentPane";
  * lifecycle and the rendering.
  */
 
+/** A page as the document describes it, independent of the pane showing it. */
+interface Measured {
+  pageNumber: number;
+  /** User-space units — the page's own size, before it is fitted to the pane. */
+  width: number;
+  height: number;
+  gap: OverlayGap | null;
+}
+
+/** The same page, fitted to the pane's current width. */
 interface Rendered {
   pageNumber: number;
   /** Canvas pixels: user-space units times `scale`. */
@@ -72,13 +82,62 @@ export function PdfOverlay({
   // citation, and a fresh array every render would re-run it on every keystroke.
   const references = useMemo(() => distinctSpans(cited), [cited]);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  /** Wraps the page list and nothing else. The scroll container around it carries
+   *  `px-4`, so measuring *that* overstated the usable width by 32px and every page
+   *  was rendered wider than the space it had — a horizontal scrollbar under a pane
+   *  whose whole job is showing a document at the width it is read at. */
+  const pagesRef = useRef<HTMLDivElement>(null);
   const canvases = useRef(new Map<number, HTMLCanvasElement>());
   const figures = useRef(new Map<number, HTMLElement>());
 
   const [document, setDocument] = useState<PdfDocument | null>(null);
-  const [pages, setPages] = useState<Rendered[]>([]);
+  const [measured, setMeasured] = useState<Measured[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** The pane's usable width, tracked rather than sampled once. */
+  const [paneWidth, setPaneWidth] = useState(0);
+
+  // Scale used to be computed once, inside the effect that opens the document, and
+  // every citation box was multiplied by that frozen number. Narrow the window or
+  // rotate a phone and the canvas stretched while the boxes stayed put — on the one
+  // screen whose entire purpose is "this quote is exactly here", a box in the wrong
+  // place is worse than no box at all.
+  useEffect(() => {
+    const element = pagesRef.current;
+    if (!element) return;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new ResizeObserver((entries) => {
+      const width = Math.floor(entries[0]?.contentRect.width ?? 0);
+      // Debounced, and only on a real change: a drag fires this continuously, and
+      // each accepted width repaints every canvas.
+      clearTimeout(timer);
+      timer = setTimeout(() => setPaneWidth((current) => (current === width ? current : width)), 120);
+    });
+
+    observer.observe(element);
+    setPaneWidth(Math.floor(element.clientWidth));
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, []);
+
+  /** Every page fitted to the pane, re-derived whenever either side moves. */
+  const pages = useMemo<Rendered[]>(
+    () =>
+      measured.map((page) => {
+        // Fit the pane rather than the page's own size: a resume is read at the
+        // width it is given, and every box scales with it.
+        const scale = paneWidth > 0 ? paneWidth / page.width : 1;
+        return {
+          pageNumber: page.pageNumber,
+          height: page.height * scale,
+          scale,
+          gap: page.gap,
+        };
+      }),
+    [measured, paneWidth],
+  );
 
   // Pass one: open the document and work out each page's size and whether its
   // geometry may be trusted. Nothing is painted here — the canvases do not exist
@@ -95,22 +154,21 @@ export function PdfOverlay({
         opened = await loadDocument(file.slice(0));
         if (cancelled) return;
 
-        const width = containerRef.current?.clientWidth ?? 0;
-        const measured: Rendered[] = [];
+        // No width is read here any more. What the document says about itself does
+        // not change when the window does, so this pass records only that, and the
+        // fitting happens in a memo that re-runs on resize without reopening a file.
+        const sizes: Measured[] = [];
 
         for (let number = 1; number <= opened.doc.numPages; number += 1) {
           const page = await opened.doc.getPage(number);
           if (cancelled) return;
 
           const unscaled = page.getViewport({ scale: 1 });
-          // Fit the pane rather than the page's own size: a resume is read at the
-          // width it is given, and every box scales with it.
-          const scale = width > 0 ? width / unscaled.width : 1;
 
-          measured.push({
+          sizes.push({
             pageNumber: number,
-            height: unscaled.height * scale,
-            scale,
+            width: unscaled.width,
+            height: unscaled.height,
             gap: gapForPage(geometry, number, {
               width: unscaled.width,
               height: unscaled.height,
@@ -121,7 +179,7 @@ export function PdfOverlay({
 
         if (cancelled) return;
         setDocument(opened.doc);
-        setPages(measured);
+        setMeasured(sizes);
       } catch (cause) {
         if (!cancelled) setError(describeFailure(cause));
       }
@@ -143,6 +201,10 @@ export function PdfOverlay({
     if (!document || pages.length === 0) return;
     let cancelled = false;
 
+    // A resize re-runs this while the previous pass may still be painting, and pdf.js
+    // refuses two concurrent renders into one canvas. Held so the cleanup can stop it.
+    let inFlight: { cancel: () => void } | null = null;
+
     const paint = async () => {
       for (const rendered of pages) {
         const canvas = canvases.current.get(rendered.pageNumber);
@@ -154,15 +216,22 @@ export function PdfOverlay({
         const viewport = page.getViewport({ scale: rendered.scale });
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
-        await page.render({ canvas, viewport }).promise;
+        const task = page.render({ canvas, viewport });
+        inFlight = task;
+        await task.promise;
+        inFlight = null;
       }
     };
 
     paint().catch((cause: unknown) => {
-      if (!cancelled) setError(describeFailure(cause));
+      // Cancelling on purpose is not a failure, and must not put a red banner over a
+      // document that is about to be repainted correctly.
+      if (cancelled || (cause as { name?: string })?.name === "RenderingCancelledException") return;
+      setError(describeFailure(cause));
     });
     return () => {
       cancelled = true;
+      inFlight?.cancel();
     };
   }, [document, pages]);
 
@@ -189,7 +258,7 @@ export function PdfOverlay({
         </p>
       </header>
 
-      <div ref={containerRef} className="max-h-[70vh] space-y-4 overflow-y-auto px-4 py-3">
+      <div className="max-h-[70vh] space-y-4 overflow-y-auto px-4 py-3">
         {error && (
           <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-400">
             {error}
@@ -204,65 +273,67 @@ export function PdfOverlay({
           </p>
         )}
 
-        {pages.map((rendered) => {
-          const page = pageOf(geometry, rendered.pageNumber);
-          const drawable = rendered.gap === null && page !== null;
+        <div ref={pagesRef} className="space-y-4">
+          {pages.map((rendered) => {
+            const page = pageOf(geometry, rendered.pageNumber);
+            const drawable = rendered.gap === null && page !== null;
 
-          return (
-            <figure
-              key={rendered.pageNumber}
-              ref={(element) => {
-                if (element) figures.current.set(rendered.pageNumber, element);
-                else figures.current.delete(rendered.pageNumber);
-              }}
-              className="space-y-1.5"
-            >
-              <div className="relative w-full" style={{ height: `${rendered.height}px` }}>
-                <canvas
-                  ref={(element) => {
-                    if (element) canvases.current.set(rendered.pageNumber, element);
-                    else canvases.current.delete(rendered.pageNumber);
-                  }}
-                  className="absolute inset-0 h-full w-full rounded border border-stone-200 bg-white dark:border-stone-800"
-                />
-                {drawable &&
-                  references.flatMap((reference) =>
-                    boxesForPage(page, reference).map((box, index) => {
-                      const key = spanKey(reference);
-                      return (
-                        <button
-                          key={`${key}-${index}`}
-                          type="button"
-                          aria-label={`Citation at characters ${reference.char_start}–${reference.char_end}`}
-                          onClick={() => selection?.select(reference)}
-                          className={`absolute rounded-[1px] transition-colors ${boxClass(reference.is_ambiguous, key === activeKey)}`}
-                          style={{
-                            // pdfplumber measures `top` from the top of the page and
-                            // pdf.js paints from the top-left, so at rotation 0 the
-                            // only conversion is the scale — and `gapForPage` refuses
-                            // every page where that is not true.
-                            left: `${box.left * rendered.scale}px`,
-                            top: `${box.top * rendered.scale}px`,
-                            width: `${Math.max(box.width * rendered.scale, 2)}px`,
-                            height: `${box.height * rendered.scale}px`,
-                          }}
-                        />
-                      );
-                    }),
+            return (
+              <figure
+                key={rendered.pageNumber}
+                ref={(element) => {
+                  if (element) figures.current.set(rendered.pageNumber, element);
+                  else figures.current.delete(rendered.pageNumber);
+                }}
+                className="space-y-1.5"
+              >
+                <div className="relative w-full" style={{ height: `${rendered.height}px` }}>
+                  <canvas
+                    ref={(element) => {
+                      if (element) canvases.current.set(rendered.pageNumber, element);
+                      else canvases.current.delete(rendered.pageNumber);
+                    }}
+                    className="absolute inset-0 h-full w-full rounded border border-stone-200 bg-white dark:border-stone-800"
+                  />
+                  {drawable &&
+                    references.flatMap((reference) =>
+                      boxesForPage(page, reference).map((box, index) => {
+                        const key = spanKey(reference);
+                        return (
+                          <button
+                            key={`${key}-${index}`}
+                            type="button"
+                            aria-label={`Citation at characters ${reference.char_start}–${reference.char_end}`}
+                            onClick={() => selection?.select(reference)}
+                            className={`absolute rounded-[1px] transition-colors ${boxClass(reference.is_ambiguous, key === activeKey)}`}
+                            style={{
+                              // pdfplumber measures `top` from the top of the page and
+                              // pdf.js paints from the top-left, so at rotation 0 the
+                              // only conversion is the scale — and `gapForPage` refuses
+                              // every page where that is not true.
+                              left: `${box.left * rendered.scale}px`,
+                              top: `${box.top * rendered.scale}px`,
+                              width: `${Math.max(box.width * rendered.scale, 2)}px`,
+                              height: `${box.height * rendered.scale}px`,
+                            }}
+                          />
+                        );
+                      }),
+                    )}
+                </div>
+
+                <figcaption className="px-1 text-[11px] text-stone-400 dark:text-stone-500">
+                  Page {rendered.pageNumber}
+                  {rendered.gap && !documentGap && (
+                    <span className="ml-2 text-amber-700 dark:text-amber-500">
+                      {describeGap(rendered.gap)}
+                    </span>
                   )}
-              </div>
-
-              <figcaption className="px-1 text-[11px] text-stone-400 dark:text-stone-500">
-                Page {rendered.pageNumber}
-                {rendered.gap && !documentGap && (
-                  <span className="ml-2 text-amber-700 dark:text-amber-500">
-                    {describeGap(rendered.gap)}
-                  </span>
-                )}
-              </figcaption>
-            </figure>
-          );
-        })}
+                </figcaption>
+              </figure>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

@@ -32,7 +32,19 @@ export default function ApplicationsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [events, setEvents] = useState<ApplicationEvent[]>([]);
+  /**
+   * The audit log, **keyed by the application it belongs to**.
+   *
+   * It used to be one array for the whole page. `openHistory` sets `openId`
+   * synchronously and then awaits, so between those two the newly opened row was
+   * already rendering the *previous* row's timeline — and a failed request left it
+   * there permanently, because the catch never cleared it. That put one person's
+   * rejection reason under another person's job title, in the one artefact whose
+   * whole purpose is saying who decided what and on what evidence.
+   *
+   * Keyed by id, a row can only ever render its own log or nothing at all.
+   */
+  const [events, setEvents] = useState<Record<string, ApplicationEvent[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -70,8 +82,16 @@ export default function ApplicationsPage() {
     }
     setOpenId(applicationId);
     try {
-      setEvents(await authorized(() => api.listApplicationEvents(applicationId)));
+      const loaded = await authorized(() => api.listApplicationEvents(applicationId));
+      setEvents((current) => ({ ...current, [applicationId]: loaded }));
     } catch (caught) {
+      // Dropped rather than left stale: an empty slot renders "Loading the
+      // history…", which is honest, where the previous occupant's log is not.
+      setEvents((current) => {
+        const next = { ...current };
+        delete next[applicationId];
+        return next;
+      });
       setError(errorMessage(caught, "Could not load the history"));
     }
   }
@@ -96,7 +116,8 @@ export default function ApplicationsPage() {
       await authorized(() => api.moveApplication(applicationId, to, reason));
       await load();
       if (openId === applicationId) {
-        setEvents(await authorized(() => api.listApplicationEvents(applicationId)));
+        const loaded = await authorized(() => api.listApplicationEvents(applicationId));
+        setEvents((current) => ({ ...current, [applicationId]: loaded }));
       }
     } catch (caught) {
       // A 409 carries the server's own sentence, written for a person to read.
@@ -266,7 +287,17 @@ export default function ApplicationsPage() {
 
                 {openId === application.id ? (
                   <div className="mt-3 rounded-md bg-stone-50 p-3 dark:bg-stone-800/50">
-                    <ApplicationTimeline events={events} />
+                    {application.id in events ? (
+                      // `?? []` is unreachable — the key is only present once the log has
+                      // landed — and is written rather than asserted away, because an
+                      // empty timeline is a survivable render and a non-null assertion
+                      // here would be a promise nothing checks.
+                      <ApplicationTimeline events={events[application.id] ?? []} />
+                    ) : (
+                      <p className="text-xs text-stone-500 dark:text-stone-400">
+                        Loading the history…
+                      </p>
+                    )}
                   </div>
                 ) : null}
               </li>

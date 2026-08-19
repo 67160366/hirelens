@@ -1,7 +1,7 @@
 "use client";
 
 import type { Ranking } from "@/lib/api";
-import { exclusionMessage, scorePercent } from "@/lib/screening";
+import { exclusionMessage, resumeLabel, scorePercent } from "@/lib/screening";
 
 /**
  * A job's candidates in order, and the ones that could not take part.
@@ -16,14 +16,12 @@ import { exclusionMessage, scorePercent } from "@/lib/screening";
  */
 export function RankingTable({
   ranking,
-  resumeName,
   selectedScreeningId,
   onSelect,
   onScreenAgain,
   busyResumeId,
 }: {
   ranking: Ranking;
-  resumeName: (resumeId: string) => string;
   selectedScreeningId: string | null;
   onSelect: (screeningId: string) => void;
   onScreenAgain: (resumeId: string) => void;
@@ -44,54 +42,83 @@ export function RankingTable({
             Nothing ranked yet. Screen a resume against this job to see it here.
           </p>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-stone-100 text-left text-[11px] uppercase tracking-wide text-stone-400 dark:border-stone-800 dark:text-stone-500">
-                <th className="px-4 py-2 font-medium">#</th>
-                <th className="px-2 py-2 font-medium">Resume</th>
-                <th className="px-2 py-2 font-medium">Score</th>
-                <th className="px-2 py-2 font-medium">Met</th>
-                <th className="px-4 py-2 font-medium">Must-have</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ranking.ranked.map((entry) => (
-                <tr
-                  key={entry.screening_id}
-                  onClick={() => onSelect(entry.screening_id)}
-                  aria-current={entry.screening_id === selectedScreeningId ? "true" : undefined}
-                  className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${
-                    entry.screening_id === selectedScreeningId
-                      ? "bg-emerald-50 dark:bg-emerald-500/10"
-                      : "hover:bg-stone-50 dark:hover:bg-stone-800/60"
-                  }`}
-                >
-                  <td className="px-4 py-2.5 font-mono text-xs text-stone-400">{entry.rank}</td>
-                  <td className="px-2 py-2.5 font-medium">{resumeName(entry.resume_id)}</td>
-                  <td className="px-2 py-2.5 font-mono text-xs">{scorePercent(entry)}</td>
-                  <td className="px-2 py-2.5 text-xs text-stone-600 dark:text-stone-400">
-                    {entry.requirements_met}/{entry.requirements_total}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs">
-                    {entry.must_haves_total === 0 ? (
-                      <span className="text-stone-400 dark:text-stone-500">—</span>
-                    ) : entry.gate_passed ? (
-                      <span className="text-emerald-700 dark:text-emerald-400">
-                        {entry.must_haves_met}/{entry.must_haves_total}
-                      </span>
-                    ) : (
-                      <span
-                        className="text-amber-700 dark:text-amber-500"
-                        title="Ranks below every candidate that has them all, however well it scores elsewhere."
-                      >
-                        {entry.must_haves_met}/{entry.must_haves_total} — gate not passed
-                      </span>
-                    )}
-                  </td>
+          // Scrolls rather than clips. `overflow-hidden` on the section is what gives
+          // the card its rounded corners, and it was also cutting the Must-have column
+          // off below ~640px — the hard gate that decides whether somebody ranks at
+          // all, unreachable on a phone with no indication it was there.
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="sr-only">
+                Candidates in ranked order. Choose a resume to read the requirement-level
+                verdicts and the quotes behind them.
+              </caption>
+              <thead>
+                <tr className="border-b border-stone-100 text-left text-[11px] uppercase tracking-wide text-stone-400 dark:border-stone-800 dark:text-stone-500">
+                  <th scope="col" className="px-4 py-2 font-medium">#</th>
+                  <th scope="col" className="px-2 py-2 font-medium">Resume</th>
+                  <th scope="col" className="px-2 py-2 font-medium">Score</th>
+                  <th scope="col" className="px-2 py-2 font-medium">Met</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Must-have</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {ranking.ranked.map((entry) => (
+                  <tr
+                    key={entry.screening_id}
+                    onClick={() => onSelect(entry.screening_id)}
+                    aria-current={entry.screening_id === selectedScreeningId ? "true" : undefined}
+                    className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${
+                      entry.screening_id === selectedScreeningId
+                        ? "bg-emerald-50 dark:bg-emerald-500/10"
+                        : "hover:bg-stone-50 dark:hover:bg-stone-800/60"
+                    }`}
+                  >
+                    <td className="px-4 py-2.5 font-mono text-xs text-stone-400">{entry.rank}</td>
+                    <td className="px-2 py-2.5 font-medium">
+                      {/* The row keeps its click for the mouse; this is the only way in
+                          from a keyboard. Everything the product is for — the verdicts,
+                          the citations, the dropped claims, the document pane — sits
+                          behind this one interaction, and it used to be a bare
+                          `<tr onClick>` with no tabIndex and no key handler. */}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          // Or the row's own handler fires straight after this one and
+                          // `select` runs twice for one press.
+                          event.stopPropagation();
+                          onSelect(entry.screening_id);
+                        }}
+                        aria-expanded={entry.screening_id === selectedScreeningId}
+                        className="rounded-sm text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-500"
+                      >
+                        {resumeLabel(entry)}
+                      </button>
+                    </td>
+                    <td className="px-2 py-2.5 font-mono text-xs">{scorePercent(entry)}</td>
+                    <td className="px-2 py-2.5 text-xs text-stone-600 dark:text-stone-400">
+                      {entry.requirements_met}/{entry.requirements_total}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs">
+                      {entry.must_haves_total === 0 ? (
+                        <span className="text-stone-400 dark:text-stone-500">—</span>
+                      ) : entry.gate_passed ? (
+                        <span className="text-emerald-700 dark:text-emerald-400">
+                          {entry.must_haves_met}/{entry.must_haves_total}
+                        </span>
+                      ) : (
+                        <span
+                          className="text-amber-700 dark:text-amber-500"
+                          title="Ranks below every candidate that has them all, however well it scores elsewhere."
+                        >
+                          {entry.must_haves_met}/{entry.must_haves_total} — gate not passed
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -115,7 +142,7 @@ export function RankingTable({
               >
                 <div>
                   <p className="text-sm font-medium text-amber-900 dark:text-amber-300">
-                    {resumeName(entry.resume_id)}
+                    {resumeLabel(entry)}
                   </p>
                   <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-400/90">
                     {exclusionMessage(entry)}

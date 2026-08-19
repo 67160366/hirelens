@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { EvidenceRef, GeometryReport } from "@/lib/api";
 import { api } from "@/lib/api";
@@ -44,12 +44,32 @@ export function DocumentViewer({
 
   const offered = canRenderOriginal(filename);
 
+  /**
+   * Which resume the bytes in state were fetched for.
+   *
+   * The guard used to be `file !== null`, which asked "is anything loaded?" when the
+   * question is "is *this* resume loaded?". `resumeId` was already in the dependency
+   * array, so the effect re-ran on a new candidate, saw the previous one's bytes and
+   * returned — leaving `PdfOverlay` drawing the new candidate's citation boxes onto
+   * the old candidate's pages, under the new candidate's name, with nothing on screen
+   * saying so. A highlight that points at the wrong document is a claim this project
+   * refuses everywhere else; it must not be reachable through the UI either.
+   */
+  const loadedFor = useRef<string | null>(null);
+
   // Fetched when the tab is first opened rather than on mount. The bytes are the
   // largest thing this screen can ask for, and most visits never open them — the
   // same reason the geometry is its own route instead of a field on the profile.
   useEffect(() => {
-    if (!showOriginal || file !== null) return;
+    if (!showOriginal || loadedFor.current === resumeId) return;
     let cancelled = false;
+
+    // Cleared before the fetch, not after it: the old document must leave the screen
+    // the moment it stops being the answer, rather than waiting for its replacement.
+    loadedFor.current = resumeId;
+    setFile(null);
+    setGeometry(null);
+    setError(null);
 
     void (async () => {
       try {
@@ -61,14 +81,17 @@ export function DocumentViewer({
         setFile(bytes);
         setGeometry(report);
       } catch (cause) {
-        if (!cancelled) setError(errorMessage(cause, "Could not fetch the original document"));
+        if (cancelled) return;
+        // Let the next open try again rather than pinning the failure to this resume.
+        loadedFor.current = null;
+        setError(errorMessage(cause, "Could not fetch the original document"));
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [showOriginal, file, resumeId, authorized]);
+  }, [showOriginal, resumeId, authorized]);
 
   if (!offered) return <DocumentPane text={text} references={references} />;
 

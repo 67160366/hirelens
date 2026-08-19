@@ -97,16 +97,30 @@ export default function Home() {
       ) : (
         <div className="space-y-6">
           <div className="flex items-center justify-between gap-4 rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
-            <label className="flex-1 text-sm">
-              <span className="font-medium">Upload a resume</span>
-              <span className="mt-0.5 block text-xs text-stone-500 dark:text-stone-400">
-                PDF, up to 10 MB. Re-uploading the same file returns the existing result.
-              </span>
+            {/* A <div>, not a <label>. One label used to wrap both the consent
+                checkbox and the file input, and a label's control is its *first*
+                labelable descendant — so the checkbox answered to the whole
+                paragraph, the file input had no accessible name at all, and
+                clicking the words "Upload a resume" silently toggled a PDPA
+                agreement. Each control gets its own label below. */}
+            <div className="flex-1 text-sm">
+              <h2 className="font-medium">
+                <label htmlFor="resume-file">Upload a resume</label>
+              </h2>
+              <p id="resume-file-hint" className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+                PDF or Word (.docx), up to 10 MB. Re-uploading the same file returns the
+                existing result. A .docx has no page breaks until Word renders it, so its
+                citations all report page 1 rather than inventing a number.
+              </p>
               {/* The wording comes from the server, so what was agreed to and what
                   was shown cannot drift apart. The file input stays disabled until
                   the box is ticked: a consent you have to un-tick is not one. */}
-              <span className="mt-2.5 flex items-start gap-2 rounded-md bg-stone-50 p-2.5 text-xs text-stone-600 dark:bg-stone-800/60 dark:text-stone-300">
+              <label
+                htmlFor="upload-consent"
+                className="mt-2.5 flex cursor-pointer items-start gap-2 rounded-md bg-stone-50 p-2.5 text-xs text-stone-600 dark:bg-stone-800/60 dark:text-stone-300"
+              >
                 <input
+                  id="upload-consent"
                   type="checkbox"
                   checked={consented}
                   disabled={busy}
@@ -114,10 +128,15 @@ export default function Home() {
                   className="mt-0.5 shrink-0"
                 />
                 <span>{consent?.text ?? "Loading the consent terms…"}</span>
-              </span>
+              </label>
               <input
+                id="resume-file"
                 type="file"
-                accept="application/pdf,.pdf"
+                aria-describedby="resume-file-hint"
+                // The API registers both signatures and refuses a relabelled file on
+                // the bytes (`api/app/api/routes/resumes.py`), so the picker was the
+                // only thing turning a Word CV away — the common case.
+                accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
                 disabled={busy || !consented}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -127,7 +146,7 @@ export default function Home() {
                 }}
                 className="mt-2 block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white disabled:opacity-50 dark:file:bg-stone-100 dark:file:text-stone-900"
               />
-            </label>
+            </div>
             <div className="flex flex-col items-end gap-2 self-start">
               <Link
                 href="/jobs"
