@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ThemeControl } from "@/components/ThemeControl";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { NAV_ITEMS, isActiveNav } from "@/lib/nav";
@@ -105,6 +106,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           ) : (
             <span className="flex-1" />
           )}
+
+          {/* Outside the signed-in branch on purpose: the sign-in form is a screen
+              too, and it has to be readable — and checkable — in both themes by
+              somebody who has no session yet. */}
+          <ThemeControl />
         </div>
       </header>
 
@@ -118,7 +124,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           reader had just asked to skip. Chrome papers over this with a sequential
           focus starting point; not every engine does, and a skip link that works in
           one browser is not one. */}
-      <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 focus:outline-none"
+      >
         {children}
       </main>
     </div>

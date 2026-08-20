@@ -1,7 +1,12 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Sans_Thai_Looped } from "next/font/google";
+import {
+  IBM_Plex_Mono,
+  IBM_Plex_Sans,
+  IBM_Plex_Sans_Thai_Looped,
+} from "next/font/google";
 
 import { AppShell } from "@/components/AppShell";
+import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 
 import "./globals.css";
 
@@ -47,7 +52,11 @@ export const metadata: Metadata = {
     "Every claim the system makes cites the exact text it came from. Claims it cannot cite are dropped and reported.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     // `lang` is "en" because these screens are the internal ones and their copy is
     // English — see `docs/DESIGN.md` §8. The Thai-first decision governs the public
@@ -55,7 +64,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       className={`${plexSans.variable} ${plexThai.variable} ${plexMono.variable}`}
+      suppressHydrationWarning
     >
+      <head>
+        {/* Resolves the stored theme onto `<html>` before anything paints. React is
+            not running yet and cannot be: a component would set the attribute after
+            the first frame, so every navigation would flash light before turning
+            dark. `suppressHydrationWarning` above is the cost — the server cannot
+            know which theme this reader chose, so the attribute it did not render is
+            expected to differ. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
       <body className="min-h-screen bg-paper font-sans text-ink antialiased">
         <AppShell>{children}</AppShell>
       </body>
