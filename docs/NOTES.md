@@ -6,10 +6,16 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-20 (latest) — two of the three trust defects, watched at last
+## 2026-08-20 (latest) — two trust defects watched, both slices pushed, and the UI becomes the priority
 
-**Still nothing committed.** The working tree is unchanged from the entry below; this
-records what was *verified*, so the next session does not re-derive it.
+**Both slices are committed and pushed** (`716cda1..443e947`), and CI run **32332606027**
+is green on both jobs with **0 annotations** — read through the API rather than off the
+tick, and it is the first clean-runner build of the IBM Plex swap. The working tree is
+clean. Two commits rather than the three the plan named: `RankingTable.tsx` and
+`app/page.tsx` carry hunks belonging to both A and B, and splitting them with `git add -p`
+against a usage limit risked leaving a broken intermediate commit — so A and B landed
+together, with the commit message naming both halves and saying what had not been
+watched.
 
 Both of last session's blockers were gone before the first command: the **Chrome extension
 is connected**, and the dev server on :3000 was healthy (its 00:11 parse error was a
@@ -38,19 +44,86 @@ absence was believed.
 **2133×987** while screenshots come back **1568×726**, so a coordinate click lands in the
 wrong place — the first click of the session missed by ~115 px. Drive with refs.
 
-### Next step, in order
+### The owner reset the priority: the UI comes first
 
-1. **Finish A3 and B in the browser.** A3 needs a fresh candidate account, `resume_th.pdf`
-   uploaded with consent, and applications to two of the three postings; then open History
-   on each. The sharp version is the *failure* half — patch `fetch` to fail the second
-   history request and confirm the row reads "Loading the history…" rather than the first
-   row's timeline, which is the state that used to persist.
-2. **Then commit A, then B, then C+D**, per the entry below. `RankingTable.tsx` and
-   `app/page.tsx` carry hunks belonging to both A and B, so it wants `git add -p`.
-3. **Then record the careers-site direction in `docs/PLAN.md`**, which still ends at M6 —
-   including the owner's decision this session that the public pages are **Thai-first**
-   (`<html lang="th">`, Thai headline with a short English line beneath, one set of copy),
-   *not* a `[locale]` segment.
+Said at the end of the session, and it reorders everything below. The screens still look
+like the internal tool they started as — **monochrome, undesigned** — and making them not
+look like that is now the most urgent work rather than the last. Three requirements, in
+the owner's words: **colour**, **animation**, and a style that is **formal but modern**
+(*ทางการแบบทันสมัย*). The style choice is delegated rather than specified. And **a mockup
+is wanted before any real screen is built.**
+
+**This does not replace `docs/DESIGN.md` — it explains why none of it is visible yet.**
+The palette already carries colour (indigo `accent` plus the three reserved meaning
+colours) and the motion doctrine already names four animations. Nothing renders in any of
+it because **no page has been migrated onto the tokens**: every screen is still on its
+~300 hand-typed `dark:` utilities, and `web/components/ui/` has five primitives with zero
+callers. So "it is black and white" and "the migration has not happened" are the same
+fact, and the mockup is where *formal but modern* gets judged before it costs any code.
+
+One tension to settle at the mockup and not in a stylesheet: `DESIGN.md` refuses gradient
+heroes, glassmorphism and glow, and reserves three colours so nothing the product asserts
+can be mistaken for a control. "Modern" must be delivered **inside** that constraint —
+through type, spacing, density, elevation and motion — or the constraint has to be
+renegotiated deliberately, in the open, rather than eroded one screen at a time.
+
+**Tools to use, checked against what is actually available in this session:**
+
+| Tool | For |
+|---|---|
+| `design` (Claude Design) | The mockup. A pan/zoom canvas of `.dc.html` artboards published as an editable Artifact. **This is where the look is decided**, before Next.js. A canvas from 2026-08-19 already exists (five artboards, precision-instrument) and is the starting point, not a blank page — edit it by reading the published page back with `--extract` |
+| `artifact-design` | Must be loaded before writing any artifact, Markdown included |
+| `artifact-diagramming` | The locate-then-keep explainer on "how we screen" |
+| `dataviz` | **Required before any chart.** `/metrics` has tokens, latency and hallucination figures |
+| `claude-in-chrome` | The only instrument that can judge the result in the real app. Connected as of this session |
+| `run` | Launching the app; `npm run dev` on :3000 already serves the working tree |
+
+No plugin beyond the installed skills is needed, and none was added. Deliberately unused:
+`code-review`, `simplify`, `security-review`, `schedule`, `loop`, `claude-api`,
+`update-config`, `init`.
+
+**Do not fan out to subagents or workflows for this.** Design is one continuous judgment
+call over material already in context; each spawned agent starts cold. Recorded once
+before and worth not relearning.
+
+### Next step, in order — revised by the owner's reset
+
+**Fixes first, then something to look at, then the real screens.**
+
+1. **Finish A3 and the six B items in the browser, and fix whatever they find.** This is
+   the one thing that does not wait behind a redesign: A and B are **committed and pushed
+   unwatched**, and a defect that ships is worse than a screen that is plain. A3 needs one
+   account holding two applications — check whether `slice1-check` can apply to a posting
+   itself (`api/app/api/routes/applications.py:150` carries no `require_role`) before
+   creating a throwaway candidate. The sharp version of A3 is the *failure* half: patch
+   `fetch` to fail the second history request and confirm the row reads "Loading the
+   history…" rather than the first row's timeline, which is the state that used to
+   persist. Of B, **the `ResizeObserver` is the only item a browser is the only way to
+   check** — draw the overlay, resize the window, and read the box geometry back; numbers
+   that do not move mean the observer is inert, and the result looks *nearly* right, which
+   is worse than looking broken.
+2. **A mockup, before any screen code.** Formal-but-modern, in colour, with the four
+   motions actually moving, on the tokens that already exist. Shown for approval as a
+   published canvas, iterated with the owner, and only then translated into the primitives
+   in `web/components/ui/`.
+3. **Then the real screens**, one per commit, and none of them done until driven at
+   375 / 768 / 1440 in **both** themes.
+4. **Everything else waits behind those**: recording the careers-site direction and the
+   Thai-first decision in `docs/PLAN.md` (it still ends at M6), and the eleven-slice
+   careers-site build.
+
+**Two smells found while reading B's committed code, neither confirmed, both worth a look
+while already in the file:**
+
+- `RequirementEditor`'s `screeningCount` is documented as *"Completed screenings on this
+  job"*, and `web/app/jobs/[id]/page.tsx:437` passes `screenings.length` — every
+  screening, unfiltered. If a `pending` or `processing` row is in that list the
+  confirmation overstates how many model calls a delete costs, and a number that is not
+  what it claims is the one thing this project does not tolerate.
+- `aria-current` sits on the `<tr>`, which nothing can focus, while the focusable
+  `<button>` carries `aria-expanded`. Probably fine — but `DESIGN.md`'s floor says
+  `aria-current` on an unfocusable element is worse than silence, and these are different
+  semantics. Judge it with a screen reader, not by reading the markup.
 
 ---
 
