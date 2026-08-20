@@ -124,11 +124,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           reader had just asked to skip. Chrome papers over this with a sequential
           focus starting point; not every engine does, and a skip link that works in
           one browser is not one. */}
-      <main
-        id="main-content"
-        tabIndex={-1}
-        className="flex-1 focus:outline-none"
-      >
+      <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none">
         {children}
       </main>
     </div>

@@ -25,9 +25,10 @@ const KIND_LABELS: Record<RequirementKind, string> = {
   other: "Other",
 };
 
-const field =
-  "rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950";
-
+// The `field` recipe in `app/globals.css`, which is where every input in the app
+// now takes its border, background and focus ring from. This file used to declare
+// its own copy — one of the reasons `docs/DESIGN.md` §7 exists.
+const field = "field";
 
 export function RequirementFields({
   value,
@@ -77,7 +78,7 @@ export function RequirementFields({
       />
 
       <label
-        className="flex items-center gap-1.5 px-1 text-xs text-stone-600 dark:text-stone-400"
+        className="flex items-center gap-1.5 px-1 text-xs text-ink-muted"
         title="A hard gate: a candidate missing this ranks below everyone who has them all, however well they score elsewhere."
       >
         <input

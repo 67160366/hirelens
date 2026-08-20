@@ -55,8 +55,7 @@
   --dropped-wash: #fff1f2;
 
   --shadow-card: 0 1px 2px rgb(15 17 21 / 0.04), 0 1px 3px rgb(15 17 21 / 0.06);
-  --shadow-raised:
-    0 4px 6px -2px rgb(15 17 21 / 0.05), 0 12px 24px -6px rgb(15 17 21 / 0.12);
+  --shadow-raised: 0 4px 6px -2px rgb(15 17 21 / 0.05), 0 12px 24px -6px rgb(15 17 21 / 0.12);
   --ring-accent: 0 0 0 3px rgb(79 70 229 / 0.28);
 }
 
@@ -141,8 +140,7 @@
   --radius-card: 0.75rem;
   --radius-control: 0.5rem;
 
-  --font-sans:
-    var(--font-plex-sans), var(--font-plex-thai), system-ui, sans-serif;
+  --font-sans: var(--font-plex-sans), var(--font-plex-thai), system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
@@ -343,8 +341,15 @@ body {
   *::before,
   *::after {
     animation-duration: 1ms !important;
+    /* Delay, not only duration. Motion 3 staggers the verdicts by up to 480ms with
+       an inline `animation-delay`, and a 1ms animation that starts 480ms late is
+       still a row appearing out of nowhere half a second after its neighbour —
+       collapsing the duration alone would have left the stagger fully visible to
+       exactly the reader who asked for none of it. */
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }

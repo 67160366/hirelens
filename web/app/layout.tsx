@@ -1,9 +1,5 @@
 import type { Metadata } from "next";
-import {
-  IBM_Plex_Mono,
-  IBM_Plex_Sans,
-  IBM_Plex_Sans_Thai_Looped,
-} from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Sans_Thai_Looped } from "next/font/google";
 
 import { AppShell } from "@/components/AppShell";
 import { THEME_BOOT_SCRIPT } from "@/lib/theme";
@@ -52,11 +48,7 @@ export const metadata: Metadata = {
     "Every claim the system makes cites the exact text it came from. Claims it cannot cite are dropped and reported.",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     // `lang` is "en" because these screens are the internal ones and their copy is
     // English — see `docs/DESIGN.md` §8. The Thai-first decision governs the public

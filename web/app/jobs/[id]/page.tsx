@@ -13,6 +13,9 @@ import { DroppedClaims } from "@/components/DroppedClaims";
 import { EvidenceStatsBar } from "@/components/EvidenceStatsBar";
 import { JudgmentView } from "@/components/JudgmentView";
 import { RankingTable } from "@/components/RankingTable";
+import { Banner } from "@/components/ui/Banner";
+import { Button } from "@/components/ui/Button";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { RequirementEditor } from "@/components/RequirementEditor";
 import { RequirementFields } from "@/components/RequirementFields";
 import {
@@ -107,9 +110,7 @@ export default function JobPage() {
       await authorized(() => api.moveApplication(applicationId, to, reason));
       setApplications(await authorized(() => api.listJobApplications(jobId)));
       if (openApplicationId === applicationId) {
-        setApplicationEvents(
-          await authorized(() => api.listApplicationEvents(applicationId)),
-        );
+        setApplicationEvents(await authorized(() => api.listApplicationEvents(applicationId)));
       }
     } catch (caught) {
       // The server answers 409 with a sentence written for a person — "an
@@ -128,9 +129,7 @@ export default function JobPage() {
     }
     setOpenApplicationId(applicationId);
     try {
-      setApplicationEvents(
-        await authorized(() => api.listApplicationEvents(applicationId)),
-      );
+      setApplicationEvents(await authorized(() => api.listApplicationEvents(applicationId)));
     } catch (caught) {
       setError(errorMessage(caught, "Could not load the history"));
     }
@@ -264,9 +263,7 @@ export default function JobPage() {
     setNotice(null);
     setBusyResumeId(resumeId);
     try {
-      const { queued } = await authorized(() =>
-        api.createScreening(jobId, resumeId),
-      );
+      const { queued } = await authorized(() => api.createScreening(jobId, resumeId));
       setNotice(
         queued
           ? `Judging ${resumeName(resumeId)} — one model call.`
@@ -288,9 +285,7 @@ export default function JobPage() {
   async function saveRequirement(requirementId: string, patch: RequirementPatch) {
     setError(null);
     try {
-      await authorized(() =>
-        api.updateRequirement(jobId, requirementId, patch),
-      );
+      await authorized(() => api.updateRequirement(jobId, requirementId, patch));
       await refreshAfterEdit();
     } catch (caught) {
       setError(errorMessage(caught, "Could not save the requirement"));
@@ -384,7 +379,7 @@ export default function JobPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{job?.title ?? "Job"}</h1>
           {job?.description && (
-            <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-sm text-stone-600 dark:text-stone-400">
+            <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-sm text-ink-muted">
               {job.description}
             </p>
           )}
@@ -392,27 +387,29 @@ export default function JobPage() {
       </header>
 
       {error && (
-        <p className="mb-5 rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-400">
+        <Banner tone="danger" className="mb-5">
           {error}
-        </p>
+        </Banner>
       )}
       {notice && (
-        <p className="mb-5 rounded-lg border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-400">
+        <Banner tone="info" className="mb-5">
           {notice}
-        </p>
+        </Banner>
       )}
 
       <div className="space-y-6">
         {/* Requirements ---------------------------------------------------- */}
-        <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
-          <header className="flex items-baseline justify-between gap-3 border-b border-stone-200 px-4 py-2.5 dark:border-stone-800">
-            <h2 className="text-sm font-semibold">Requirements</h2>
-            <p className="text-[11px] text-stone-400 dark:text-stone-500">
-              {job?.requirements.length ?? 0} of {MAX_REQUIREMENTS_PER_JOB}
-            </p>
-          </header>
+        <Card>
+          <CardHeader
+            title="Requirements"
+            action={
+              <p className="text-micro tabular-nums text-ink-faint">
+                {job?.requirements.length ?? 0} of {MAX_REQUIREMENTS_PER_JOB}
+              </p>
+            }
+          />
 
-          <div className="divide-y divide-stone-100 dark:divide-stone-800">
+          <div className="divide-y divide-line">
             {job?.requirements.map((requirement: Requirement) => (
               <RequirementEditor
                 key={requirement.id}
@@ -428,57 +425,54 @@ export default function JobPage() {
 
           <form
             onSubmit={addRequirement}
-            className="flex items-start gap-2 border-t border-stone-200 px-4 py-3 dark:border-stone-800"
+            className="flex items-start gap-2 border-t border-line px-4 py-3"
           >
             <div className="flex-1">
               <RequirementFields value={draft} onChange={setDraft} disabled={pending} />
             </div>
-            <button
+            <Button
               type="submit"
+              variant="primary"
               disabled={
                 pending ||
                 draft.label.trim() === "" ||
                 (job?.requirements.length ?? 0) >= MAX_REQUIREMENTS_PER_JOB
               }
-              className="mt-0.5 rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900"
+              className="mt-0.5"
             >
               Add
-            </button>
+            </Button>
           </form>
-        </section>
+        </Card>
 
         {/* Applicants ------------------------------------------------------ */}
-        <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
-          <header className="border-b border-stone-200 px-4 py-2.5 dark:border-stone-800">
-            <h2 className="text-sm font-semibold">Applicants ({applications.length})</h2>
-            <p className="mt-0.5 text-[11px] text-stone-400 dark:text-stone-500">
-              Every move is recorded with who made it and what it rested on. Shortlisting
-              needs a completed screening behind it; rejecting needs a reason.
-            </p>
-          </header>
+        <Card>
+          <CardHeader
+            title={`Applicants (${applications.length})`}
+            caption="Every move is recorded with who made it and what it rested on. Shortlisting needs a completed screening behind it; rejecting needs a reason."
+          />
 
           {applications.length === 0 ? (
-            <p className="px-4 py-4 text-sm text-stone-500 dark:text-stone-400">
-              Nobody has applied yet.
-            </p>
+            <CardBody>
+              <p className="text-sm text-ink-muted">Nobody has applied yet.</p>
+            </CardBody>
           ) : (
-            <div className="divide-y divide-stone-100 dark:divide-stone-800">
+            <div className="divide-y divide-line">
               {groupByState(applications).map((group) => (
                 <div key={group.state} className="px-4 py-3">
-                  <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500">
+                  <p className="mb-2 text-micro font-medium uppercase tracking-wide text-ink-faint">
                     {STATE_LABELS[group.state]} ({group.applications.length})
                   </p>
                   <ul className="space-y-2.5">
                     {group.applications.map((application) => (
                       <li key={application.id}>
                         <div className="flex flex-wrap items-start justify-between gap-2">
-                          <p className="text-sm font-medium">
-                            {application.resume_filename}
-                          </p>
+                          <p className="text-sm font-medium">{application.resume_filename}</p>
                           <button
                             type="button"
                             onClick={() => void toggleApplicationHistory(application.id)}
-                            className="text-xs text-stone-500 underline dark:text-stone-400"
+                            aria-expanded={openApplicationId === application.id}
+                            className="ring-focus rounded-control text-xs text-ink-muted underline underline-offset-2 hover:text-ink"
                           >
                             {openApplicationId === application.id ? "Hide history" : "History"}
                           </button>
@@ -497,7 +491,7 @@ export default function JobPage() {
                           </div>
                         ) : null}
                         {openApplicationId === application.id ? (
-                          <div className="mt-2 rounded-md bg-stone-50 p-3 dark:bg-stone-800/50">
+                          <div className="mt-2 rounded-control bg-surface-sunken p-3">
                             <ApplicationTimeline events={applicationEvents} />
                           </div>
                         ) : null}
@@ -508,25 +502,27 @@ export default function JobPage() {
               ))}
             </div>
           )}
-        </section>
+        </Card>
 
         {/* Screening ------------------------------------------------------- */}
-        <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
-          <header className="border-b border-stone-200 px-4 py-2.5 dark:border-stone-800">
-            <h2 className="text-sm font-semibold">Screen a resume</h2>
-            <p className="mt-0.5 text-[11px] text-stone-400 dark:text-stone-500">
-              One model call each, per resume, when you press the button. Asking again for
-              an answer that is still current costs nothing and says so.
-            </p>
-          </header>
+        <Card>
+          <CardHeader
+            title="Screen a resume"
+            caption="One model call each, per resume, when you press the button. Asking again for an answer that is still current costs nothing and says so."
+          />
 
           {screenable.length === 0 ? (
-            <p className="px-4 py-4 text-sm text-stone-500 dark:text-stone-400">
-              Nothing to screen yet — nobody has applied, and you have uploaded no
-              resumes of your own. <Link href="/" className="underline">Upload one.</Link>
-            </p>
+            <CardBody>
+              <p className="text-sm text-ink-muted">
+                Nothing to screen yet — nobody has applied, and you have uploaded no resumes of
+                your own.{" "}
+                <Link href="/" className="ring-focus rounded-control text-accent underline">
+                  Upload one.
+                </Link>
+              </p>
+            </CardBody>
           ) : (
-            <ul className="divide-y divide-stone-100 dark:divide-stone-800">
+            <ul className="divide-y divide-line">
               {screenable.map((resume) => {
                 const screening = screenings.find((item) => item.resume_id === resume.id);
                 // A resume with no verified text raises `NotScreenable` on the
@@ -540,7 +536,7 @@ export default function JobPage() {
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{resume.filename}</p>
-                      <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                      <p className="text-micro text-ink-muted">
                         {screenable
                           ? screening
                             ? `Screened · ${screening.status}${screening.is_stale ? " · needs re-screening" : ""}`
@@ -548,24 +544,23 @@ export default function JobPage() {
                           : `Cannot be screened — the resume is ${resume.status} and has no text to quote`}
                       </p>
                     </div>
-                    <button
-                      type="button"
+                    <Button
                       onClick={() => void screen(resume.id)}
                       disabled={!screenable || busyResumeId !== null}
-                      className="shrink-0 rounded-md border border-stone-300 px-3 py-1 text-xs font-medium hover:bg-stone-50 disabled:opacity-40 dark:border-stone-700 dark:hover:bg-stone-800"
+                      className="shrink-0"
                     >
                       {busyResumeId === resume.id
                         ? "Judging…"
                         : screenedResumeIds.has(resume.id)
                           ? "Screen again"
                           : "Screen"}
-                    </button>
+                    </Button>
                   </li>
                 );
               })}
             </ul>
           )}
-        </section>
+        </Card>
 
         {/* Ranking --------------------------------------------------------- */}
         {ranking && (
@@ -612,9 +607,7 @@ export default function JobPage() {
                   authorized={authorized}
                 />
               ) : (
-                <p className="text-sm text-stone-500 dark:text-stone-400">
-                  Loading the document…
-                </p>
+                <p className="text-sm text-ink-muted">Loading the document…</p>
               )}
             </div>
           </EvidenceSelectionProvider>

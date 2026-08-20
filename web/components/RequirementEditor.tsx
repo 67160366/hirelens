@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { RequirementFields } from "@/components/RequirementFields";
+import { Button } from "@/components/ui/Button";
 import type { Requirement, RequirementInput, RequirementPatch } from "@/lib/api";
 import { makesScreeningsStale } from "@/lib/screening";
 
@@ -86,15 +87,18 @@ export function RequirementEditor({
           disabled={disabled || saving || confirmingDelete}
           aria-label={`Delete requirement ${requirement.label}`}
           title="Deleting a requirement changes the question, so every screening becomes stale."
-          className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm text-stone-500 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:opacity-30 dark:text-stone-400 dark:hover:text-red-400"
+          // 32×32, which `docs/DESIGN.md` §5 asks of anything destructive — and the
+          // one place the meaning palette is borrowed for a control, because
+          // refusing a claim and destroying a row are the same red to a reader.
+          className="ring-focus mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-sm text-ink-muted hover:text-dropped disabled:opacity-30"
         >
           ×
         </button>
       </div>
 
       {confirmingDelete && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-300 bg-red-50 px-2.5 py-2 dark:border-red-900/60 dark:bg-red-950/30">
-          <span className="text-xs text-red-800 dark:text-red-300">
+        <div className="flex flex-wrap items-center gap-2 rounded-control border border-dropped/40 bg-dropped-wash px-2.5 py-2">
+          <span className="text-xs text-dropped">
             Delete “{requirement.label}”?{" "}
             {screeningCount === undefined
               ? "Every screening on this job becomes stale and has to be run again."
@@ -102,52 +106,52 @@ export function RequirementEditor({
                 ? "No screening has run yet, so nothing has to be run again."
                 : `${screeningCount} ${screeningCount === 1 ? "screening" : "screenings"} become stale and have to be run again — one model call each.`}
           </span>
-          <button
-            type="button"
+          <Button
+            variant="danger"
             onClick={() => {
               setConfirmingDelete(false);
               void onDelete();
             }}
-            className="rounded-md bg-red-700 px-2.5 py-1 text-xs font-medium text-white dark:bg-red-600"
           >
             Delete
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirmingDelete(false)}
-            className="text-xs text-stone-600 underline-offset-2 hover:underline dark:text-stone-400"
-          >
+          </Button>
+          <Button variant="ghost" onClick={() => setConfirmingDelete(false)}>
             Cancel
-          </button>
+          </Button>
         </div>
       )}
 
       {dirty && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
-          <button
-            type="button"
+          <Button
+            variant="primary"
             onClick={() => void save()}
             disabled={saving || draft.label.trim() === ""}
-            className="rounded-md bg-stone-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900"
           >
             {saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
             onClick={() => setDraft(toInput(requirement))}
             disabled={saving}
-            className="text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
           >
             Discard
-          </button>
+          </Button>
 
+          {/* Weight, not hue. These two lines were amber and emerald — `ambiguous`
+              and `cited`, the colours reserved for what the system says about a
+              *document* — spent here on what an edit will cost. Same category
+              error as the ranking's must-have gate, in the same panel. The
+              distinction the 2026-08-12 walkthrough valued survives: the costly
+              one is set in full ink and the free one is muted, so one still reads
+              louder than the other at a glance. */}
           {stalening ? (
-            <span className="text-[11px] text-amber-700 dark:text-amber-500">
-              Changes what the judge was shown — every screening becomes stale and has to
-              be run again to rejoin the ranking.
+            <span className="text-micro font-medium text-ink">
+              Changes what the judge was shown — every screening becomes stale and has to be
+              run again to rejoin the ranking.
             </span>
           ) : (
-            <span className="text-[11px] text-emerald-700 dark:text-emerald-500">
+            <span className="text-micro text-ink-muted">
               Free — reorders the ranking without re-judging anyone.
             </span>
           )}

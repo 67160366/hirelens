@@ -67,10 +67,7 @@ export function nextPreference(preference: ThemePreference): ThemePreference {
  * because the two agree whenever the reader has not chosen — which is most of the time,
  * and exactly why it is worth pinning.
  */
-export function resolveTheme(
-  preference: ThemePreference,
-  systemIsDark: boolean,
-): Theme {
+export function resolveTheme(preference: ThemePreference, systemIsDark: boolean): Theme {
   if (preference === "light" || preference === "dark") return preference;
   return systemIsDark ? "dark" : "light";
 }
@@ -87,8 +84,7 @@ export function parsePreference(raw: string | null): ThemePreference {
 
 /** Does the operating system ask for dark? False anywhere there is nothing to ask. */
 export function systemPrefersDark(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
-    return false;
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   return window.matchMedia(DARK_QUERY).matches;
 }
 
@@ -118,15 +114,13 @@ export function readPreference(): ThemePreference {
  */
 export function syncDocumentTheme(): Theme {
   const theme = resolveTheme(readPreference(), systemPrefersDark());
-  if (typeof document !== "undefined")
-    document.documentElement.dataset.theme = theme;
+  if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
   return theme;
 }
 
 /** Record the choice, repaint, and wake everything reading it. */
 export function writePreference(preference: ThemePreference): void {
-  if (typeof localStorage !== "undefined")
-    localStorage.setItem(THEME_KEY, preference);
+  if (typeof localStorage !== "undefined") localStorage.setItem(THEME_KEY, preference);
   syncDocumentTheme();
   emit();
 }
@@ -159,8 +153,7 @@ export function subscribeToTheme(listener: Listener): () => void {
 
   return () => {
     listeners.delete(listener);
-    if (typeof window !== "undefined")
-      window.removeEventListener("storage", wake);
+    if (typeof window !== "undefined") window.removeEventListener("storage", wake);
     media?.removeEventListener("change", wake);
   };
 }
@@ -183,11 +176,7 @@ export function useThemePreference(): {
   preference: ThemePreference;
   setPreference: (preference: ThemePreference) => void;
 } {
-  const preference = useSyncExternalStore(
-    subscribeToTheme,
-    readPreference,
-    systemOnServer,
-  );
+  const preference = useSyncExternalStore(subscribeToTheme, readPreference, systemOnServer);
   return { preference, setPreference: writePreference };
 }
 
