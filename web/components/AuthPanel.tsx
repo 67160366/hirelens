@@ -3,14 +3,24 @@
 import { useState } from "react";
 
 import { api, type SelfServiceRole } from "@/lib/api";
+import { Banner } from "@/components/ui/Banner";
+import { Button } from "@/components/ui/Button";
 import { errorMessage, establishSession, type Session } from "@/lib/auth";
 
 type Mode = "login" | "register";
 
 /** What each self-service role gets, in the terms someone choosing would use. */
 const ROLE_CHOICES: { value: SelfServiceRole; label: string; blurb: string }[] = [
-  { value: "candidate", label: "I'm looking for work", blurb: "Upload a CV and apply to postings." },
-  { value: "recruiter", label: "I'm hiring", blurb: "Post jobs and screen the people who apply." },
+  {
+    value: "candidate",
+    label: "I'm looking for work",
+    blurb: "Upload a CV and apply to postings.",
+  },
+  {
+    value: "recruiter",
+    label: "I'm hiring",
+    blurb: "Post jobs and screen the people who apply.",
+  },
 ];
 
 /**
@@ -26,7 +36,11 @@ const ROLE_CHOICES: { value: SelfServiceRole; label: string; blurb: string }[] =
  * Every recruiter screen was therefore unreachable without going around the UI.
  * `admin` is not offered, and `SelfServiceRole` is why it cannot be.
  */
-export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Session) => void }) {
+export function AuthPanel({
+  onAuthenticated,
+}: {
+  onAuthenticated: (session: Session) => void;
+}) {
   const [mode, setMode] = useState<Mode>("register");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,9 +59,7 @@ export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Sess
       // signing in successfully and being unauthenticated a moment later is the most
       // confusing state this client has, and it names the cause instead.
       const session = await establishSession(() =>
-        mode === "register"
-          ? api.register(email, password, role)
-          : api.login(email, password),
+        mode === "register" ? api.register(email, password, role) : api.login(email, password),
       );
       onAuthenticated(session);
     } catch (caught) {
@@ -58,10 +70,7 @@ export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Sess
   }
 
   return (
-    <form
-      onSubmit={submit}
-      className="mx-auto w-full max-w-sm space-y-3 rounded-lg border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900"
-    >
+    <form onSubmit={submit} className="card mx-auto w-full max-w-sm space-y-3 p-5">
       <h2 className="text-sm font-semibold">
         {mode === "register" ? "Create an account" : "Sign in"}
       </h2>
@@ -72,7 +81,7 @@ export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Sess
         onChange={(event) => setEmail(event.target.value)}
         placeholder="you@example.com"
         autoComplete="email"
-        className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
+        className="field"
       />
       <input
         type="password"
@@ -82,17 +91,15 @@ export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Sess
         onChange={(event) => setPassword(event.target.value)}
         placeholder="At least 8 characters"
         autoComplete={mode === "register" ? "new-password" : "current-password"}
-        className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
+        className="field"
       />
       {mode === "register" && (
         <fieldset className="space-y-1.5">
-          <legend className="mb-1 text-xs text-stone-600 dark:text-stone-400">
-            What brings you here?
-          </legend>
+          <legend className="mb-1 text-xs text-ink-muted">What brings you here?</legend>
           {ROLE_CHOICES.map((choice) => (
             <label
               key={choice.value}
-              className="flex cursor-pointer items-start gap-2 rounded-md border border-stone-200 px-2.5 py-2 hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-800/50"
+              className="flex cursor-pointer items-start gap-2 rounded-control border border-line px-2.5 py-2 hover:bg-surface-sunken"
             >
               <input
                 type="radio"
@@ -104,9 +111,7 @@ export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Sess
               />
               <span className="min-w-0">
                 <span className="block text-xs font-medium">{choice.label}</span>
-                <span className="block text-[11px] text-stone-500 dark:text-stone-400">
-                  {choice.blurb}
-                </span>
+                <span className="block text-micro text-ink-muted">{choice.blurb}</span>
               </span>
             </label>
           ))}
@@ -115,28 +120,24 @@ export function AuthPanel({ onAuthenticated }: { onAuthenticated: (session: Sess
               carry. Someone choosing "I'm hiring" should know it is taken on
               trust. */}
           {role === "recruiter" && (
-            <p className="text-[11px] text-stone-500 dark:text-stone-400">
-              Nothing here verifies that you represent an employer. That is a known
-              limitation, not a claim that it has been checked.
+            <p className="text-micro text-ink-muted">
+              Nothing here verifies that you represent an employer. That is a known limitation,
+              not a claim that it has been checked.
             </p>
           )}
         </fieldset>
       )}
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      <button
-        type="submit"
-        disabled={busy}
-        className="w-full rounded-md bg-stone-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900"
-      >
+      {error && <Banner tone="danger">{error}</Banner>}
+      <Button type="submit" variant="primary" size="lg" disabled={busy} className="w-full">
         {busy ? "Working…" : mode === "register" ? "Create account" : "Sign in"}
-      </button>
+      </Button>
       <button
         type="button"
         onClick={() => {
           setMode(mode === "register" ? "login" : "register");
           setError(null);
         }}
-        className="w-full text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
+        className="ring-focus w-full rounded-control text-xs text-ink-muted underline-offset-2 hover:text-ink hover:underline"
       >
         {mode === "register" ? "I already have an account" : "I need an account"}
       </button>

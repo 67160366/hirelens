@@ -5,12 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/AuthPanel";
 import { RequirementFields } from "@/components/RequirementFields";
-import {
-  MAX_REQUIREMENTS_PER_JOB,
-  api,
-  type Job,
-  type RequirementInput,
-} from "@/lib/api";
+import { Banner } from "@/components/ui/Banner";
+import { MAX_REQUIREMENTS_PER_JOB, api, type Job, type RequirementInput } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
 import { BLANK_REQUIREMENT } from "@/lib/requirements";
 
@@ -59,9 +55,7 @@ export default function JobsPage() {
       // requirement. The API would refuse it; dropping it here keeps the form usable.
       const requirements = drafts.filter((draft) => draft.label.trim() !== "");
       const job = await authorized(() =>
-        api.createJob(
-          { title, description: description.trim() || null, requirements },
-        ),
+        api.createJob({ title, description: description.trim() || null, requirements }),
       );
       setJobs((current) => [job, ...(current ?? [])]);
       setTitle("");
@@ -88,24 +82,21 @@ export default function JobsPage() {
       <header className="mb-8">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
-          <p className="mt-1.5 max-w-xl text-sm text-stone-600 dark:text-stone-400">
-            A requirement is typed in, not decomposed out of a posting by a model — it is
-            an input, not a claim about anyone. Candidates are then ranked by which of
-            them their resumes can be quoted to prove.
+          <p className="mt-1.5 max-w-xl text-sm text-ink-muted">
+            A requirement is typed in, not decomposed out of a posting by a model — it is an
+            input, not a claim about anyone. Candidates are then ranked by which of them their
+            resumes can be quoted to prove.
           </p>
         </div>
       </header>
 
       {error && (
-        <p className="mb-5 rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-400">
+        <Banner tone="danger" className="mb-5">
           {error}
-        </p>
+        </Banner>
       )}
 
-      <form
-        onSubmit={create}
-        className="mb-8 space-y-4 rounded-lg border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900"
-      >
+      <form onSubmit={create} className="card mb-8 space-y-4 p-5">
         <h2 className="text-sm font-semibold">New job</h2>
 
         <input
@@ -113,22 +104,26 @@ export default function JobsPage() {
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Job title"
-          className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
+          className="field"
         />
         <textarea
           value={description}
           onChange={(event) => setDescription(event.target.value)}
           placeholder="The posting as written (optional). Kept for context and audit — nobody is judged against it, because a verdict on free text cannot say which part of a posting it answered."
           rows={3}
-          className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
+          className="field"
         />
 
         <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500">
+          {/* `gap` and `flex-wrap`, because at 375px the caption has to sit under the
+              heading rather than beside it — with neither, the two ran together and
+              the screen read "REQUIREMENTS1 of 30". Found in a browser at 375; a
+              justify-between with no gap looks correct at every width that fits. */}
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h3 className="text-micro font-medium uppercase tracking-wide text-ink-faint">
               Requirements
             </h3>
-            <p className="text-[11px] text-stone-400 dark:text-stone-500">
+            <p className="text-micro tabular-nums text-ink-faint">
               {drafts.length} of {MAX_REQUIREMENTS_PER_JOB} — the whole list travels in one
               judging prompt, which is why there is a cap
             </p>
@@ -151,7 +146,7 @@ export default function JobsPage() {
                 onClick={() => setDrafts((current) => current.filter((_, at) => at !== index))}
                 disabled={drafts.length === 1}
                 aria-label="Remove requirement"
-                className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm text-stone-500 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:opacity-30 dark:text-stone-400 dark:hover:text-red-400"
+                className="ring-focus mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-sm text-ink-muted hover:text-dropped disabled:opacity-30"
               >
                 ×
               </button>
@@ -162,7 +157,7 @@ export default function JobsPage() {
             type="button"
             onClick={() => setDrafts((current) => [...current, { ...BLANK_REQUIREMENT }])}
             disabled={drafts.length >= MAX_REQUIREMENTS_PER_JOB}
-            className="text-xs text-stone-500 underline-offset-2 hover:underline disabled:opacity-40 dark:text-stone-400"
+            className="ring-focus rounded-control text-xs text-ink-muted underline-offset-2 hover:text-ink hover:underline disabled:opacity-40"
           >
             + Add a requirement
           </button>
@@ -171,7 +166,7 @@ export default function JobsPage() {
         <button
           type="submit"
           disabled={busy || title.trim() === ""}
-          className="rounded-md bg-stone-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900"
+          className="btn btn-primary ring-focus"
         >
           {busy ? "Creating…" : "Create job"}
         </button>
@@ -182,23 +177,21 @@ export default function JobsPage() {
         // screen and lets the banner above carry the failure — discarding a working
         // list over a transient blip helps nobody.
         loadFailed ? (
-          <div className="flex items-center gap-3 rounded-lg border border-stone-200 px-4 py-3 text-sm dark:border-stone-800">
-            <span className="text-stone-600 dark:text-stone-400">
-              The list of jobs could not be loaded.
-            </span>
+          <div className="flex items-center gap-3 rounded-card border border-line px-4 py-3 text-sm">
+            <span className="text-ink-muted">The list of jobs could not be loaded.</span>
             <button
               type="button"
               onClick={() => void load()}
-              className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
+              className="btn btn-secondary ring-focus"
             >
               Try again
             </button>
           </div>
         ) : (
-          <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>
+          <p className="text-sm text-ink-muted">Loading…</p>
         )
       ) : jobs.length === 0 ? (
-        <p className="text-sm text-stone-500 dark:text-stone-400">
+        <p className="text-sm text-ink-muted">
           No jobs yet. Create one above, then screen your uploaded resumes against it.
         </p>
       ) : (
@@ -207,10 +200,10 @@ export default function JobsPage() {
             <li key={job.id}>
               <Link
                 href={`/jobs/${job.id}`}
-                className="flex items-baseline justify-between gap-4 rounded-lg border border-stone-200 bg-white px-4 py-3 hover:border-stone-400 dark:border-stone-800 dark:bg-stone-900 dark:hover:border-stone-600"
+                className="ring-focus flex items-baseline justify-between gap-4 rounded-card border border-line bg-surface px-4 py-3 transition-colors hover:border-accent hover:bg-surface-sunken"
               >
                 <span className="text-sm font-medium">{job.title}</span>
-                <span className="text-xs text-stone-500 dark:text-stone-400">
+                <span className="text-xs text-ink-muted">
                   {job.requirements.length}{" "}
                   {job.requirements.length === 1 ? "requirement" : "requirements"}
                   {job.requirements.some((item) => item.must_have) &&

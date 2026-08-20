@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/AuthPanel";
+import { Banner } from "@/components/ui/Banner";
+import { Button } from "@/components/ui/Button";
 import { EvidenceSelectionProvider, collectEvidence } from "@/components/DocumentPane";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { ProfileView } from "@/components/ProfileView";
@@ -47,7 +49,10 @@ export default function Home() {
 
   useEffect(() => {
     // Unauthenticated, so it loads whether or not anyone is signed in.
-    api.getConsent().then(setConsent).catch(() => setConsent(null));
+    api
+      .getConsent()
+      .then(setConsent)
+      .catch(() => setConsent(null));
   }, []);
 
   // Nothing is rendered unless it belongs to the session asking for it.
@@ -104,9 +109,9 @@ export default function Home() {
     <div className="mx-auto max-w-6xl px-5 py-10">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">HireLens</h1>
-        <p className="mt-1.5 max-w-xl text-sm text-stone-600 dark:text-stone-400">
-          Resume screening where every claim cites the exact text it came from. Anything the model
-          cannot point to in the document is dropped and reported instead of shown.
+        <p className="mt-1.5 max-w-xl text-sm text-ink-muted">
+          Resume screening where every claim cites the exact text it came from. Anything the
+          model cannot point to in the document is dropped and reported instead of shown.
         </p>
       </header>
 
@@ -114,7 +119,7 @@ export default function Home() {
         <AuthPanel onAuthenticated={authenticate} />
       ) : (
         <div className="space-y-6">
-          <div className="flex items-center justify-between gap-4 rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
+          <div className="card flex items-center justify-between gap-4 p-4">
             {/* A <div>, not a <label>. One label used to wrap both the consent
                 checkbox and the file input, and a label's control is its *first*
                 labelable descendant — so the checkbox answered to the whole
@@ -125,7 +130,7 @@ export default function Home() {
               <h2 className="font-medium">
                 <label htmlFor="resume-file">Upload a resume</label>
               </h2>
-              <p id="resume-file-hint" className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+              <p id="resume-file-hint" className="mt-0.5 text-xs text-ink-muted">
                 PDF or Word (.docx), up to 10 MB. Re-uploading the same file returns the
                 existing result. A .docx has no page breaks until Word renders it, so its
                 citations all report page 1 rather than inventing a number.
@@ -135,7 +140,7 @@ export default function Home() {
                   the box is ticked: a consent you have to un-tick is not one. */}
               <label
                 htmlFor="upload-consent"
-                className="mt-2.5 flex cursor-pointer items-start gap-2 rounded-md bg-stone-50 p-2.5 text-xs text-stone-600 dark:bg-stone-800/60 dark:text-stone-300"
+                className="mt-2.5 flex cursor-pointer items-start gap-2 rounded-control bg-surface-sunken p-2.5 text-xs text-ink-muted"
               >
                 <input
                   id="upload-consent"
@@ -162,38 +167,34 @@ export default function Home() {
                   event.target.value = "";
                   if (file) void upload(file);
                 }}
-                className="mt-2 block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white disabled:opacity-50 dark:file:bg-stone-100 dark:file:text-stone-900"
+                // The `file:` pseudo-element cannot take a `btn-primary` class — it is
+                // not an element a class can be put on — so this is the one button in
+                // the app that restates the recipe. It restates it in tokens.
+                className="mt-2 block w-full text-xs file:mr-3 file:cursor-pointer file:rounded-control file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-on-accent hover:file:bg-accent-hover disabled:opacity-50"
               />
             </div>
           </div>
 
           {/* Live, because the API streams every state change rather than making
               the page ask. A retry waiting out its backoff says so here. */}
-          {busy && (
-            <p className="text-sm text-stone-500 dark:text-stone-400">{progressMessage(progress)}</p>
-          )}
+          {busy && <p className="text-sm text-ink-muted">{progressMessage(progress)}</p>}
           {/* A resume the worker gave up on after retrying is kept rather than
               discarded, so it can be run again once the cause is fixed. */}
           {shown?.resume.can_retry && !busy && (
-            <div className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm dark:border-amber-900/60 dark:bg-amber-950/30">
-              <span className="text-amber-900 dark:text-amber-300">
+            // `warn`, which is the `ambiguous` hue, and it stays: unlike the
+            // ranking's must-have gate or an edit's cost, this *is* the system
+            // saying something about a document — it could not be read, and it
+            // has not been given up on. `docs/DESIGN.md` §1 reserves the three
+            // colours for exactly that.
+            <Banner tone="warn" className="flex items-center gap-3">
+              <span>
                 Stopped after {shown.resume.attempts}{" "}
                 {shown.resume.attempts === 1 ? "attempt" : "attempts"}.
               </span>
-              <button
-                type="button"
-                onClick={() => void retry()}
-                className="rounded-md bg-amber-900 px-3 py-1 text-xs font-medium text-white dark:bg-amber-200 dark:text-amber-950"
-              >
-                Try again
-              </button>
-            </div>
+              <Button onClick={() => void retry()}>Try again</Button>
+            </Banner>
           )}
-          {error && (
-            <p className="rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-400">
-              {error}
-            </p>
-          )}
+          {error && <Banner tone="danger">{error}</Banner>}
 
           {/* The document pane only appears when there is text to point into. A
               failed parse has no offsets, so citations stay non-interactive. */}
