@@ -13,6 +13,32 @@ sells the claim that it only says what it can prove, so the interface has to loo
 instrument rather than a pitch. That is not an argument for plain — it is an argument for
 a particular kind of polish.
 
+### The chosen expression: C · Console (2026-08-20)
+
+Three directions were drawn on these tokens and shown side by side, each rendering the
+*same* screening so they were comparable rather than three moods: **A · Instrument**
+(dense, paper-white, hairline rules), **B · Editorial** (display type, the verdicts set as
+a printed report), and **C · Console** (the recruiter's workbench with real elevation, an
+accent-tinted selected row, and score bars). The owner chose **C**.
+
+C is *a presentation of this palette, not a new one*. It was drawn on the dark half of the
+tokens because that is where its density reads best, and that is the only reason.
+
+**What C adds:** real elevation (`--shadow-raised`, already defined), an **accent**-tinted
+selected row, and a score bar in the ranking.
+
+**What C does not relax:** the three reserved meaning colours below, the refusals in §6,
+colour never being the only signal, and the 4.5:1 floor in both themes.
+
+**Both themes stay.** `globals.css` declares `color-scheme: light dark` and a complete dark
+block; the light theme is C's same structure on paper. **A screen is not done until it has
+been driven at 375 / 768 / 1440 in both themes.** "The app is dark now" is not what was
+chosen and is not on offer.
+
+The choice was made against a stated cost: of the three, C is the closest to generic SaaS.
+What holds it away from that is the pair of rules at the end of §1 — written down once —
+rather than restraint remembered screen by screen.
+
 ---
 
 ## 1. The one rule
@@ -35,6 +61,20 @@ for a button, and no button may borrow the colour of a verdict.
 The one sanctioned exception is a destructive control, which borrows `dropped`: refusing
 a claim and destroying a row read the same way to a person, which is *this cannot be
 undone*.
+
+### Two rules C makes explicit
+
+Both follow from the rule above rather than amending it. C is what made them concrete, and
+both were being broken in `components/RankingTable.tsx` on the day the direction was chosen.
+
+**A selected row is tinted `accent`, never `cited`.** Selection is a control state. The
+ranking's selected row was `bg-emerald-50 dark:bg-emerald-500/10` — the `cited` hue spent
+on "you clicked this", which is precisely a colour serving both meaning and decoration.
+
+**When the must-have gate fails, the score bar goes grey — never red.** A failed gate is a
+fact about the posting's requirements, not a warning about the person, and nothing here may
+render a candidate in the colour of a refused claim. The words beside it carry the meaning,
+as always. This is the one rule that keeps C from being a dashboard.
 
 ---
 
@@ -171,3 +211,23 @@ appended, so it wins by CSS order rather than by a merge algorithm nobody can pr
 from the call site.
 
 The rule that keeps them: a page may not hand-write a card, a button or a banner.
+
+---
+
+## 8. Language
+
+**Thai-first, and it applies to the public pages only.**
+
+The audience for the careers site is Thai applicants, so the public pages lead in Thai:
+`<html lang="th">`, a Thai headline with a short English line beneath, one set of copy.
+**Not** a `[locale]` segment — it costs roughly one extra large slice plus permanent copy
+maintenance, for an audience that did not ask for two languages.
+
+**The existing internal screens — `/`, `/jobs`, `/jobs/[id]`, `/applications`, `/metrics` —
+keep their English copy**, decided 2026-08-20 when the token migration was scoped. Copy is
+its own slice. Folding a translation into each screen's migration would make every one of
+them two changes at once, and a screen that changed both its paint and its words is a screen
+nobody can review.
+
+Either way the typography is already settled by §2: one superfamily, so a line mixing Thai
+and English sits on one rhythm whichever language leads.
