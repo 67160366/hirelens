@@ -111,7 +111,10 @@ export function PdfOverlay({
       // Debounced, and only on a real change: a drag fires this continuously, and
       // each accepted width repaints every canvas.
       clearTimeout(timer);
-      timer = setTimeout(() => setPaneWidth((current) => (current === width ? current : width)), 120);
+      timer = setTimeout(
+        () => setPaneWidth((current) => (current === width ? current : width)),
+        120,
+      );
     });
 
     observer.observe(element);
@@ -226,7 +229,8 @@ export function PdfOverlay({
     paint().catch((cause: unknown) => {
       // Cancelling on purpose is not a failure, and must not put a red banner over a
       // document that is about to be repainted correctly.
-      if (cancelled || (cause as { name?: string })?.name === "RenderingCancelledException") return;
+      if (cancelled || (cause as { name?: string })?.name === "RenderingCancelledException")
+        return;
       setError(describeFailure(cause));
     });
     return () => {
@@ -250,25 +254,29 @@ export function PdfOverlay({
   const documentGap: OverlayGap | null = geometry.measured ? null : { kind: "not_measured" };
 
   return (
-    <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
-      <header className="flex items-baseline justify-between gap-3 border-b border-stone-200 px-4 py-2.5 dark:border-stone-800">
+    <section className="card">
+      <header className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-2.5">
         <h3 className="text-sm font-semibold">Original document</h3>
-        <p className="text-[11px] text-stone-400 dark:text-stone-500">
+        <p className="text-micro text-ink-faint">
           {pages.length > 0 ? coverageNote(geometry, pages.length) : "Rendering…"}
         </p>
       </header>
 
       <div className="max-h-[70vh] space-y-4 overflow-y-auto px-4 py-3">
         {error && (
-          <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-400">
+          <p className="rounded-control border border-dropped/40 bg-dropped-wash px-3 py-2 text-xs text-dropped">
             {error}
           </p>
         )}
         {!error && pages.length === 0 && (
-          <p className="text-xs text-stone-500 dark:text-stone-400">Rendering the document…</p>
+          <p className="text-xs text-ink-muted">Rendering the document…</p>
         )}
         {documentGap && (
-          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-400">
+          // `ambiguous`, and it is the right token rather than a leftover: this says
+          // the page's text came from recognition, so a quote may not be exactly what
+          // was printed. That is a statement about a *document*, which is what
+          // `docs/DESIGN.md` §1 reserves the three colours for.
+          <p className="rounded-control border border-ambiguous/40 bg-ambiguous-wash px-3 py-2 text-xs text-ambiguous">
             {describeGap(documentGap)}
           </p>
         )}
@@ -293,7 +301,12 @@ export function PdfOverlay({
                       if (element) canvases.current.set(rendered.pageNumber, element);
                       else canvases.current.delete(rendered.pageNumber);
                     }}
-                    className="absolute inset-0 h-full w-full rounded border border-stone-200 bg-white dark:border-stone-800"
+                    // Deliberately white in both themes. This is the sheet the PDF
+                    // paints onto, and pdf.js renders a page on a white ground — a
+                    // `surface` here would put a dark rectangle behind white paper
+                    // for the instant before the canvas arrives, and leave a dark
+                    // border around it afterwards. A document is not a panel.
+                    className="absolute inset-0 h-full w-full rounded border border-line bg-white"
                   />
                   {drawable &&
                     references.flatMap((reference) =>
@@ -322,12 +335,10 @@ export function PdfOverlay({
                     )}
                 </div>
 
-                <figcaption className="px-1 text-[11px] text-stone-400 dark:text-stone-500">
+                <figcaption className="px-1 text-micro text-ink-faint">
                   Page {rendered.pageNumber}
                   {rendered.gap && !documentGap && (
-                    <span className="ml-2 text-amber-700 dark:text-amber-500">
-                      {describeGap(rendered.gap)}
-                    </span>
+                    <span className="ml-2 text-ambiguous">{describeGap(rendered.gap)}</span>
                   )}
                 </figcaption>
               </figure>

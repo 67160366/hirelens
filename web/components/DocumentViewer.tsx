@@ -110,13 +110,13 @@ export function DocumentViewer({
 
       {showOriginal &&
         (error ? (
-          <p className="rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-400">
+          <p className="rounded-card border border-dropped/40 bg-dropped-wash px-4 py-2.5 text-xs text-dropped">
             {error}
           </p>
         ) : file && geometry ? (
           <PdfOverlay file={file} geometry={geometry} references={references} />
         ) : (
-          <p className="rounded-lg border border-stone-200 px-4 py-3 text-xs text-stone-500 dark:border-stone-800 dark:text-stone-400">
+          <p className="rounded-card border border-line px-4 py-3 text-xs text-ink-muted">
             Fetching the original document…
           </p>
         ))}
@@ -140,8 +140,12 @@ function Tab({
       aria-pressed={active}
       className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
         active
-          ? "bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900"
-          : "text-stone-500 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800"
+          ? // Which tab you are on is a control state, so it is `accent` — the same
+            // decision the navigation and the selected ranking row make, and for the
+            // same reason: nothing the product asserts about a document may share a
+            // colour with a control.
+            "bg-accent text-on-accent"
+          : "text-ink-muted hover:bg-surface-sunken hover:text-ink"
       }`}
     >
       {children}
