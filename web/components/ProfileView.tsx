@@ -1,17 +1,17 @@
 import { DroppedClaims } from "@/components/DroppedClaims";
 import { ClaimRow, Evidence } from "@/components/Evidence";
 import { EvidenceStatsBar } from "@/components/EvidenceStatsBar";
+import { Banner } from "@/components/ui/Banner";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import type { ExtractedProfile, Resume } from "@/lib/api";
 
 function Panel({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   if (count === 0) return null;
   return (
-    <section className="rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
-      <h3 className="text-sm font-semibold">
-        {title} <span className="text-stone-400 dark:text-stone-500">({count})</span>
-      </h3>
-      <div className="mt-2 divide-y divide-stone-100 dark:divide-stone-800">{children}</div>
-    </section>
+    <Card>
+      <CardHeader title={<>{title} <span className="text-ink-faint">({count})</span></>} />
+      <CardBody className="divide-y divide-line px-4">{children}</CardBody>
+    </Card>
   );
 }
 
@@ -26,23 +26,21 @@ export function ProfileView({
   // differs only in that it is worth trying again, which the retry control says.
   if (resume.status === "failed" || resume.status === "dead_lettered") {
     return (
-      <div className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
-        <h3 className="text-sm font-semibold text-red-900 dark:text-red-300">
-          Could not process {resume.filename}
-        </h3>
-        <p className="mt-1 text-sm text-red-800 dark:text-red-400">{resume.failure_reason}</p>
-      </div>
+      <Banner tone="danger">
+        <strong className="block font-semibold">Could not process {resume.filename}</strong>
+        <span className="mt-1 block">{resume.failure_reason}</span>
+      </Banner>
     );
   }
 
   if (!profile) {
     return (
-      <div className="rounded-lg border border-stone-200 bg-white p-4 text-sm dark:border-stone-800 dark:bg-stone-900">
+      <Card className="p-4 text-sm">
         <p className="font-medium">Parsed, but not extracted</p>
-        <p className="mt-1 text-stone-500 dark:text-stone-400">
+        <p className="mt-1 text-ink-muted">
           {resume.failure_reason ?? "Extraction has not run for this resume yet."}
         </p>
-      </div>
+      </Card>
     );
   }
 
@@ -51,25 +49,30 @@ export function ProfileView({
       <EvidenceStatsBar stats={profile.stats} />
 
       {resume.pages_from_ocr.length > 0 && (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+        // `warn`, which is `ambiguous`: a recognized page is exactly the case where
+        // a quote may not be the characters that were printed.
+        <Banner tone="warn" className="text-xs">
           {resume.pages_from_ocr.length === 1 ? "Page" : "Pages"}{" "}
           {resume.pages_from_ocr.join(", ")} had no text layer and{" "}
           {resume.pages_from_ocr.length === 1 ? "was" : "were"} read by OCR. Quotes from{" "}
           {resume.pages_from_ocr.length === 1 ? "it" : "them"} match what was recognized, which may
           differ from what was printed.
-        </p>
+        </Banner>
       )}
 
       {resume.pages_without_text.length > 0 && (
-        <p className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-300">
+        // `info`, and neutral on purpose: a page with no text layer is a fact about
+        // the document, not a fault in it. Sky was a fifth colour with no meaning
+        // assigned to it, which is what the token set exists to stop.
+        <Banner tone="info" className="text-xs">
           {resume.pages_without_text.length === 1 ? "Page" : "Pages"}{" "}
           {resume.pages_without_text.join(", ")} yielded no readable text, so nothing on{" "}
           {resume.pages_without_text.length === 1 ? "it" : "them"} could be cited.
-        </p>
+        </Banner>
       )}
 
-      <section className="rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
-        <div className="divide-y divide-stone-100 dark:divide-stone-800">
+      <Card>
+        <CardBody className="divide-y divide-line px-4">
           {profile.full_name && (
             <ClaimRow
               label="Name"
@@ -92,20 +95,20 @@ export function ProfileView({
             />
           )}
           <div className="py-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400 dark:text-stone-500">
+            <p className="text-micro font-medium uppercase tracking-wide text-ink-faint">
               Seniority
             </p>
             <p className="text-sm font-medium">{profile.seniority}</p>
             {profile.seniority_evidence ? (
               <Evidence reference={profile.seniority_evidence} />
             ) : (
-              <p className="mt-1 text-xs text-stone-400 dark:text-stone-500">
+              <p className="mt-1 text-xs text-ink-muted">
                 Not stated in the document. Left as unknown rather than inferred from job titles.
               </p>
             )}
           </div>
-        </div>
-      </section>
+        </CardBody>
+      </Card>
 
       <Panel title="Skills" count={profile.skills.length}>
         {profile.skills.map((skill, index) => (
@@ -120,9 +123,9 @@ export function ProfileView({
         {profile.experiences.map((role, index) => (
           <div key={`${role.company}-${index}`} className="py-2">
             <p className="text-sm font-medium">
-              {role.title} <span className="text-stone-400">at</span> {role.company}
+              {role.title} <span className="text-ink-faint">at</span> {role.company}
             </p>
-            <p className="text-xs text-stone-500 dark:text-stone-400">
+            <p className="text-xs text-ink-muted">
               {role.start} – {role.end}
             </p>
             <Evidence reference={role.evidence} />
@@ -134,7 +137,7 @@ export function ProfileView({
         {profile.education.map((entry, index) => (
           <div key={`${entry.institution}-${index}`} className="py-2">
             <p className="text-sm font-medium">{entry.credential}</p>
-            <p className="text-xs text-stone-500 dark:text-stone-400">{entry.institution}</p>
+            <p className="text-xs text-ink-muted">{entry.institution}</p>
             <Evidence reference={entry.evidence} />
           </div>
         ))}

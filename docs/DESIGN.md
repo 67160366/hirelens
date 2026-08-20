@@ -147,9 +147,24 @@ line. It is defined once, as `.evidence-coordinates`, so it cannot drift back.
   a state change, `--duration-slow` 420ms for something entering.
 - Ease-out entering, ease-in leaving, ease-in-out for a thing moving between its own
   states.
-- Animate `transform` and `opacity`. Nothing else.
+- Animate `transform` and `opacity`. Nothing else — **with one recorded exception**, below.
 - Everything is neutralised under `prefers-reduced-motion: reduce`, in one block at the
   bottom of `globals.css`. Motion is an enhancement; the product works without it.
+
+### The one exception, and why it is not a loophole
+
+Motions 1 and 2 below both paint with **`background-size`**. The transform version needs
+an absolutely-positioned overlay, and an overlay cannot follow inline text that wraps —
+which the two places this is used both do. `ชำระเงิน` sits inside an unbroken
+31-character Thai run, and a fabricated quote is long enough to take two lines; a
+transform sweep would paint the first line box and leave the rest untouched. With
+`box-decoration-break: clone` each line box paints its own, which is what a highlighter
+does. Measured: the struck quote in `resume_multipage.pdf` occupies **2 line boxes** and
+both carry the line.
+
+The rule exists to keep animation off the layout and paint path. `background-size` on a
+short inline run is not that, and it is confined to these two recipes in `globals.css`.
+Anything else still answers to the rule as written.
 
 ### The four motions that *are* the product
 
@@ -158,9 +173,11 @@ something the product would otherwise merely assert:
 
 1. **A citation is selected** → its span sweeps in left-to-right in the document pane and
    the coordinate line reveals beneath it. The eye is led *to* the text, not away from it.
+   `.cite-sweep` plus `animate-fade-up` on `.evidence-coordinates`.
 2. **A claim is dropped** → the strike-through is **drawn** rather than appearing.
    Watching a fabrication get refused is the whole argument; a strike that is simply
-   there is a styling choice.
+   there is a styling choice. `.claim-struck` — and note it is a painted rule rather than
+   `text-decoration: line-through`, which cannot be animated at all.
 3. **Verdicts land** in list order with a short stagger, so a reader sees they were
    decided one requirement at a time rather than handed down as a block.
 4. **Dashboard figures count up** from zero — a number that was queried, not asserted.

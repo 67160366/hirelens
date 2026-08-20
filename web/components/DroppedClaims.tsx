@@ -10,31 +10,41 @@ import { DROPPED_PANEL_EXPLANATION, droppedPanelTitle, droppedReasonLabel } from
  * both are counted in the same hallucination rate.
  *
  * Renders nothing when nothing was dropped — an empty panel would read as a finding.
+ *
+ * **This panel is `dropped`, and it used to be amber.** `dropped` is the colour
+ * docs/DESIGN.md §1 reserves for "a claim that could not be located, and was
+ * refused" — which is exactly this — while amber is `ambiguous`, "a quote that
+ * matched in more than one place". Both states appear on the same screen, so
+ * painting them the same colour collapsed the product's two distinct answers into
+ * one. The panel is not an error report: it is the guardrail's receipt, and the
+ * copy beneath the heading is what says so.
  */
 export function DroppedClaims({ dropped }: { dropped: DroppedClaim[] }) {
   if (dropped.length === 0) return null;
 
   return (
-    <section className="rounded-lg border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
-      <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+    <section className="rounded-card border border-dropped/40 bg-dropped-wash p-4">
+      <h3 className="text-section font-semibold text-dropped">
         {droppedPanelTitle(dropped.length)}
       </h3>
-      <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-400/80">
-        {DROPPED_PANEL_EXPLANATION}
-      </p>
+      <p className="mt-1 text-xs text-ink-muted">{DROPPED_PANEL_EXPLANATION}</p>
       <ul className="mt-3 space-y-2.5">
         {dropped.map((claim, index) => (
           <li key={`${claim.field}-${index}`} className="text-sm">
-            <span className="font-mono text-[11px] text-amber-700 dark:text-amber-500">
-              {claim.field}
-            </span>{" "}
+            <span className="font-mono text-micro text-dropped">{claim.field}</span>{" "}
             <span className="font-medium">{claim.value || "(no value)"}</span>
-            <span className="ml-1.5 text-xs text-amber-700/80 dark:text-amber-500/80">
+            <span className="ml-1.5 text-xs text-ink-muted">
               — {droppedReasonLabel(claim.reason)}
             </span>
             {claim.quote && (
-              <p className="evidence-quote mt-0.5 text-amber-800/70 line-through dark:text-amber-500/60">
-                claimed: &ldquo;{claim.quote}&rdquo;
+              <p className="mt-0.5 text-ink-muted">
+                {/* Motion 2. The strike is a painted rule rather than
+                    `text-decoration`, because a decoration cannot be animated and
+                    watching the refusal happen is the argument. The line is there
+                    at rest, so nothing depends on the animation running. */}
+                <span className="evidence-quote claim-struck">
+                  claimed: &ldquo;{claim.quote}&rdquo;
+                </span>
               </p>
             )}
           </li>

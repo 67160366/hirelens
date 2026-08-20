@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { Card, CardHeader } from "@/components/ui/Card";
 import type { EvidenceRef, ExtractedProfile } from "@/lib/api";
 
 /**
@@ -116,17 +117,23 @@ function buildSegments(text: string, references: EvidenceRef[]): Segment[] {
   return segments;
 }
 
+/**
+ * What a highlighted run looks like.
+ *
+ * The **fill** carries meaning — `ambiguous` where the quote appears more than
+ * once, `cited` otherwise — and the **ring** says which one you selected. Those are
+ * two different questions, so they are two different colours: before this, being
+ * selected was the same green a shade stronger, which is a control state wearing a
+ * verdict's colour and nearly invisible besides (docs/DESIGN.md §1).
+ *
+ * The selected run also keeps its wash underneath the swept fill, so the animation
+ * paints over a highlight that is already there rather than out of nothing.
+ */
 function highlightClass(reference: EvidenceRef, isActive: boolean): string {
-  // Amber for ambiguous, matching how Evidence.tsx flags a quote that appears
-  // more than once. The citation is reported as unresolved, not guessed at.
-  if (reference.is_ambiguous) {
-    return isActive
-      ? "bg-amber-300 text-stone-900 ring-1 ring-amber-500 dark:bg-amber-400/50 dark:text-amber-50"
-      : "bg-amber-100/80 text-inherit dark:bg-amber-500/15";
-  }
-  return isActive
-    ? "bg-emerald-300 text-stone-900 ring-1 ring-emerald-600 dark:bg-emerald-400/50 dark:text-emerald-50"
-    : "bg-emerald-100/80 text-inherit dark:bg-emerald-500/15";
+  const tone = reference.is_ambiguous ? "ambiguous" : "cited";
+  const wash = tone === "ambiguous" ? "bg-ambiguous-wash" : "bg-cited-wash";
+  if (!isActive) return `${wash} text-inherit`;
+  return `${wash} cite-sweep cite-sweep-${tone} text-ink ring-1 ring-accent`;
 }
 
 export function DocumentPane({ text, references }: { text: string; references: EvidenceRef[] }) {
@@ -142,20 +149,24 @@ export function DocumentPane({ text, references }: { text: string; references: E
   }, [activeKey]);
 
   return (
-    <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900 lg:sticky lg:top-6">
-      <header className="flex items-baseline justify-between gap-3 border-b border-stone-200 px-4 py-2.5 dark:border-stone-800">
-        <h3 className="text-sm font-semibold">Source document</h3>
-        <p className="text-[11px] text-stone-400 dark:text-stone-500">
-          {activeKey
-            ? `${references.length} cited ${references.length === 1 ? "span" : "spans"}`
-            : "Select a citation to locate it"}
-        </p>
-      </header>
+    // `lg:top-20`, not `top-6`: the application bar is sticky and 56px tall, so a
+    // pane pinned 24px from the top slid underneath it and lost its own heading.
+    <Card className="lg:sticky lg:top-20">
+      <CardHeader
+        title="Source document"
+        action={
+          <p className="text-micro text-ink-faint">
+            {activeKey
+              ? `${references.length} cited ${references.length === 1 ? "span" : "spans"}`
+              : "Select a citation to locate it"}
+          </p>
+        }
+      />
 
       <div className="max-h-[70vh] overflow-y-auto px-4 py-3">
         {/* Thai has no word spaces, so wrapping needs break-words to avoid
             overflowing the pane on a long unbroken run. */}
-        <p className="whitespace-pre-wrap break-words font-mono text-[12.5px] leading-7 text-stone-700 dark:text-stone-300">
+        <p className="whitespace-pre-wrap break-words font-mono text-xs leading-7 text-ink-muted">
           {segments.map((segment, index) => {
             const { reference } = segment;
             if (!reference) return <span key={index}>{segment.text}</span>;
@@ -176,6 +187,6 @@ export function DocumentPane({ text, references }: { text: string; references: E
           })}
         </p>
       </div>
-    </section>
+    </Card>
   );
 }

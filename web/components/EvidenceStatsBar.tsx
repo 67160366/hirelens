@@ -1,5 +1,7 @@
+import { Card } from "@/components/ui/Card";
 import type { EvidenceStats } from "@/lib/api";
 import { isClean, modelCallCount, unverifiablePercent } from "@/lib/evidence";
+import { cn } from "@/lib/cn";
 
 /**
  * The verification counters for one result — a profile or a judgment.
@@ -7,26 +9,25 @@ import { isClean, modelCallCount, unverifiablePercent } from "@/lib/evidence";
  * The same bar serves both because the server produces one `EvidenceStats` for
  * both: judging reuses extraction's counters unchanged, which is what makes the
  * hallucination rate cover it for free (docs/HANDOFF.md §5).
+ *
+ * The unverifiable figure is `dropped`, not `ambiguous`. It counts claims the
+ * system **refused**, and a screen can show both states at once — a citation that
+ * matched in two places sits a few centimetres above this bar. Rendering them the
+ * same amber made the product's two different answers look like one.
  */
 export function EvidenceStatsBar({ stats }: { stats: EvidenceStats }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-stone-200 bg-white px-4 py-3 text-sm dark:border-stone-800 dark:bg-stone-900">
+    <Card className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 text-sm">
       <span>
         <strong className="tabular-nums">
           {stats.verified}/{stats.total_claims}
         </strong>{" "}
-        <span className="text-stone-500 dark:text-stone-400">claims verified</span>
+        <span className="text-ink-muted">claims verified</span>
       </span>
-      <span
-        className={
-          isClean(stats)
-            ? "text-emerald-700 dark:text-emerald-400"
-            : "text-amber-700 dark:text-amber-400"
-        }
-      >
+      <span className={cn(isClean(stats) ? "text-cited" : "text-dropped")}>
         <strong className="tabular-nums">{unverifiablePercent(stats)}</strong> unverifiable
       </span>
-      <span className="text-stone-500 dark:text-stone-400">{modelCallCount(stats)}</span>
-    </div>
+      <span className="text-ink-muted">{modelCallCount(stats)}</span>
+    </Card>
   );
 }

@@ -127,7 +127,6 @@
 
   --animate-fade-up: fade-up var(--duration-slow) var(--ease-out-quint) both;
   --animate-fade-in: fade-in var(--duration-base) var(--ease-out-quint) both;
-  --animate-cite: cite-pulse 900ms var(--ease-out-quint);
 }
 
 @keyframes fade-up {
@@ -143,16 +142,67 @@
   }
 }
 
-@keyframes cite-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in oklab, var(--cited) 55%, transparent);
+/* Motions 1 and 2 of docs/DESIGN.md §4 — the two that *are* the product.
+   Both paint with `background-size` rather than `transform`, which §4 otherwise
+   forbids, and the reason is recorded there rather than left as a quiet exception:
+   a transform sweep needs an absolutely-positioned overlay, and an overlay cannot
+   follow inline text that wraps. Thai wraps mid-quote — `ชำระเงิน` sits inside an
+   unbroken 31-character run — so the overlay would sweep the first line box and
+   leave the rest untouched. With `box-decoration-break: clone` each line box paints
+   its own, which is what a highlighter actually does.
+
+   Neither motion is load-bearing: the resting state of each element is the finished
+   picture, so a reader with `prefers-reduced-motion` sees the highlight and the
+   strike, just not the drawing of them. */
+
+/* 1 — a citation is selected, and its span is painted in from the left. */
+@keyframes cite-sweep {
+  from {
+    background-size: 0% 100%;
   }
-  70% {
-    box-shadow: 0 0 0 10px color-mix(in oklab, var(--cited) 0%, transparent);
+}
+
+.cite-sweep {
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  background-size: 100% 100%;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  animation: cite-sweep var(--duration-slow) var(--ease-out-quint);
+}
+
+.cite-sweep-cited {
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--cited) 38%, transparent),
+    color-mix(in oklab, var(--cited) 38%, transparent)
+  );
+}
+
+.cite-sweep-ambiguous {
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--ambiguous) 38%, transparent),
+    color-mix(in oklab, var(--ambiguous) 38%, transparent)
+  );
+}
+
+/* 2 — a fabricated quote is struck through, and the line is *drawn*. Watching a
+   claim get refused is the whole argument; a strike that is simply there is a
+   styling choice. `text-decoration: line-through` cannot be animated, which is why
+   this is a painted rule rather than a decoration. */
+@keyframes strike-draw {
+  from {
+    background-size: 0% 1px;
   }
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in oklab, var(--cited) 0%, transparent);
-  }
+}
+
+.claim-struck {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-position: 0 58%;
+  background-size: 100% 1px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  animation: strike-draw var(--duration-slow) var(--ease-out-quint);
 }
 
 body {

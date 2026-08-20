@@ -22,13 +22,22 @@ export function Badge({
   tone = "neutral",
   children,
   className,
+  title,
 }: {
   tone?: keyof typeof TONES;
   children: ReactNode;
   className?: string;
+  /** A hover explanation of the consequence, where the label alone cannot carry it
+   *  — "must have" says what it is, not that missing it ranks you last. Named
+   *  explicitly rather than spreading arbitrary attributes, so the next thing a
+   *  caller wants to pass has to be argued for here rather than smuggled in. Never
+   *  the only place a meaning lives: a tooltip reaches neither a keyboard nor a
+   *  touchscreen. */
+  title?: string;
 }) {
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-micro font-medium",
         TONES[tone],
