@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApplicationActions } from "@/components/ApplicationActions";
 import { ApplicationTimeline } from "@/components/ApplicationTimeline";
 import { AuthPanel } from "@/components/AuthPanel";
+import { Badge } from "@/components/ui/Badge";
 import {
   api,
   type Account,
@@ -14,6 +15,19 @@ import {
   type Job,
   type Resume,
 } from "@/lib/api";
+// One neutral tone for every state, which is the decision here.
+//
+// They were emerald for shortlisted, amber for screening and sky for applied — two of
+// the three colours `docs/DESIGN.md` §1 reserves for what the system says about a
+// **document**, plus a hue that is not in the palette at all. An application's state
+// is a position in a workflow about a person, not a verdict on evidence, and the green
+// one was the sharpest: a green `shortlisted` beside the green `Met` badges of the
+// screening that justified it says the two are the same kind of claim. They are not —
+// one is a decision somebody made, the other is a quote the application located.
+//
+// Nothing is lost by it. The list is grouped under a heading per state and each row
+// carries `STATE_EXPLANATIONS` beside the label, so the tone was reinforcing something
+// the reader had already been told twice.
 import { STATE_EXPLANATIONS, STATE_LABELS, isTerminal } from "@/lib/applications";
 import { errorMessage, useAuth } from "@/lib/auth";
 
@@ -50,12 +64,7 @@ export default function ApplicationsPage() {
   const load = useCallback(async () => {
     try {
       const [account, mine, allJobs, myResumes] = await authorized(async () =>
-        Promise.all([
-          api.me(),
-          api.listMyApplications(),
-          api.listJobs(),
-          api.listResumes(),
-        ]),
+        Promise.all([api.me(), api.listMyApplications(), api.listJobs(), api.listResumes()]),
       );
       setMe(account);
       setApplications(mine);
@@ -145,7 +154,7 @@ export default function ApplicationsPage() {
       <header className="mb-8">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Your applications</h1>
-          <p className="mt-1.5 text-sm text-stone-600 dark:text-stone-400">
+          <p className="mt-1.5 text-sm text-ink-muted">
             Every move is recorded with who made it and what it rested on.
           </p>
         </div>
@@ -154,24 +163,24 @@ export default function ApplicationsPage() {
       {error ? (
         <p
           role="alert"
-          className="mb-6 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          className="mb-6 rounded-control border border-dropped/40 bg-dropped-wash p-3 text-sm text-dropped"
         >
           {error}
         </p>
       ) : null}
 
-      <section className="mb-8 rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
-        <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
+      <section className="card mb-8">
+        <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold">Apply to a job</h2>
         </div>
         <div className="px-4 py-3">
           {extracted.length === 0 ? (
-            <p className="text-xs text-stone-500 dark:text-stone-400">
-              Upload a resume first — a document with no extracted text cannot be screened,
-              so applying with one would only promise work that must fail.
+            <p className="text-xs text-ink-muted">
+              Upload a resume first — a document with no extracted text cannot be screened, so
+              applying with one would only promise work that must fail.
             </p>
           ) : openTo.length === 0 ? (
-            <p className="text-xs text-stone-500 dark:text-stone-400">
+            <p className="text-xs text-ink-muted">
               Nothing open that you have not already applied to.
             </p>
           ) : (
@@ -179,7 +188,7 @@ export default function ApplicationsPage() {
               {openTo.map((job) => (
                 <li
                   key={job.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-stone-200 px-3 py-2 dark:border-stone-800"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line px-3 py-2"
                 >
                   <span className="text-sm font-medium">{job.title}</span>
                   <span className="flex items-center gap-2">
@@ -187,7 +196,7 @@ export default function ApplicationsPage() {
                       aria-label={`Resume to apply to ${job.title} with`}
                       defaultValue={extracted[0]?.id}
                       id={`resume-for-${job.id}`}
-                      className="rounded-md border border-stone-300 px-2 py-1 text-xs dark:border-stone-700 dark:bg-stone-950"
+                      className="field py-1 text-xs"
                     >
                       {extracted.map((resume) => (
                         <option key={resume.id} value={resume.id}>
@@ -204,7 +213,7 @@ export default function ApplicationsPage() {
                         ) as HTMLSelectElement | null;
                         if (select) void apply(job.id, select.value);
                       }}
-                      className="rounded-md bg-stone-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900"
+                      className="btn btn-primary ring-focus"
                     >
                       Apply
                     </button>
@@ -216,31 +225,25 @@ export default function ApplicationsPage() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
-        <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
+      <section className="card">
+        <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold">Applied ({applications.length})</h2>
         </div>
         {applications.length === 0 ? (
-          <p className="px-4 py-6 text-xs text-stone-500 dark:text-stone-400">
-            Nothing yet.
-          </p>
+          <p className="px-4 py-6 text-xs text-ink-muted">Nothing yet.</p>
         ) : (
-          <ul className="divide-y divide-stone-200 dark:divide-stone-800">
+          <ul className="divide-y divide-line">
             {applications.map((application) => (
               <li key={application.id} className="px-4 py-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{application.job_title}</p>
-                    <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+                    <p className="mt-0.5 text-xs text-ink-muted">
                       {application.resume_filename}
                     </p>
                     <p className="mt-1.5 text-xs">
-                      <span
-                        className={`rounded px-1.5 py-0.5 font-medium ${badge(application.state)}`}
-                      >
-                        {STATE_LABELS[application.state]}
-                      </span>
-                      <span className="ml-2 text-stone-500 dark:text-stone-400">
+                      <Badge tone="neutral">{STATE_LABELS[application.state]}</Badge>
+                      <span className="ml-2 text-ink-muted">
                         {STATE_EXPLANATIONS[application.state]}
                       </span>
                     </p>
@@ -248,7 +251,7 @@ export default function ApplicationsPage() {
                   <button
                     type="button"
                     onClick={() => void openHistory(application.id)}
-                    className="shrink-0 text-xs text-stone-500 underline dark:text-stone-400"
+                    className="ring-focus shrink-0 rounded-control text-xs text-ink-muted underline underline-offset-2 hover:text-ink"
                   >
                     {openId === application.id ? "Hide history" : "History"}
                   </button>
@@ -270,7 +273,7 @@ export default function ApplicationsPage() {
                 ) : null}
 
                 {openId === application.id ? (
-                  <div className="mt-3 rounded-md bg-stone-50 p-3 dark:bg-stone-800/50">
+                  <div className="mt-3 rounded-control bg-surface-sunken p-3">
                     {application.id in events ? (
                       // `?? []` is unreachable — the key is only present once the log has
                       // landed — and is written rather than asserted away, because an
@@ -278,9 +281,7 @@ export default function ApplicationsPage() {
                       // here would be a promise nothing checks.
                       <ApplicationTimeline events={events[application.id] ?? []} />
                     ) : (
-                      <p className="text-xs text-stone-500 dark:text-stone-400">
-                        Loading the history…
-                      </p>
+                      <p className="text-xs text-ink-muted">Loading the history…</p>
                     )}
                   </div>
                 ) : null}
@@ -291,14 +292,4 @@ export default function ApplicationsPage() {
       </section>
     </div>
   );
-}
-
-function badge(state: ApplicationState): string {
-  if (state === "shortlisted")
-    return "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300";
-  if (state === "rejected" || state === "withdrawn")
-    return "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300";
-  if (state === "screening")
-    return "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300";
-  return "bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300";
 }

@@ -47,7 +47,7 @@ export function ApplicationActions({
         }}
       >
         <label className="flex-1 text-xs">
-          <span className="mb-1 block text-stone-600 dark:text-stone-400">
+          <span className="mb-1 block text-ink-muted">
             Why? The applicant is told, and it is kept in the record.
           </span>
           <input
@@ -55,14 +55,14 @@ export function ApplicationActions({
             onChange={(event) => setReason(event.target.value)}
             autoFocus
             required
-            className="w-full rounded-md border border-stone-300 px-2 py-1.5 text-xs dark:border-stone-700 dark:bg-stone-950"
+            className="field py-1.5 text-xs"
           />
         </label>
         <div className="flex gap-2 self-end">
           <button
             type="submit"
             disabled={busy || reason.trim().length === 0}
-            className="rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900"
+            className="btn btn-primary ring-focus"
           >
             Confirm
           </button>
@@ -72,7 +72,7 @@ export function ApplicationActions({
               setReasonFor(null);
               setReason("");
             }}
-            className="rounded-md border border-stone-300 px-3 py-1.5 text-xs dark:border-stone-700"
+            className="btn btn-secondary ring-focus"
           >
             Cancel
           </button>
@@ -89,17 +89,13 @@ export function ApplicationActions({
             type="button"
             disabled={busy || Boolean(move.blockedBecause)}
             title={move.blockedBecause}
-            onClick={() =>
-              move.needsReason ? setReasonFor(move.to) : onMove(move.to)
-            }
-            className="rounded-md border border-stone-300 px-2.5 py-1 text-xs font-medium hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-700 dark:hover:bg-stone-800"
+            onClick={() => (move.needsReason ? setReasonFor(move.to) : onMove(move.to))}
+            className="btn btn-secondary ring-focus disabled:cursor-not-allowed disabled:opacity-40"
           >
             {move.label}
           </button>
           {move.blockedBecause ? (
-            <span className="text-[11px] text-stone-500 dark:text-stone-400">
-              {move.blockedBecause}
-            </span>
+            <span className="text-micro text-ink-muted">{move.blockedBecause}</span>
           ) : null}
         </span>
       ))}

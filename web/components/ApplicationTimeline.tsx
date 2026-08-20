@@ -1,5 +1,6 @@
 "use client";
 
+import { Badge } from "@/components/ui/Badge";
 import type { ApplicationEvent } from "@/lib/api";
 import { describeEvent, restsOnEvidence } from "@/lib/applications";
 
@@ -12,7 +13,7 @@ import { describeEvent, restsOnEvidence } from "@/lib/applications";
  */
 export function ApplicationTimeline({ events }: { events: ApplicationEvent[] }) {
   if (events.length === 0) {
-    return <p className="text-xs text-stone-500 dark:text-stone-400">No history yet.</p>;
+    return <p className="text-xs text-ink-muted">No history yet.</p>;
   }
 
   return (
@@ -22,26 +23,28 @@ export function ApplicationTimeline({ events }: { events: ApplicationEvent[] }) 
           <span
             aria-hidden
             className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
-              event.actor_id === null
-                ? "bg-stone-300 dark:bg-stone-600"
-                : "bg-stone-800 dark:bg-stone-200"
+              // The system's own moves are dimmer than a person's, which is the
+              // same distinction `psql` shows as a null `actor_id`.
+              event.actor_id === null ? "bg-line-strong" : "bg-ink"
             }`}
           />
           <div className="min-w-0 flex-1">
-            <p className="text-stone-700 dark:text-stone-200">
+            <p className="text-ink">
               {describeEvent(event)}
               {restsOnEvidence(event) ? (
                 // Named because a decision with evidence behind it is a different
                 // kind of claim from one without, and the difference should show.
-                <span className="ml-1.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                // `cited`, and this is the one badge on this screen that keeps a
+                // meaning colour: it says a decision rests on a quote the
+                // application located in a document, which is exactly what the
+                // token is reserved for.
+                <Badge tone="cited" className="ml-1.5 align-middle">
                   cited evidence
-                </span>
+                </Badge>
               ) : null}
             </p>
-            {event.reason ? (
-              <p className="mt-0.5 text-stone-600 dark:text-stone-400">“{event.reason}”</p>
-            ) : null}
-            <p className="mt-0.5 text-[11px] text-stone-400 dark:text-stone-500">
+            {event.reason ? <p className="mt-0.5 text-ink-muted">“{event.reason}”</p> : null}
+            <p className="mt-0.5 text-micro tabular-nums text-ink-faint">
               {new Date(event.created_at).toLocaleString()}
             </p>
           </div>
