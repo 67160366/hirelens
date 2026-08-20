@@ -13,6 +13,7 @@ import type {
   RankedEntry,
   RequirementJudgment,
   RequirementPatch,
+  ScreeningStatus,
 } from "@/lib/api";
 
 /**
@@ -101,4 +102,24 @@ export function resumeLabel(entry: RankedEntry | ExcludedEntry): string {
 /** The weighted share of requirements met, as a percentage for display. */
 export function scorePercent(entry: RankedEntry): string {
   return `${(entry.score * 100).toFixed(1)}%`;
+}
+
+/**
+ * How many screenings a stalening edit would actually cost to reproduce.
+ *
+ * Not `screenings.length`. `GET /jobs/{id}/screenings` is the *raw* list and its
+ * docstring says so — "including the ones still running and the ones that failed"
+ * (`api/app/api/routes/screenings.py:275-277`) — so the plain count includes rows
+ * that have spent no model call and rows that never produced a result. The
+ * confirmation built on it says "N screenings become stale and have to be run
+ * again — one model call each", and only a **completed** screening holds a result
+ * that a requirement edit invalidates and that a re-run would have to buy back.
+ *
+ * A number in this product is a claim, and this one was over-counting the price of
+ * a destructive action. Its own module rather than inline in the page for the
+ * reason `droppedNote` is: a sentence built in JSX is somewhere `web/`'s no-DOM
+ * vitest cannot reach, and that is exactly how "1 claims dropped" shipped.
+ */
+export function countCompletedScreenings(screenings: readonly { status: ScreeningStatus }[]): number {
+  return screenings.filter((screening) => screening.status === "completed").length;
 }

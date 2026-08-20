@@ -38,7 +38,7 @@ import {
 import { errorMessage, useAuth } from "@/lib/auth";
 import { STATE_LABELS, groupByState } from "@/lib/applications";
 import { BLANK_REQUIREMENT } from "@/lib/requirements";
-import { collectJudgmentEvidence } from "@/lib/screening";
+import { collectJudgmentEvidence, countCompletedScreenings } from "@/lib/screening";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -434,7 +434,9 @@ export default function JobPage() {
                 requirement={requirement}
                 onSave={(patch) => saveRequirement(requirement.id, patch)}
                 onDelete={() => removeRequirement(requirement.id)}
-                screeningCount={screenings.length}
+                // Completed only. The raw list carries running and failed rows
+                // too, and neither costs a model call to reproduce.
+                screeningCount={countCompletedScreenings(screenings)}
               />
             ))}
           </div>

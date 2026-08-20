@@ -10,10 +10,17 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { EvidenceRef, ExcludedEntry, RankedEntry, RequirementJudgment } from "./api";
+import type {
+  EvidenceRef,
+  ExcludedEntry,
+  RankedEntry,
+  RequirementJudgment,
+  ScreeningStatus,
+} from "./api";
 import {
   NOT_EVIDENCED_EXPLANATION,
   collectJudgmentEvidence,
+  countCompletedScreenings,
   exclusionMessage,
   makesScreeningsStale,
   resumeLabel,
@@ -214,5 +221,32 @@ describe("resumeLabel", () => {
 
   it("answers for an excluded entry too, which carries the same field", () => {
     expect(resumeLabel(excluded("stale"))).toBe("cv.pdf");
+  });
+});
+
+describe("countCompletedScreenings", () => {
+  const at = (status: ScreeningStatus) => ({ status });
+
+  it("counts only the screenings that actually hold a result", () => {
+    expect(
+      countCompletedScreenings([
+        at("completed"),
+        at("pending"),
+        at("processing"),
+        at("failed"),
+        at("dead_lettered"),
+        at("completed"),
+      ]),
+    ).toBe(2);
+  });
+
+  it("is zero when nothing has completed, rather than the length of the list", () => {
+    // The defect this replaces: `screenings.length` would have promised three
+    // model calls for a delete that costs none.
+    expect(countCompletedScreenings([at("pending"), at("processing"), at("failed")])).toBe(0);
+  });
+
+  it("counts nothing on an empty list", () => {
+    expect(countCompletedScreenings([])).toBe(0);
   });
 });
