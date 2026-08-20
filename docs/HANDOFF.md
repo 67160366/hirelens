@@ -16,7 +16,9 @@ the project back up — then
 status. Short dated session notes and owner advice live in `docs/NOTES.md`.
 Updated again 2026-08-18, when a password change stopped being something only the
 caller's own session noticed, and 2026-08-19, when the browser stopped holding a
-token at all.
+token at all. Updated 2026-08-21, when every screen came onto the design tokens and
+the light theme became something a reader can choose — and therefore something
+anybody can check.
 
 ---
 
@@ -139,10 +141,44 @@ were each re-investigated and independently refuted; all four survived, and thre
 them change what their slice has to do. `docs/PLAN.md` carries the corrected shapes for
 slices 2, 3 and 5.
 
+**The redesign is done, and it was not a milestone** (2026-08-20 → 08-21). The owner
+reset the priority at the end of 2026-08-20 — the UI comes first, with **colour**,
+**animation** and *ทางการแบบทันสมัย*, the style delegated and a mockup before any screen
+code. Three directions were drawn on the *existing* tokens, all rendering the same
+screening so they were comparable, and the owner chose **C · Console**. Every screen is
+now migrated onto `web/app/globals.css`; the only `dark:` strings left in `web/` are a
+doc comment quoting a removed value and two object keys. `docs/DESIGN.md` is the authority
+on the direction, `docs/PLAN.md` carries the slice status.
+
+**The thing that had to come first was not in the plan.** The dark tokens lived behind
+`@media (prefers-color-scheme: dark)`, so the light theme could not be *chosen* — and no
+instrument driving this app can change an operating-system setting, so it had never once
+been looked at, on two screens that had already shipped. `DESIGN.md`'s own bar (375 / 768
+/ 1440 in **both** themes) was unmeetable. `web/lib/theme.ts` owns a `data-theme`
+attribute now, Tailwind's `dark:` variant is pointed at the same attribute so nothing can
+follow the OS while the rest follows the reader, and the resolved theme is written before
+first paint by an inline script. **A rule nobody can check is not a rule** — that is the
+reusable half.
+
+**And the migration turned out not to be about paint.** Five separate places were spending
+a *reserved* colour on something that is not a claim about a document — the ranking's
+selected row in `cited` green, a failed must-have gate in `ambiguous` amber, the whole
+"Not in the ranking" panel, an edit's cost notes, and every application state including a
+`sky` that is not in the palette at all. Three survived because they earn their token: the
+timeline's **cited evidence** chip, the OCR **recognition** notice, and the dashboard's
+**unattributed calls** banner. The test the rule turns out to be is not "is this
+important?" but **"is this the system saying something about a *document*?"**
+
 ### Verified by running it, not only by tests
 
 | Check | Result |
 |---|---|
+| **The light theme, seen for the first time** | And it took a feature to make it possible: `@media (prefers-color-scheme: dark)` cannot be *chosen*, this machine is set to dark, and two screens had shipped with half their palette unseen. With `data-theme` in place: every screen driven at **375 / 768 / 1440 in both themes**, the page never scrolling sideways at any of them, and wide content scrolling inside its own container instead (`/metrics` at 375 is a 369px page with a 550px table in an `overflow-x: auto` wrapper) (2026-08-21) |
+| **Cross-document theme sync, driven rather than asserted** | Two same-origin iframes at 375 and 768 — a genuine 375px viewport, unlike `resize_window`, which reported success on a 375 request and delivered 1568. A click in the **narrow** frame repainted the wide one and moved its `aria-pressed`, `navigations: 1` in each. The `storage` listener doing the same job for the theme that it already does for the session (2026-08-21) |
+| **The un-migrated screens follow the control, measured** | The claim the `@custom-variant dark` line rests on: on `/metrics`, `dark:text-stone-400` goes lab(35.5…) → lab(66.2…) when the attribute flips **and the operating system never moves**. Without it, choosing Dark on a light machine would have repainted the shell and left three screens in the other theme (2026-08-21) |
+| **Motion 4 lands on exactly what was queried** | The dashboard's figures compared field by field against `GET /metrics/usage` rather than eyeballed: 6 calls, 1,090 tokens, 1 ms mean, `$0.0000`, and 4.0% unverifiable against a stored rate of 0.04. `unknown` and `—` are never animated at all, which is what stops a refusal to state a figure from becoming an assertion (2026-08-21) |
+| ⚠️ **`getComputedStyle` lied about a table row — the fourteenth** | It reported `oklab(0 0 0 / 0)` — transparent — for the selected ranking row, while the row's own `style` attribute said otherwise and an identical `<div>` reported the wash correctly. One step from filing "the accent tint does not apply to `<tr>`". Forcing the row **red** and screenshotting settled it: it paints. The 2026-08-15 canvas readback in a new costume, same conclusion — **the screenshot was the ground truth and the more precise-looking check was the wrong one** (2026-08-21) |
+| ⚠️ **The extension's tab is `visibilityState: hidden`** | So `requestAnimationFrame` is throttled and a count-up looks frozen part-way: three reads gave `1`, then `264`, then the real `6` and `1,090`. Reporting the first two as wrong figures would have been a defect filed against working code (2026-08-21) |
 | **M5 slice 5, rehearsed cold** | `-p hirelens-prod` with its own volumes and ports 8100/3100, so the dev stack ran untouched throughout (23 accounts / 21 resumes intact afterwards, confirmed in `psql`). **All ten migrations ran against an empty database** — the cold-start path nothing had exercised since `0001` — and `alembic current` ends `d0e1f2a3b4c5 (head)`. Then the journey in a browser at :3100 on `LLM_PROVIDER=fake`, **zero Gemini quota**: consent unticked on load with the file picker disabled until ticked, `resume_th.pdf` → **10/10 verified, 0.0% unverifiable, 1 model call**, Thai citations at exact char ranges, and the **arq** worker taking the job in its own log (2026-08-16) |
 | **The placeholder-secret guard, watched refusing** | `JWT_SECRET` left empty on purpose: `migrate` exits 1 with *"JWT_SECRET is still the placeholder while APP_ENV=prod"*, and `api`, `worker` and `web` **never start**, because they gate on `service_completed_successfully`. It fires at the *first* service because `migrations/env.py` imports `get_settings()`. A guard nobody has watched refuse is not a guard (2026-08-16) |
 | **The data services publish nothing, proven against a positive control** | `docker port` is empty for the prod project's `postgres`, `redis` and `minio`. Believed only after probing dev's Redis on `127.0.0.1:6379` and getting `+PONG` — the *same reply that was the 2026-08-14 security finding* — so the probe was proven to work before its silence meant anything. §10's rule applied rather than quoted (2026-08-16) |
@@ -163,7 +199,7 @@ slices 2, 3 and 5.
 | **The runbook's epoch bump, run before it was written down** | `update candidates set token_epoch = token_epoch + 1` → the account's access token **401** and its refresh token **401**, the same password then signing in fine, and **0** rows in `revoked_tokens` for it — which is the caveat the runbook now carries: this one leaves no record of itself (2026-08-18) |
 | Migration `0012` on both dialects | SQLite `upgrade head` → `downgrade base` under `set -e`, which is where CI runs it — and under `set -e` specifically, because a self-written `OK` echo on a command that failed is how migration `0011` nearly reported a pass. Then Postgres `upgrade head` → `downgrade -1` → `upgrade head` with `alembic check` clean, `token_epoch` read out of `information_schema` as **`integer NOT NULL` with no server default left behind**, and all **23** existing accounts backfilled to 0 (2026-08-18) |
 | `pytest -q` | **680** passed, 38 skipped as of 2026-08-19 (+19 for cookie auth, +4 for its settings guard). **657** as of 2026-08-18 (+6 for the token epoch, of which one *replaces* the test that pinned the limitation it closed). **651** as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 4 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in. The two-column xfail started passing on 2026-08-08, which was its job (§7) |
-| `npm test` | **165** in `web/` as of 2026-08-19 (+28 for the session store on cookies: the identity marker, the memoised snapshot `useSyncExternalStore` needs, signing out reaching the server, and the shared renewal). **137** as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
+| `npm test` | **210** in `web/` as of 2026-08-21 (+15 for the theme store — the explicit choice outranking the operating system, an unrecognised stored value falling back to *system* rather than to light, and the cycle the narrow header needs; +12 for Motion 4's arithmetic, of which the sharpest is that `unknown` and `—` are never animated, because a count that turned a refusal to state a figure into a number would be the one failure that matters). **165** as of 2026-08-19 (+28 for the session store on cookies: the identity marker, the memoised snapshot `useSyncExternalStore` needs, signing out reaching the server, and the shared renewal). **137** as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | 9 passed against the MinIO in compose |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | 6 passed against a real Tesseract 5.5.3 |
@@ -1248,6 +1284,15 @@ fact.**
 **So the auth story is complete**, and what is left is smaller than it: a
 `POST /auth/logout-everywhere` is three lines on the token epoch and was deliberately
 not built, because nothing asked for the route.
+
+**What came after it was not a milestone.** On 2026-08-20 the owner reset the priority to
+the UI, chose direction **C · Console** from three mockups drawn on the existing tokens,
+and by 2026-08-21 every screen was migrated onto them — with a theme control landing first,
+because the light half of the palette could not be chosen and so had never been looked at.
+`docs/PLAN.md` carries the slice status and the careers-site shape that follows it; §1
+above has what the migration turned out to be about. **The next named thing is the careers
+site**, and its slice 7 — migration `0013`, the publication lifecycle — gates every public
+route, because `SelfServiceRole` lets anyone register as a recruiter today.
 
 | # | Work | Status |
 |---|---|---|

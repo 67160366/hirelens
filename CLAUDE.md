@@ -12,32 +12,45 @@ treating it as a backlog item**; if it is revisited, the two honest shapes are n
 there. The authoritative per-item status is the table in `docs/PLAN.md`. Orientation for a
 new session: this file, then `docs/HANDOFF.md` §3 (reading order), then `docs/PLAN.md`.
 
-**There is no milestone in progress.** `useAuth` was rewritten onto
-`useSyncExternalStore` on 2026-08-16, so **the session is an external store and no
-component copies it into state** — `web/lib/auth.ts` is the only thing that touches
-`localStorage`, and two components on one page can no longer disagree about who is
-signed in. The **refresh-token denylist landed the same day** (migration `0011`,
-`services/token_service.py`), so `POST /auth/logout` is real, a spent refresh token is
-genuinely single-use, and rotating `JWT_SECRET` is no longer the only revocation there
-is. **A password change now ends every session on every device** (2026-08-18, migration
-`0012`): `Candidate.token_epoch` is the generation a token was minted under, and a
-mismatch is refused, so one integer ends sessions nothing ever recorded.
-**`decode_token` and `token_service.assert_live` must always be called together** —
-verifying a token without checking the denylist accepts one somebody signed out, and it
-is the pairing that makes any of it true. `assert_live` takes the account row as a
-**required** argument so that pairing stays two things rather than three; mypy refuses a
-call that has not looked up whose token it is. **httpOnly cookies landed on 2026-08-19**
-and with them the auth story is complete: the browser holds no token at all, only a
-non-secret identity marker that the `storage` event needs so tabs stay in step.
-**Bearer auth is unchanged and still wins when both are presented** — every `curl` in
-`docs/RUNBOOK.md` works as written. Two rules fall out. **The web origin and the API
-must be the same site**: cookies ignore ports, so `localhost:3000` → `localhost:8000`
-is fine while `127.0.0.1:3000` is cross-site and the cookie is silently withheld —
-signing in succeeds and everything after it 401s, which is why `establishSession`
-checks and names that cause. And **CSRF is answered where the cookie is the
-credential and nowhere else**: an outside `Origin` on a cookie-authenticated write is
-403, while a bearer-authenticated one is not, because a cross-site page cannot set that
-header. The same precision as 403-gates-a-route / 404-gates-a-row.
+**There is no milestone in progress**, and the most recent work was not one. The owner
+reset the priority to the UI on 2026-08-20, chose direction **C · Console** from three
+mockups drawn on the existing tokens, and by 2026-08-21 **every screen is migrated onto
+those tokens** in `web/app/globals.css`. `docs/DESIGN.md` is the authority on what the
+direction means and what it refuses. Its one rule: **colour carries meaning before it
+carries style** — `cited`, `ambiguous` and `dropped` say what the system found in a
+*document*, and may never be spent on a control, a cost, or a workflow state, which is
+what five of the migrated files were doing. **The theme is a `data-theme` attribute the
+reader chooses** (`web/lib/theme.ts`), not a media query, because a theme nobody can
+select is a theme nobody can check — the light half had never been looked at. **The next
+named work is the careers site**, recorded in `docs/PLAN.md` with its eleven slices; its
+migration `0013` gates every public route, since `SelfServiceRole` lets anyone register
+as a recruiter today.
+
+`useAuth` was rewritten onto `useSyncExternalStore` on 2026-08-16, so **the session is
+an external store and no component copies it into state** — `web/lib/auth.ts` is the
+only module that writes a session to `localStorage`, and two components on one page can
+no longer disagree about who is signed in. The **refresh-token denylist landed the same
+day** (migration `0011`, `services/token_service.py`), so `POST /auth/logout` is real, a
+spent refresh token is genuinely single-use, and rotating `JWT_SECRET` is no longer the
+only revocation there is. **A password change now ends every session on every device**
+(2026-08-18, migration `0012`): `Candidate.token_epoch` is the generation a token was
+minted under, and a mismatch is refused, so one integer ends sessions nothing ever
+recorded. **`decode_token` and `token_service.assert_live` must always be called
+together** — verifying a token without checking the denylist accepts one somebody signed
+out, and it is the pairing that makes any of it true. `assert_live` takes the account
+row as a **required** argument so that pairing stays two things rather than three; mypy
+refuses a call that has not looked up whose token it is. **httpOnly cookies landed on
+2026-08-19** and with them the auth story is complete: the browser holds no token at
+all, only a non-secret identity marker that the `storage` event needs so tabs stay in
+step. **Bearer auth is unchanged and still wins when both are presented** — every `curl`
+in `docs/RUNBOOK.md` works as written. Two rules fall out. **The web origin and the API
+must be the same site**: cookies ignore ports, so `localhost:3000` → `localhost:8000` is
+fine while `127.0.0.1:3000` is cross-site and the cookie is silently withheld — signing
+in succeeds and everything after it 401s, which is why `establishSession` checks and
+names that cause. And **CSRF is answered where the cookie is the credential and nowhere
+else**: an outside `Origin` on a cookie-authenticated write is 403, while a
+bearer-authenticated one is not, because a cross-site page cannot set that header. The
+same precision as 403-gates-a-route / 404-gates-a-row.
 
 M5's organizing idea, the same shape as the two below: **every number on an
 observability screen is a query over rows the system already wrote, and can name the

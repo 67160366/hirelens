@@ -1375,3 +1375,128 @@ instead of sitting in a backlog as a plan.
 against a tuned BM25 and publish the corpus size beside the number; or find a measurement
 that needs no labels at all, such as ranking's sensitivity to a weight change or
 retrieval's robustness to paraphrase. Neither is scheduled.
+
+---
+
+## The redesign — direction C, and the screens migrated onto it (2026-08-20 → 08-21)
+
+**Not a milestone, and it did not arrive as one.** The owner reset the priority at the end
+of 2026-08-20: the UI comes first. Three requirements, in the owner's words — **colour**,
+**animation**, and *ทางการแบบทันสมัย* (formal but modern) — with the style choice delegated
+and **a mockup before any screen code**.
+
+A mockup was drawn as three directions on the *existing* tokens, all rendering the same
+screening so they were comparable rather than three moods, and the owner chose **C ·
+Console**. `docs/DESIGN.md` is the authority on what that means and what it does not
+relax; this section is only the status of the work it implied.
+
+| # | Slice | Status |
+|---|---|---|
+| 0 | Push, and record what choosing C decided | **done** — `docs/DESIGN.md` gained the direction section; CI run `32397636016` green on both jobs, 0 annotations |
+| 1 | The shell — nav, skip link, `<main>` landmark | **done** (2026-08-20) — `components/AppShell.tsx`, `lib/nav.ts` |
+| 2 | The evidence surface — the product's one idea | **done** (2026-08-20) — six components, Motions 1 and 2 |
+| 2b | A theme control | **done** (2026-08-21) — `lib/theme.ts`, `components/ThemeControl.tsx`. **Not in the original plan, and it had to come first**: the dark tokens were behind `@media (prefers-color-scheme: dark)`, so the light theme could not be *chosen* and had never once been looked at — `DESIGN.md`'s own bar of 375 / 768 / 1440 in both themes was unmeetable for every screen, including the two already shipped |
+| 3 | The workbench — `app/jobs/[id]` and the ranking | **done** (2026-08-21) — score bars, Motion 3, and the two rules C made explicit |
+| 4 | `app/page.tsx`, `/jobs`, `AuthPanel` | **done** (2026-08-21) |
+| 5 | `/applications` and its two components | **done** (2026-08-21) |
+| 5b | `PdfOverlay` and `DocumentViewer` | **done** (2026-08-21) — the half of the evidence surface slice 2 left behind |
+| 6 | `/metrics` | **done** (2026-08-21) — `Stat` finally has callers, Motion 4, `lib/countUp.ts` |
+| 7 | Record the direction here | **this section** |
+
+**The migration is complete.** Every screen renders from the tokens in `web/app/globals.css`;
+the only remaining `dark:` strings in `web/` are a doc comment quoting a value that was
+removed and two object keys.
+
+### What the migration turned out to be about
+
+Not paint. Five separate places were spending a **reserved** colour on something that is
+not a claim about a document, and each was found by migrating the file rather than from a
+list:
+
+- the ranking's **selected row** in `cited` green — a control state wearing a verdict's hue,
+  beside the real `Met` badges in the same viewport;
+- a **failed must-have gate** in `ambiguous` amber, for something that is not ambiguous;
+- the **"Not in the ranking"** panel amber end to end, for a screening left behind by an
+  edited requirement;
+- an edit's **cost notes** in amber and emerald, for statements about money;
+- every **application state** — emerald for shortlisted, amber for screening, and a `sky`
+  that is not in the palette at all.
+
+Three colours survived the sweep because they earn their token: the timeline's
+**cited evidence** chip, the OCR **recognition** notice, and the dashboard's **unattributed
+calls** banner. That is the test the rule turns out to be: not "is this important?" but
+"is this the system saying something about a *document*?"
+
+### The careers site — the shape, recorded rather than left in a session file
+
+Decided 2026-08-19 and **not started**. It lived only in a session plan file outside the
+repo until now, which `CLAUDE.md` makes serious: this file is named as the authoritative
+status file, and a direction nobody is told to look for is a direction that gets
+re-derived.
+
+**The shape.** A single-employer careers site where the employer is HireLens itself, and
+the screening system is a **published feature** of that site rather than a hidden back
+office. The artefact that makes it one product rather than two is the **Screening
+Receipt**: the applicant opens the same cited verdicts the recruiter read, on their own
+document, at the same character offsets. That closes the founding pain point in
+`README.md:8-9` instead of decorating around it, and the position is already in the code —
+`services/privacy_service.py:116-117` says a verdict about you is yours to see, so it is
+exportable today and merely not viewable.
+
+Explicitly **not** a vendor marketing site, and **not** a careers site whose screening is
+invisible — the second is Greenhouse, and is exactly the ATS this project was founded to
+argue with.
+
+**Eleven slices, in dependency order.** Sizes are the original estimates.
+
+| # | Slice | |
+|---|---|---|
+| 1 | Citation pairing correctness | S — **done** 2026-08-20, ahead of the rest |
+| 2 | One shell, role-aware nav, who is signed in | M — **done** 2026-08-20 |
+| 3 | Receipt route `GET /applications/{id}/screening` via `_visible_application` | M |
+| 4 | `/me` — applications, reason inline, receipt on screen | L |
+| 5 | Design tokens, the three declared typefaces, primitives | L — **done**, and the migration above is what cashed it |
+| 6 | Public demo + `/how-we-screen` | L |
+| 7 | Migration `0013` — publication lifecycle and posting fields | L |
+| 8 | Public careers API + board + posting page + landing + metadata | L |
+| 9 | `/me/documents` — the CV library | M |
+| 10 | `/hire` — the back office, ranking first | L |
+| 11 | `/me/account` — export, password, erasure | M |
+
+**Five sequencing repairs, each from the code rather than from judgement.** They are the
+reason the order above is not the obvious one:
+
+1. **Publication state before any public route.** `Job` carries only `owner_id`, `title`
+   and `description` (`api/app/models/matching.py:56-77`), and `SelfServiceRole`
+   (`api/app/api/routes/auth.py:37`) lets anyone register as a recruiter. Migration `0013`
+   lands the lifecycle *first*, default `draft`, and **only an admin may publish** — the
+   one role that is deliberately not self-selectable. Ship a public route before this and
+   anyone who registers can publish a posting on the site.
+2. **The receipt uses the stored label.** `RequirementJudgment` persists `label`, `verdict`
+   and `evidence` and no `kind`/`detail` (`api/app/schemas/judgment.py:98-109`), so
+   identity needs no join; the posting's current fields enrich it **only when the screening
+   is not stale**. Joining for the label would let an edited requirement silently relabel a
+   verdict somebody was already shown.
+3. **No route collides.** Two files resolving to one URL is a hard error in this version of
+   Next, so `app/page.tsx` is reworked in place and never duplicated into a route group.
+4. **`npm run build` never needs a running API.** `fetch` is uncached by default here, and
+   the public data pages also carry `export const dynamic = "force-dynamic"` — valid while
+   `cacheComponents` is off in `next.config.ts`. No `sitemap.ts` enumerating postings, no
+   `generateStaticParams`.
+5. **The one idea has to move for an anonymous visitor.** A committed synthetic demo
+   artefact behind a read-only public router, with a faithful/fabricating toggle —
+   `FakeMode.HALLUCINATING` (`api/app/llm/fake.py:50-51`) attaches a quote that is not in
+   the document, so a visitor watches a fabrication being refused rather than reading that
+   one would be.
+
+**Refused, so they read as decisions:**
+
+- **No public hallucination-rate figure.** It is measured on this project's own synthetic
+  corpus, and publishing it as though it described real resumes is the same mistake M6 was
+  closed over.
+- **Copy is its own slice.** Thai-first governs the *public* pages — `<html lang="th">`, a
+  Thai headline with a short English line beneath, one set of copy, **not** a `[locale]`
+  segment. The existing internal screens keep their English copy, decided 2026-08-20, so
+  that migrating a screen never becomes two changes at once (`docs/DESIGN.md` §8).
+- Gradient heroes, glassmorphism, glow, decorative parallax, and any colour serving both
+  meaning and decoration (`docs/DESIGN.md` §6).

@@ -30,10 +30,33 @@ selected row, and a score bar in the ranking.
 **What C does not relax:** the three reserved meaning colours below, the refusals in §6,
 colour never being the only signal, and the 4.5:1 floor in both themes.
 
-**Both themes stay.** `globals.css` declares `color-scheme: light dark` and a complete dark
-block; the light theme is C's same structure on paper. **A screen is not done until it has
-been driven at 375 / 768 / 1440 in both themes.** "The app is dark now" is not what was
-chosen and is not on offer.
+**Both themes stay**, and since 2026-08-21 the reader picks. **A screen is not done until
+it has been driven at 375 / 768 / 1440 in both themes.** "The app is dark now" is not what
+was chosen and is not on offer.
+
+### How the theme is chosen, and why it is not a media query
+
+`web/lib/theme.ts` owns a `data-theme` attribute on `<html>`; `globals.css` has **one**
+dark block, selected by that attribute, and Tailwind's `dark:` variant is pointed at the
+same attribute so nothing can follow the operating system while the rest follows the
+reader.
+
+It was a media query until then, and that is worth recording rather than quietly fixing:
+**the light theme could not be chosen, so it had never once been looked at.** No
+instrument driving this app can change an operating-system setting, this machine is set to
+dark, and two screens had already shipped with half their palette unseen. A rule nobody
+can check is not a rule.
+
+Three preferences, not a toggle — `system` is the default and defers to the machine,
+`light` and `dark` outrank it. "Follow the system" is a real answer, so it is on screen as
+one of the three rather than implied by the absence of a choice. The preference is an
+external store like the session, so two tabs agree; the resolved theme is written before
+the first paint by an inline script, because a component would set it after the first
+frame and every navigation would flash.
+
+There is exactly one deliberate exception to the palette: **the sheet a PDF is painted
+onto stays white in both themes** (`components/PdfOverlay.tsx`). pdf.js renders a page on
+a white ground, and a document is not a panel.
 
 The choice was made against a stated cost: of the three, C is the closest to generic SaaS.
 What holds it away from that is the pair of rules at the end of §1 — written down once —

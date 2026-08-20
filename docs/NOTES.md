@@ -6,7 +6,136 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-20 (latest) — two trust defects watched, both slices pushed, and the UI becomes the priority
+## 2026-08-21 (latest) — the redesign lands: every screen is on the tokens, and the light theme exists
+
+**The migration is complete.** Seven commits, all pushed, and after them the only `dark:`
+strings left in `web/` are a doc comment quoting a value that was removed and two object
+keys. `docs/PLAN.md` no longer ends at M6 — it carries the redesign's status and the
+careers-site shape, which until today lived only in a session plan file outside the repo.
+
+Gates at the end: `npm run typecheck` clean, `npm run lint` clean, vitest **183 → 210**,
+`npm run build` clean. Nothing under `api/` was touched all session, so `pytest` was not
+re-run — a moved number there would have meant the work reached somewhere it should not.
+
+Driven on `LLM_PROVIDER=fake` throughout — **zero Gemini quota**. Console instrument proven
+to speak first, and it stayed clean.
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Let the reader choose the theme | `lib/theme.ts`, `components/ThemeControl.tsx`, the attribute swap in `globals.css`, the no-flash boot script. +15 vitest |
+| 2 | Put the workbench on the tokens | `RankingTable` (four defects, score bars), the requirement editor, the three panels, Motion 3 |
+| 3 | Put the upload screen, the postings list and the sign-in form on the tokens | `app/page.tsx`, `/jobs`, `AuthPanel` |
+| 4 | Take the application states off the verdict colours | `/applications`, its timeline and its actions |
+| 5 | Finish the evidence surface | `PdfOverlay`, `DocumentViewer` |
+| 6 | Put the dashboard on the tokens | `/metrics`, `Stat`'s first callers, Motion 4, `lib/countUp.ts` + `lib/motion.ts`. +12 vitest |
+| 7 | Record it | `PLAN.md`, `DESIGN.md`, these notes |
+
+### The thing that had to come first, and was not in the plan
+
+**The light theme had never been looked at, and could not be.** `globals.css` branched only
+on `@media (prefers-color-scheme: dark)`; no instrument here can change an operating-system
+setting, and this machine is set to dark. So `DESIGN.md`'s own bar — *a screen is not done
+until it has been driven at 375 / 768 / 1440 in **both** themes* — was unmeetable for every
+screen, **including the two that had already shipped**. The previous commit's own message
+says so in its last line, which is exactly the kind of note that gets read a session too
+late.
+
+The fix is a real feature rather than a test hook: three preferences on `<html>` via
+`data-theme`, `system` by default. Two details worth carrying:
+
+- **One dark block, not two.** Every screen already renders nothing until the session store
+  has hydrated, so there is no no-JS path to preserve — which is the only thing that would
+  have forced the whole palette to be written twice and kept in step by hand.
+- **`dark:` had to move with it.** Thirteen screens still carried ~176 hand-typed `dark:`
+  utilities at that point, and Tailwind's default variant is the media query. Left alone,
+  choosing Dark on a machine set to light would have repainted the shell and left `/jobs`,
+  `/applications` and `/metrics` in the other theme — a control that visibly works on half
+  the app. Measured, not assumed: `dark:text-stone-400` on `/metrics` goes lab(35.5…) →
+  lab(66.2…) when the attribute flips and the machine never moves.
+
+### What the migration turned out to be about
+
+Not paint. **Five separate places were spending a reserved colour on something that is not
+a claim about a document**, and every one was found by migrating the file rather than from
+a list: the ranking's selected row in `cited` green; a failed must-have gate in `ambiguous`
+amber; the whole "Not in the ranking" panel amber; an edit's cost notes in amber and
+emerald; and every application state — emerald for shortlisted, amber for screening, and a
+`sky` that is not in the palette at all.
+
+Three survived the sweep because they earn their token: the timeline's **cited evidence**
+chip, the OCR **recognition** notice, and the dashboard's **unattributed calls** banner.
+That is the test the rule turns out to be — not "is this important?" but **"is this the
+system saying something about a *document*?"**
+
+### What the browser found that no gate could — twice
+
+- **At 375, the theme control broke the header.** The three-up group is 130px, which pushed
+  the bar 2px past the viewport and squeezed the primary navigation to **8px** — four
+  routes present and one of them visible. Below `sm` it is one button showing the mode you
+  are in, which advances on each press: 43px, and the navigation is back to 58px. Hiding it
+  there was the other option and was refused, because a control that exists only on a
+  desktop never gets checked on a phone.
+- **At 375, `/jobs` read "REQUIREMENTS1 of 30".** The heading and its caption sat in a
+  `justify-between` with no gap, so once the caption wrapped they ran together. Neither
+  defect is visible at any width that fits.
+
+And one hole found by writing the code rather than by running it: the reduced-motion block
+collapsed `animation-duration` and said nothing about `animation-delay`, so Motion 3's
+stagger would have stayed fully visible to exactly the reader who asked for no motion. Both
+delays are zeroed there now, which covers all four motions.
+
+### Instruments that lied — three, and one is a new species
+
+- **`getComputedStyle(tr).backgroundColor` reports transparent** for a `<tr>` that is
+  plainly painted. It said `oklab(0 0 0 / 0)` for the selected ranking row while the row's
+  own `style` attribute said otherwise and an identical `<div>` reported the wash. I was one
+  step from filing "the accent tint does not apply to table rows". Forcing the row **red**
+  and taking a screenshot settled it. The 2026-08-15 canvas readback in a new costume, and
+  the same conclusion: **the screenshot was the ground truth and the more precise-looking
+  check was the wrong one.**
+- **The extension's tab reports `document.visibilityState === "hidden"`**, so
+  `requestAnimationFrame` is throttled and Motion 4 appears frozen part-way — three reads
+  gave `1`, then `264`, then the real `6` and `1,090`. Reporting "the figures are wrong" off
+  the first two would have been a defect filed against working code.
+- **A screenshot taken in the same call as a theme flip catches the previous theme.**
+  `/jobs` came back with dark inputs on a light ground twice, and nothing was wrong with the
+  page. Read the DOM, or screenshot in a later call.
+
+Carried and still true: `resize_window` clamps — it reported success on a 375 request and
+delivered 1568. **Same-origin iframes are the instrument that works**: an `<iframe width=375>`
+has a genuine 375px viewport, its media queries and `ResizeObserver` are real, and two of
+them side by side proved the cross-tab theme sync — a click in the narrow frame repainted
+the wide one and moved its `aria-pressed`, with `navigations: 1` in each.
+
+### Next step
+
+1. **Nothing is outstanding on the redesign.** Every screen is migrated and watched.
+2. The careers site is now recorded in `PLAN.md` with its eleven slices, its five
+   sequencing repairs and its refusals. Slices 1, 2 and 5 are already done; **slice 7,
+   migration `0013`, is the one that gates every public route** — `SelfServiceRole` lets
+   anyone register as a recruiter today, so a public posting page before that lets anyone
+   publish.
+3. **One thing was not watched and is named rather than implied**: the timeline's
+   `cited evidence` badge. No application in this database has a transition resting on a
+   screening, and producing one means moving seeded demo data through a shortlist.
+4. Deferred and unchanged: the opt-in suites have now been quiet for a week
+   (`test_postgres.py`, `test_minio.py`, `test_ocr_tesseract.py`) — worth one run when
+   convenient, `api/`-side and outside this track.
+
+**Left in the dev database, unchanged from 2026-08-20 on purpose**: `slice1-check@example.com`
+(recruiter), two postings, two applications, two completed screenings on `resume_th.pdf` and
+`resume_en.pdf`. A re-screen was clicked during this session and cost nothing — both
+screenings are still `attempts = 1`, which is what that panel promises and is the incidental
+thing it confirmed.
+
+**Environment, unchanged and worth knowing**: there *is* a `web` container in compose, and
+it was stopped so `npm run dev` could own :3000 — which is what makes an edit visible in the
+browser without a rebuild. `docker compose up -d api worker` starts it again; stop it before
+driving the working tree.
+
+---
+
+## 2026-08-20 — two trust defects watched, both slices pushed, and the UI becomes the priority
 
 **Both slices are committed and pushed** (`716cda1..443e947`), and CI run **32332606027**
 is green on both jobs with **0 annotations** — read through the API rather than off the
