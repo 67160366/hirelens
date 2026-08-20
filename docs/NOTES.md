@@ -37,8 +37,15 @@ absence was believed.
 | **A2 — two fast clicks on ranked rows** | **The race was forced rather than hoped for**: `fetch` patched so the `resume_th` screening answered **4 s late**, then th and en clicked 76 ms apart. Console confirms both requests fired and that **th's late answer genuinely arrived**. The screen still reads `resume_en.pdf`, the English `document_text`, and the English quote at `p1 · chars 150–213 · exact`. The stale answer was dropped |
 | **A2, why the remount does not cover for it** | `detail` is state on the *page*, not inside the keyed subtree, so a late `setDetail` would have landed regardless of the remount and paired en's verdicts with th's text. The `requestedScreeningId` guard is what does the work |
 | **A4 — the served filename** | The ranking table names `resume_th.pdf` / `resume_en.pdf` from `RankedEntry.resume_filename`, with no client-side join |
-| ⚠️ **A3 — `/applications` history keyed by id** | **Not watched.** It needs one account holding **two** applications; the two in the dev database belong to two different candidates whose passwords are recorded nowhere. Needs a fresh throwaway candidate, one upload and two applications — see below |
-| B, the six UX fixes | **Not watched yet.** Ranking rows do read as real `button` elements in the accessibility tree, which is the structural half of the keyboard fix |
+| **A3 — `/applications` history keyed by id** | Passed, and **no throwaway account was needed**: `applications.py:164` says applying is *"open to any role"*, so the recruiter authored a second posting and applied to both. The sharp half was driven — `fetch` patched to fail the *second* history request — and the row read **"Loading the history…"** with a red banner, **not** the first row's timeline, which is the state that used to persist. On the success path the two logs carry different timestamps (`11:51:52` vs `11:52:10`), so they are genuinely two logs rather than one leaked between rows |
+| **B1 — `.docx` in the picker** | `accept` carries both MIME types and both extensions |
+| **B2 — the consent label split** | Two separate labels; the consent one contains only the checkbox and the file one contains neither. Clicking the consent **text** ticks the box and unlocks the picker rather than opening a file dialog. Consent unticked on load, picker `disabled` — the 2026-08-13 property, still holding |
+| **B3 — error and retry on `/jobs`** | Forced with a patched `fetch`: the banner names the API and the list area reads **"The list of jobs could not be loaded. [Try again]"**, where it used to be silently empty — indistinguishable from "you have no postings". "Try again" then recovered |
+| **B4 — the ranking table from a keyboard** | Both rows are real `<button>`s at `tabIndex 0`, all five headers carry `scope="col"`, the wrapper is `overflow-x: auto`. **Enter on the focused button selected the candidate**: `aria-expanded` → `true`, `aria-current` on its row, the evidence pane opened, and focus stayed on the button |
+| **B4 settles the `aria-current` question** | It sits on a `<tr>` nothing can focus — but the focusable `<button>` carries `aria-expanded`, so the selected state *is* announced on the element that receives focus. **Not a defect.** The smell recorded earlier is closed |
+| **B5 — the two-step delete** | Reads *"Delete "Kubernetes"? 2 screenings become stale and have to be run again — one model call each."* with Delete / Cancel. Cancelled rather than confirmed; the requirement survived |
+| **B6 — the `ResizeObserver`, the one item only a browser can check** | Passed, with the ratio as the proof. Pane 495.14 → 265.80, canvas **followed** 495 → 265, boxes 126.23 → 67.57 etc — and each box held its **fraction of the pane** (0.2549 → 0.2542), which is what "still on its text" means. Restoring the width reproduced the baseline **exactly**. A frozen scale would have left the boxes at their old widths on a re-rendered canvas |
+| ⚠️ **An instrument lied — the twelfth** | `resize_window` **reported success and did nothing**: `innerWidth` stayed 2133 across a 2133 → 1200 call. Reporting "the observer is inert" off that would have been a defect filed against working code, because the *input never changed*. Driven instead by squeezing the ancestor of the element `ResizeObserver` actually watches |
 
 **Instrument note, unchanged and still costing time:** the extension reports a viewport of
 **2133×987** while screenshots come back **1568×726**, so a coordinate click lands in the
@@ -90,18 +97,20 @@ before and worth not relearning.
 
 **Fixes first, then something to look at, then the real screens.**
 
-1. **Finish A3 and the six B items in the browser, and fix whatever they find.** This is
-   the one thing that does not wait behind a redesign: A and B are **committed and pushed
-   unwatched**, and a defect that ships is worse than a screen that is plain. A3 needs one
-   account holding two applications — check whether `slice1-check` can apply to a posting
-   itself (`api/app/api/routes/applications.py:150` carries no `require_role`) before
-   creating a throwaway candidate. The sharp version of A3 is the *failure* half: patch
-   `fetch` to fail the second history request and confirm the row reads "Loading the
-   history…" rather than the first row's timeline, which is the state that used to
-   persist. Of B, **the `ResizeObserver` is the only item a browser is the only way to
-   check** — draw the overlay, resize the window, and read the box geometry back; numbers
-   that do not move mean the observer is inert, and the result looks *nearly* right, which
-   is worse than looking broken.
+1. ~~**Finish A3 and the six B items in the browser.**~~ **Done, and one defect came out
+   of it.** Everything above passed. The find was not on the screen at all: the two-step
+   delete promised *"2 screenings become stale"* against a job whose two screenings both
+   happened to be `completed`, so the browser **could not** show the bug — the API
+   docstring did. `GET /jobs/{id}/screenings` returns the raw list *"including the ones
+   still running and the ones that failed"*, and the page passed `screenings.length` into
+   a prop documented as *"Completed screenings"*. A pending screening has spent no model
+   call and a failed one produced no result, so the confirmation attached too high a price
+   to a destructive action. `countCompletedScreenings` in `lib/screening.ts` now, three
+   cases, two of which fail under mutation. **The lesson is the shape of the find**: a
+   browser check found it by making it *look at* the sentence, not by making the sentence
+   wrong — the number was right for this data and wrong in general, and only the
+   contract behind it could say so.
+
 2. **A mockup, before any screen code.** Formal-but-modern, in colour, with the four
    motions actually moving, on the tokens that already exist. Shown for approval as a
    published canvas, iterated with the owner, and only then translated into the primitives
@@ -112,18 +121,20 @@ before and worth not relearning.
    Thai-first decision in `docs/PLAN.md` (it still ends at M6), and the eleven-slice
    careers-site build.
 
-**Two smells found while reading B's committed code, neither confirmed, both worth a look
-while already in the file:**
+**The two smells found while reading B's code are both settled:**
 
-- `RequirementEditor`'s `screeningCount` is documented as *"Completed screenings on this
-  job"*, and `web/app/jobs/[id]/page.tsx:437` passes `screenings.length` — every
-  screening, unfiltered. If a `pending` or `processing` row is in that list the
-  confirmation overstates how many model calls a delete costs, and a number that is not
-  what it claims is the one thing this project does not tolerate.
-- `aria-current` sits on the `<tr>`, which nothing can focus, while the focusable
-  `<button>` carries `aria-expanded`. Probably fine — but `DESIGN.md`'s floor says
-  `aria-current` on an unfocusable element is worse than silence, and these are different
-  semantics. Judge it with a screen reader, not by reading the markup.
+- `screeningCount` — **confirmed a defect and fixed**, above.
+- `aria-current` on an unfocusable `<tr>` — **not a defect.** The focusable `<button>`
+  carries `aria-expanded`, so the selected state is announced on the element that takes
+  focus. Watched flipping to `true` on an Enter press.
+
+**One imprecision left deliberately, so it does not read as an oversight:** when a history
+request *fails*, the row renders "Loading the history…" while nothing is loading. The red
+banner beside it names the real cause, and the alternative the fix replaced — the previous
+row's timeline — was far worse, which is what the code comment argues. Saying "Could not
+load this history" instead needs a per-application error map rather than a per-application
+event map, so it is a real change and not a wording tweak. **The owner's call, not one to
+make while passing through.**
 
 ---
 
