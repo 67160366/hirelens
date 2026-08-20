@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { ApplicationActions } from "@/components/ApplicationActions";
@@ -26,7 +25,7 @@ import { errorMessage, useAuth } from "@/lib/auth";
  * written to stop repeating.
  */
 export default function ApplicationsPage() {
-  const { session, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, authorized } = useAuth();
   const [me, setMe] = useState<Account | null>(null);
   const [applications, setApplications] = useState<Application[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -135,35 +134,20 @@ export default function ApplicationsPage() {
   if (!ready) return null;
   if (!session) {
     return (
-      <main className="mx-auto max-w-3xl px-5 py-12">
+      <div className="mx-auto max-w-3xl px-5 py-10">
         <AuthPanel onAuthenticated={authenticate} />
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-5 py-12">
-      <header className="mb-8 flex items-start justify-between gap-4">
+    <div className="mx-auto max-w-3xl px-5 py-10">
+      <header className="mb-8">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Your applications</h1>
           <p className="mt-1.5 text-sm text-stone-600 dark:text-stone-400">
             Every move is recorded with who made it and what it rested on.
           </p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <Link
-            href="/"
-            className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
-          >
-            ← Resumes
-          </Link>
-          <button
-            type="button"
-            onClick={() => void signOut()}
-            className="text-xs text-stone-500 underline dark:text-stone-400"
-          >
-            Sign out
-          </button>
         </div>
       </header>
 
@@ -305,7 +289,7 @@ export default function ApplicationsPage() {
           </ul>
         )}
       </section>
-    </main>
+    </div>
   );
 }
 

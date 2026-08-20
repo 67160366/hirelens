@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/AuthPanel";
@@ -25,8 +24,17 @@ function progressMessage(resume: Resume | null): string {
 }
 
 export default function Home() {
-  const { session, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, authorized } = useAuth();
   const [result, setResult] = useState<ProfileResponse | null>(null);
+  // Which account the result on screen belongs to.
+  //
+  // Sign out moved into the app shell, so this page no longer has a click to
+  // clear the result on — and deriving it is stronger than clearing ever was.
+  // The old handler covered the button and nothing else, while a session can
+  // also end without one: an access token expiring, a sign-out in another tab,
+  // a password change on another device. In every one of those the previous
+  // account's resume stayed on screen for whoever signed in next.
+  const [resultOwner, setResultOwner] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // The last state the progress stream reported, which is what the waiting
@@ -42,15 +50,25 @@ export default function Home() {
     api.getConsent().then(setConsent).catch(() => setConsent(null));
   }, []);
 
+  // Nothing is rendered unless it belongs to the session asking for it.
+  const shown = result !== null && resultOwner === session?.id ? result : null;
+
+  /** Show a result together with whose it is. Never call `setResult` directly:
+   *  a result with no owner is one that outlives its session. */
+  function showResult(value: ProfileResponse | null) {
+    setResult(value);
+    setResultOwner(value === null ? null : (session?.id ?? null));
+  }
+
   /** Replay a resume the worker gave up on, and wait for the new run. */
   async function retry() {
-    if (!result) return;
+    if (!shown) return;
     setError(null);
     setBusy(true);
     try {
       await authorized(async () => {
-        setProgress(await api.retryResume(result.resume.id));
-        setResult(await api.waitForProfile(result.resume.id, setProgress));
+        setProgress(await api.retryResume(shown.resume.id));
+        showResult(await api.waitForProfile(shown.resume.id, setProgress));
       });
     } catch (caught) {
       setError(errorMessage(caught, "Could not retry"));
@@ -63,7 +81,7 @@ export default function Home() {
   async function upload(file: File) {
     setError(null);
     setBusy(true);
-    setResult(null);
+    showResult(null);
     setProgress(null);
     try {
       // Upload only stores the file and queues the work, so the result has to be
@@ -73,7 +91,7 @@ export default function Home() {
         setProgress(resume);
         return api.waitForProfile(resume.id, setProgress);
       });
-      setResult(uploaded);
+      showResult(uploaded);
     } catch (caught) {
       setError(errorMessage(caught, "Upload failed"));
     } finally {
@@ -83,7 +101,7 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-5 py-12">
+    <div className="mx-auto max-w-6xl px-5 py-10">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">HireLens</h1>
         <p className="mt-1.5 max-w-xl text-sm text-stone-600 dark:text-stone-400">
@@ -147,42 +165,6 @@ export default function Home() {
                 className="mt-2 block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-stone-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white disabled:opacity-50 dark:file:bg-stone-100 dark:file:text-stone-900"
               />
             </div>
-            <div className="flex flex-col items-end gap-2 self-start">
-              <Link
-                href="/jobs"
-                className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
-              >
-                Jobs and ranking →
-              </Link>
-              <Link
-                href="/applications"
-                className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
-              >
-                Your applications →
-              </Link>
-              <Link
-                href="/metrics"
-                className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
-              >
-                Usage and quality →
-              </Link>
-              <button
-                type="button"
-                onClick={() => {
-                  // Drop the result with the session: signing back in as someone
-                  // else must not find the previous account's resume still on screen.
-                  setResult(null);
-                  // `void`, not `await`: signing out now reaches the API to revoke
-                  // the session, and the screen must not wait on a network call to
-                  // stop showing a signed-in state. The local clear happens either
-                  // way — see `signOut` in `lib/auth.ts`.
-                  void signOut();
-                }}
-                className="text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
-              >
-                Sign out
-              </button>
-            </div>
           </div>
 
           {/* Live, because the API streams every state change rather than making
@@ -192,11 +174,11 @@ export default function Home() {
           )}
           {/* A resume the worker gave up on after retrying is kept rather than
               discarded, so it can be run again once the cause is fixed. */}
-          {result?.resume.can_retry && !busy && (
+          {shown?.resume.can_retry && !busy && (
             <div className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm dark:border-amber-900/60 dark:bg-amber-950/30">
               <span className="text-amber-900 dark:text-amber-300">
-                Stopped after {result.resume.attempts}{" "}
-                {result.resume.attempts === 1 ? "attempt" : "attempts"}.
+                Stopped after {shown.resume.attempts}{" "}
+                {shown.resume.attempts === 1 ? "attempt" : "attempts"}.
               </span>
               <button
                 type="button"
@@ -215,25 +197,25 @@ export default function Home() {
 
           {/* The document pane only appears when there is text to point into. A
               failed parse has no offsets, so citations stay non-interactive. */}
-          {result &&
-            (result.document_text ? (
+          {shown &&
+            (shown.document_text ? (
               <EvidenceSelectionProvider>
                 <div className="grid items-start gap-5 lg:grid-cols-2">
-                  <ProfileView resume={result.resume} profile={result.profile} />
+                  <ProfileView resume={shown.resume} profile={shown.profile} />
                   <DocumentViewer
-                    resumeId={result.resume.id}
-                    filename={result.resume.filename}
-                    text={result.document_text}
-                    references={result.profile ? collectEvidence(result.profile) : []}
+                    resumeId={shown.resume.id}
+                    filename={shown.resume.filename}
+                    text={shown.document_text}
+                    references={shown.profile ? collectEvidence(shown.profile) : []}
                     authorized={authorized}
                   />
                 </div>
               </EvidenceSelectionProvider>
             ) : (
-              <ProfileView resume={result.resume} profile={result.profile} />
+              <ProfileView resume={shown.resume} profile={shown.profile} />
             ))}
         </div>
       )}
-    </main>
+    </div>
   );
 }

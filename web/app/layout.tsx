@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Sans_Thai_Looped } from "next/font/google";
 
+import { AppShell } from "@/components/AppShell";
+
 import "./globals.css";
 
 /**
@@ -47,11 +49,16 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
+    // `lang` is "en" because these screens are the internal ones and their copy is
+    // English — see `docs/DESIGN.md` §8. The Thai-first decision governs the public
+    // careers pages, and `th` lands here when they do.
     <html
       lang="en"
       className={`${plexSans.variable} ${plexThai.variable} ${plexMono.variable}`}
     >
-      <body className="min-h-screen bg-paper font-sans text-ink antialiased">{children}</body>
+      <body className="min-h-screen bg-paper font-sans text-ink antialiased">
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

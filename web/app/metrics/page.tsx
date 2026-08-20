@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/AuthPanel";
@@ -40,7 +39,7 @@ import {
  * day a paid provider lands.
  */
 export default function MetricsPage() {
-  const { session, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, authorized } = useAuth();
   const [report, setReport] = useState<UsageReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -67,9 +66,9 @@ export default function MetricsPage() {
   if (!ready) return null;
   if (!session) {
     return (
-      <main className="mx-auto max-w-4xl px-5 py-12">
+      <div className="mx-auto max-w-4xl px-5 py-10">
         <AuthPanel onAuthenticated={authenticate} />
-      </main>
+      </div>
     );
   }
 
@@ -77,7 +76,7 @@ export default function MetricsPage() {
   const costGap = report ? describeCostGap(report.totals) : null;
 
   return (
-    <main className="mx-auto max-w-4xl px-5 py-12">
+    <div className="mx-auto max-w-4xl px-5 py-10">
       <header className="mb-8 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Usage and quality</h1>
@@ -91,13 +90,7 @@ export default function MetricsPage() {
             </p>
           ) : null}
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <Link
-            href="/"
-            className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
-          >
-            ← Resumes
-          </Link>
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => void load()}
@@ -105,13 +98,6 @@ export default function MetricsPage() {
             className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:hover:bg-stone-800"
           >
             {loading ? "Refreshing…" : "Refresh — free"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void signOut()}
-            className="text-xs text-stone-500 underline dark:text-stone-400"
-          >
-            Sign out
           </button>
         </div>
       </header>
@@ -257,7 +243,7 @@ export default function MetricsPage() {
           </Panel>
         </div>
       )}
-    </main>
+    </div>
   );
 }
 

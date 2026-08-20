@@ -202,8 +202,47 @@ body {
   @apply focus-visible:outline-none;
 }
 
+/* A strip that scrolls sideways without drawing a bar for it.
+   Used by the primary navigation, which has to fit inside a 56px header: at 375px
+   the four items do not fit, and a real scrollbar eats a sixth of the bar's height
+   and reads as a rendering fault. The affordance is not lost — the next item stays
+   half-visible at the edge, which is the thing a reader actually acts on. Do not
+   reach for this anywhere the cut-off edge is not itself visible. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 .ring-focus:focus-visible {
   box-shadow: var(--ring-accent);
+}
+
+/* The first thing in the tab order, and invisible until it has focus.
+   Defined here rather than as a stack of `focus:` utilities because `not-sr-only`
+   resets `padding` to 0 and sorts *after* `px-4`/`py-2` in the utilities layer — so
+   the revealed link came out as an accent block with its text flush against the
+   edge. Written as one rule, the reveal cannot be reordered out from under it. Same
+   shape as `ring-focus` above: a utility for the resting state, a plain selector
+   for what focus does. */
+@utility skip-link {
+  @apply sr-only rounded-control bg-accent text-sm font-medium text-on-accent;
+}
+
+.skip-link:focus {
+  position: absolute;
+  inset-block-start: 1rem;
+  inset-inline-start: 1rem;
+  z-index: 50;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
 }
 
 /* A quote lifted verbatim from the source document. Styled distinctly everywhere

@@ -44,7 +44,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function JobPage() {
   const jobId = String(useParams().id);
-  const { session, ready, authenticate, signOut, authorized } = useAuth();
+  const { session, ready, authenticate, authorized } = useAuth();
 
   const [job, setJob] = useState<Job | null>(null);
   const [me, setMe] = useState<Account | null>(null);
@@ -372,15 +372,15 @@ export default function JobPage() {
   if (!ready) return null;
   if (!session) {
     return (
-      <main className="mx-auto max-w-6xl px-5 py-12">
+      <div className="mx-auto max-w-6xl px-5 py-10">
         <AuthPanel onAuthenticated={authenticate} />
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-5 py-12">
-      <header className="mb-6 flex items-start justify-between gap-4">
+    <div className="mx-auto max-w-6xl px-5 py-10">
+      <header className="mb-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{job?.title ?? "Job"}</h1>
           {job?.description && (
@@ -388,21 +388,6 @@ export default function JobPage() {
               {job.description}
             </p>
           )}
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <Link
-            href="/jobs"
-            className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
-          >
-            ← Jobs
-          </Link>
-          <button
-            type="button"
-            onClick={() => void signOut()}
-            className="text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
-          >
-            Sign out
-          </button>
         </div>
       </header>
 
@@ -635,6 +620,6 @@ export default function JobPage() {
           </EvidenceSelectionProvider>
         )}
       </div>
-    </main>
+    </div>
   );
 }
