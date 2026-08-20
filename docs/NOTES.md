@@ -111,10 +111,37 @@ before and worth not relearning.
    wrong — the number was right for this data and wrong in general, and only the
    contract behind it could say so.
 
-2. **A mockup, before any screen code.** Formal-but-modern, in colour, with the four
-   motions actually moving, on the tokens that already exist. Shown for approval as a
-   published canvas, iterated with the owner, and only then translated into the primitives
-   in `web/components/ui/`.
+2. ~~**A mockup, before any screen code.**~~ **Drafted — three directions to choose
+   between, not one to approve.** All three show the *same* screening: two met
+   requirements citing one Thai line, one with no citable evidence, and one fabricated
+   claim struck through — so they are actually comparable rather than three moods.
+   Built on the tokens already in `web/app/globals.css`, so whatever is picked is a
+   migration rather than a rewrite.
+   <https://claude.ai/code/artifact/ea0d5df6-f910-4a50-860e-940c40cdbcb9>
+
+   | | what it is | the cost of choosing it |
+   |---|---|---|
+   | **A · Instrument** | Dense, paper-white, hairline rules; colour only where it means something | Closest to `DESIGN.md` as written and the least likely to age — and the most conservative. At a glance it still reads *tool*, which may be the complaint that started this |
+   | **B · Editorial** | Large display type, wide margins, the verdicts set as a printed report | The most confident without any decoration, and the drawn strike-through is its centrepiece — but it costs vertical space, so it suits the applicant's receipt better than the back office |
+   | **C · Console** | The recruiter's workbench on the **dark** half of the same tokens: real elevation, an accent-tinted selected row, score bars | Answers "it is still black and white" most directly and fits the dense screens — and is the closest to generic SaaS. Held back from that by keeping colour on meaning: the score bar goes **grey**, not red, when the must-have gate fails |
+
+   A fourth artboard runs **the four motions** with a Replay button, because motion is the
+   one requirement a still cannot be judged on: the citation sweeps in and its coordinates
+   reveal, the strike-through is *drawn*, verdicts land one requirement at a time, and a
+   queried figure counts up from zero. All four are neutralised under
+   `prefers-reduced-motion`.
+
+   **The working files are in the session scratchpad, deliberately not in the repo** — the
+   same call as the 2026-08-19 canvas. A later session edits the published page by reading
+   it back with the `design` skill's `--extract`, not by hunting for them.
+
+   **One thing worth carrying:** the first draft spelled the resume's employer
+   `บริษัท เอชีเอ็มดี โลจิสติกส์`. The real fixture says `บริษัท เอซีเอ็มอี โลจิสติกส์`, read out
+   of `document_text` in Postgres. On a product whose entire claim is *the quoted text
+   exists in the document*, a mockup with invented source text argues against its own
+   thesis — so every Thai line on these artboards is now copied from the stored text
+   rather than typed from memory.
+
 3. **Then the real screens**, one per commit, and none of them done until driven at
    375 / 768 / 1440 in **both** themes.
 4. **Everything else waits behind those**: recording the careers-site direction and the
