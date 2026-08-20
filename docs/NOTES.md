@@ -107,14 +107,40 @@ has a genuine 375px viewport, its media queries and `ResizeObserver` are real, a
 them side by side proved the cross-tab theme sync — a click in the narrow frame repainted
 the wide one and moved its `aria-pressed`, with `navigations: 1` in each.
 
+### Then the careers site started, at the slice that gates the rest
+
+**Slice 7 is done**: migration `0013`, `JobStatus`, and `api/app/publication.py`. It went
+first because until it existed `Job` had no way to say which postings a stranger may see,
+and `SelfServiceRole` lets anyone register as a recruiter — so a public board shipped
+before it would mean anyone who registers can publish under HireLens's name.
+
+Three things worth carrying out of it:
+
+- **It is a different kind of state machine from `applications.py`, on purpose.** An
+  application's state is a claim about a person, so it is derived from an append-only log.
+  A posting's status is an editorial fact about a document the employer wrote — reversible,
+  no history. Writing a log anyway would have made the append-only rule look like a house
+  style rather than the specific answer it is to claims about people.
+- **The backfill is the opposite of the column default.** Existing postings came back
+  `PUBLISHED`, because that is what they effectively already were; `draft` would have
+  silently withdrawn live postings from the candidates applying to them. A migration that
+  breaks the running system on the way to making it safer is not safer.
+- **26 tests failed on the first full run**, all of them "create a job, then apply to it".
+  That churn *is* the finding: applying to a posting nobody published was possible, and
+  every one of those tests had been quietly relying on it.
+
+Two instruments lied again, both already in §10's list and both still worth the minute:
+a Thai `location` in a shell literal came back *"There was an error parsing the body"* —
+cp874, so the body went through a UTF-8 file — and a migration round trip printed **my own
+`OK`** on a command that had exited 1, because `set -e` did not abort the way I assumed.
+Re-run against the real exit codes, both dialects genuinely pass.
+
 ### Next step
 
 1. **Nothing is outstanding on the redesign.** Every screen is migrated and watched.
-2. The careers site is now recorded in `PLAN.md` with its eleven slices, its five
-   sequencing repairs and its refusals. Slices 1, 2 and 5 are already done; **slice 7,
-   migration `0013`, is the one that gates every public route** — `SelfServiceRole` lets
-   anyone register as a recruiter today, so a public posting page before that lets anyone
-   publish.
+2. The careers site is recorded in `PLAN.md` with its eleven slices. **Slice 7 is done**;
+   slices 3, 4, 6, 8, 9, 10 and 11 remain, and slice 8 (the public board and posting page)
+   is now unblocked — it was the one waiting on `0013`.
 3. **One thing was not watched and is named rather than implied**: the timeline's
    `cited evidence` badge. No application in this database has a transition resting on a
    screening, and producing one means moving seeded demo data through a shortlist.

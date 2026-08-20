@@ -1457,11 +1457,26 @@ argue with.
 | 4 | `/me` — applications, reason inline, receipt on screen | L |
 | 5 | Design tokens, the three declared typefaces, primitives | L — **done**, and the migration above is what cashed it |
 | 6 | Public demo + `/how-we-screen` | L |
-| 7 | Migration `0013` — publication lifecycle and posting fields | L |
+| 7 | Migration `0013` — publication lifecycle and posting fields | L — **done** 2026-08-21 |
 | 8 | Public careers API + board + posting page + landing + metadata | L |
 | 9 | `/me/documents` — the CV library | M |
 | 10 | `/hire` — the back office, ranking first | L |
 | 11 | `/me/account` — export, password, erasure | M |
+
+**Slice 7 is done** (2026-08-21). `JobStatus` is `draft`/`published`/`closed`, and
+`api/app/publication.py` is the only place that decides who may move between them —
+**a deliberately different kind of state machine from `applications.py`**: an
+application's state is a claim about a person and is derived from an append-only
+log, while a posting's status is an editorial fact about a document the employer
+wrote, so it is reversible and keeps no history. Only an admin reaches `published`;
+the owner drafts, edits, closes and may take their own posting back down. A draft is
+404 on the read, absent from the discovery list and refused on apply — three doors,
+because each is a separate code path. The migration backfills existing postings to
+**`PUBLISHED`, not to the column default**, since that is the status they effectively
+already had and `draft` would have withdrawn live postings from candidates mid-flight.
+`web/` gained exactly one thing: a recruiter can see that their new posting is a
+draft, without which this slice makes postings invisible with nothing on screen
+saying so.
 
 **Five sequencing repairs, each from the code rather than from judgement.** They are the
 reason the order above is not the obvious one:
