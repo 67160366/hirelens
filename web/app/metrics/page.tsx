@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { CountUp } from "@/components/CountUp";
+import { Card } from "@/components/ui/Card";
+import { cn } from "@/lib/cn";
+
 import { AuthPanel } from "@/components/AuthPanel";
 import { api, type CallBucket, type CallTotals, type UsageReport } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
@@ -80,14 +84,12 @@ export default function MetricsPage() {
       <header className="mb-8 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Usage and quality</h1>
-          <p className="mt-1.5 text-sm text-stone-600 dark:text-stone-400">
-            Every figure is a query over rows already written. Reading this page costs a
-            query and never a model call.
+          <p className="mt-1.5 text-sm text-ink-muted">
+            Every figure is a query over rows already written. Reading this page costs a query
+            and never a model call.
           </p>
           {report ? (
-            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-              {scopeNote(report.scope)}
-            </p>
+            <p className="mt-1 text-xs text-ink-muted">{scopeNote(report.scope)}</p>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -95,7 +97,7 @@ export default function MetricsPage() {
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:hover:bg-stone-800"
+            className="btn btn-secondary ring-focus"
           >
             {loading ? "Refreshing…" : "Refresh — free"}
           </button>
@@ -105,18 +107,18 @@ export default function MetricsPage() {
       {error ? (
         <p
           role="alert"
-          className="mb-6 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          className="mb-6 rounded-control border border-dropped/40 bg-dropped-wash p-3 text-sm text-dropped"
         >
           {error}
         </p>
       ) : null}
 
       {report === null ? (
-        <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>
+        <p className="text-sm text-ink-muted">Loading…</p>
       ) : isEmpty(report) ? (
-        <p className="rounded-lg border border-stone-200 bg-white px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-400">
-          Nothing to report yet. Upload a resume, or screen one against a job, and the
-          figures will appear here.
+        <p className="card px-4 py-8 text-center text-sm text-ink-muted">
+          Nothing to report yet. Upload a resume, or screen one against a job, and the figures
+          will appear here.
         </p>
       ) : (
         <div className="space-y-8">
@@ -125,7 +127,10 @@ export default function MetricsPage() {
               `screening_id` is a docstring rather than a constraint, so this can
               genuinely fire. */}
           {attributionGap ? (
-            <p className="rounded-md border border-amber-300 bg-amber-50/70 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+            // `ambiguous`, and it earns it: an unattributed call is one the system
+            // cannot say which document or screening it belongs to, so every split
+            // below it is uncertain in exactly the way that token names.
+            <p className="rounded-control border border-ambiguous/40 bg-ambiguous-wash p-3 text-sm text-ambiguous">
               <strong className="font-semibold">Some calls could not be attributed.</strong>{" "}
               {attributionGap}
             </p>
@@ -147,7 +152,7 @@ export default function MetricsPage() {
             title="What the calls were for"
             caption="Extraction is billed to the resume, judging to the screening. Keeping them apart is what makes each separately answerable."
           >
-            <ul className="divide-y divide-stone-100 dark:divide-stone-800">
+            <ul className="divide-y divide-line">
               {bucketsToShow(report).map((bucket) => (
                 <BucketRow key={bucket} bucket={bucket} totals={report.by_bucket[bucket]} />
               ))}
@@ -184,7 +189,7 @@ export default function MetricsPage() {
             title="Documents"
             caption={`${parseSuccess(report.parse_outcomes).extracted} of ${parseSuccess(report.parse_outcomes).total} reached a verified profile — ${formatParseSuccess(report.parse_outcomes)}.`}
           >
-            <ul className="divide-y divide-stone-100 dark:divide-stone-800">
+            <ul className="divide-y divide-line">
               {report.parse_outcomes.map((outcome) => (
                 <li
                   key={outcome.status}
@@ -203,8 +208,8 @@ export default function MetricsPage() {
           >
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                  <tr className="border-b border-stone-200 dark:border-stone-800">
+                <thead className="text-left text-micro uppercase tracking-wide text-ink-faint">
+                  <tr className="border-b border-line">
                     <th className="px-4 py-2 font-medium">Provider / model</th>
                     <th className="px-4 py-2 font-medium">Prompt</th>
                     <th className="px-4 py-2 text-right font-medium">Calls</th>
@@ -214,15 +219,19 @@ export default function MetricsPage() {
                     <th className="px-4 py-2 text-right font-medium">Cost</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
+                <tbody className="divide-y divide-line">
                   {report.by_group.map((group) => (
-                    <tr key={`${group.provider}-${group.model}-${group.prompt_version}-${group.bucket}`}>
+                    <tr
+                      key={`${group.provider}-${group.model}-${group.prompt_version}-${group.bucket}`}
+                    >
                       <td className="px-4 py-2">
                         {group.provider}
-                        <span className="text-stone-400 dark:text-stone-500"> / {group.model}</span>
+                        <span className="text-ink-faint"> / {group.model}</span>
                       </td>
                       <td className="px-4 py-2 font-mono text-xs">{group.prompt_version}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">{group.totals.calls}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {group.totals.calls}
+                      </td>
                       <td className="px-4 py-2 text-right tabular-nums">
                         {formatTokens(group.totals.input_tokens)}
                       </td>
@@ -262,27 +271,29 @@ function Stat({
   bare?: boolean;
   tone?: "good" | "warn";
 }) {
-  const toneClass =
-    tone === "warn"
-      ? "text-amber-700 dark:text-amber-400"
-      : tone === "good"
-        ? "text-emerald-700 dark:text-emerald-400"
-        : "";
+  // `good` and `warn` were emerald and amber. They are `cited` and `dropped` now,
+  // which is not a rename: this figure is the hallucination rate, and the two states
+  // it has are exactly *a claim the application located* and *a claim it could not*.
+  // Those are the tokens' own definitions, so here the meaning palette is being used
+  // for what it is reserved for rather than borrowed for emphasis.
+  const figureTone = tone === "warn" ? "dropped" : tone === "good" ? "cited" : "neutral";
   return (
-    <div
-      className={
-        bare
-          ? ""
-          : "rounded-lg border border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-900"
-      }
-    >
-      <p className="text-xs text-stone-500 dark:text-stone-400">{label}</p>
+    <div className={bare ? "" : "card px-4 py-3"}>
+      <p className="text-xs text-ink-muted">{label}</p>
       <p
-        className={`mt-0.5 text-xl font-semibold tabular-nums ${muted ? "text-stone-400 dark:text-stone-500" : toneClass}`}
+        className={cn(
+          "mt-0.5 font-mono text-xl font-semibold tabular-nums",
+          muted && "text-ink-faint",
+          !muted && figureTone === "cited" && "text-cited",
+          !muted && figureTone === "dropped" && "text-dropped",
+        )}
       >
-        {value}
+        {/* Motion 4. `CountUp` renders anything with no digits in it — `unknown`,
+            `—` — exactly as given, which is what stops a refusal to state a figure
+            from being animated into an assertion. */}
+        <CountUp value={value} />
       </p>
-      {note ? <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{note}</p> : null}
+      {note ? <p className="mt-0.5 text-xs text-ink-muted">{note}</p> : null}
     </div>
   );
 }
@@ -297,15 +308,13 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
-      <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        {caption ? (
-          <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{caption}</p>
-        ) : null}
+    <Card>
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-section font-semibold">{title}</h2>
+        {caption ? <p className="mt-0.5 text-xs text-ink-muted">{caption}</p> : null}
       </div>
       {children}
-    </section>
+    </Card>
   );
 }
 
@@ -318,7 +327,7 @@ function BucketRow({ bucket, totals }: { bucket: CallBucket; totals: CallTotals 
         <span className="text-sm font-medium">{bucketLabel(bucket)}</span>
         <span className="shrink-0 text-sm tabular-nums">
           {formatTokens(totals.calls)} {totals.calls === 1 ? "call" : "calls"}
-          <span className="text-stone-400 dark:text-stone-500">
+          <span className="text-ink-faint">
             {" · "}
             {formatTokens(totalTokens(totals))} tokens
             {" · "}
@@ -328,10 +337,8 @@ function BucketRow({ bucket, totals }: { bucket: CallBucket; totals: CallTotals 
           </span>
         </span>
       </div>
-      {note ? <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{note}</p> : null}
-      {costGap ? (
-        <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{costGap}</p>
-      ) : null}
+      {note ? <p className="mt-0.5 text-xs text-ink-muted">{note}</p> : null}
+      {costGap ? <p className="mt-0.5 text-xs text-ink-muted">{costGap}</p> : null}
     </li>
   );
 }
