@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app import publication
 from app.api.deps import CandidateDep, SessionDep
 from app.applications import Actor
 from app.models import Candidate, Job, Resume, ResumeStatus, Role
@@ -165,10 +166,28 @@ async def apply_to_job(
 
     Open to any role: a recruiter may apply for a job as easily as anyone, and
     refusing that would be a rule about people rather than about permissions.
+
+    **Only a published posting accepts applications**, and the two refusals below
+    are deliberately different. A draft somebody else is still writing answers
+    **404**, because it is invisible and a 403 would confirm the id exists — the
+    same line `_owned_job` holds. A posting you can legitimately see but which is
+    not open — a closed one, or your own draft — answers **409** with a reason,
+    because hiding a row the caller already knows about would be pretending rather
+    than refusing.
     """
     job = await session.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if not publication.is_public(job.status):
+        if job.owner_id != candidate.id and candidate.role is not Role.ADMIN:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This posting is not accepting applications: it is "
+                f"{job.status.value} rather than published."
+            ),
+        )
 
     resume = await session.get(Resume, payload.resume_id)
     if resume is None or resume.candidate_id != candidate.id:

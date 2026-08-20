@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.routes.jobs import MAX_REQUIREMENTS_PER_JOB
 from app.models import JobRequirement
+from tests.conftest import publish_job, register_as
 
 BACKEND_JOB = {
     "title": "Senior Backend Engineer",
@@ -144,19 +145,47 @@ class TestOwnership:
         await register_another_candidate(authed_client, "intruder@example.com")
         return str(job["id"])
 
-    async def test_someone_elses_job_can_be_read_because_a_posting_is_public(
+    async def test_someone_elses_draft_cannot_even_be_read(
         self, authed_client: AsyncClient, foreign_job_id: str
+    ):
+        """New with migration `0013`, and the reason the open read narrowed.
+
+        A posting is created as a draft, and a draft is not an advertisement — it
+        is something somebody is still writing. Before the publication lifecycle
+        there was no way to say so, so every posting was readable by every
+        signed-in account from the moment it existed.
+        """
+        assert (await authed_client.get(f"/jobs/{foreign_job_id}")).status_code == 404
+
+    async def test_someone_elses_published_posting_can_be_read(
+        self,
+        client: AsyncClient,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
     ):
         """The one read that is deliberately open, and the only one.
 
-        A posting is an advertisement — it exists to be read by people who do not
-        own it, and a candidate who cannot read one cannot decide whether to apply.
-        Everything below this still answers 404, which is the distinction that
-        matters: reading a posting is open, *doing* anything with it is not.
+        A published posting is an advertisement — it exists to be read by people
+        who do not own it, and a candidate who cannot read one cannot decide
+        whether to apply. Everything else here still answers 404, which is the
+        distinction that matters: reading a posting is open, *doing* anything with
+        it is not.
+
+        The property is the one this test always pinned. Only the setup changed:
+        it now takes a publishing step, because a posting has an editorial state
+        to be in.
         """
-        response = await authed_client.get(f"/jobs/{foreign_job_id}")
+        await register_as(client, email="poster@example.com", role="recruiter")
+        job_id = str((await create_job(client))["id"])
+        await publish_job(
+            client,
+            job_id=job_id,
+            as_email="poster@example.com",
+        )
+
+        await register_another_candidate(client, "reader@example.com")
+        response = await client.get(f"/jobs/{job_id}")
         assert response.status_code == 200
-        assert response.json()["id"] == foreign_job_id
+        assert response.json()["id"] == job_id
 
     async def test_someone_elses_job_cannot_be_edited(
         self, authed_client: AsyncClient, foreign_job_id: str

@@ -25,7 +25,7 @@ from app.config import Settings
 from app.models import Application, Candidate, Job, Resume
 from app.models.application import ApplicationEvent
 from app.storage import LocalStorage, Storage, StorageError
-from tests.conftest import register_as, resume_upload
+from tests.conftest import publish_job, register_as, resume_upload
 
 JOB = {"title": "Backend Engineer", "requirements": [{"kind": "skill", "label": "Python"}]}
 
@@ -126,6 +126,7 @@ class TestExport:
         """
         await register_as(client, email="hirer@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+        await publish_job(client, job_id=job_id, as_email="hirer@example.com")
         recruiter = client.headers["Authorization"]
 
         await register_as(client, email="seeker@example.com")
@@ -143,6 +144,7 @@ class TestExport:
     async def test_an_applicant_exports_their_own_history(self, client: AsyncClient):
         await register_as(client, email="hirer2@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+        await publish_job(client, job_id=job_id, as_email="hirer2@example.com")
 
         await register_as(client, email="seeker2@example.com")
         resume_id = (await client.post("/resumes", **resume_upload())).json()["id"]
@@ -241,6 +243,7 @@ class TestErasure:
     ):
         await register_as(client, email="hirer3@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+        await publish_job(client, job_id=job_id, as_email="hirer3@example.com")
         recruiter = client.headers["Authorization"]
 
         await register_as(client, email="seeker3@example.com")
@@ -267,6 +270,7 @@ class TestErasure:
         """
         await register_as(client, email="hirer4@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+        await publish_job(client, job_id=job_id, as_email="hirer4@example.com")
         recruiter = client.headers["Authorization"]
 
         await register_as(client, email="seeker4@example.com")
@@ -294,6 +298,7 @@ class TestErasure:
         """
         await register_as(client, email="hirer5@example.com", role="recruiter")
         job_a = (await client.post("/jobs", json=JOB)).json()["id"]
+        await publish_job(client, job_id=job_a, as_email="hirer5@example.com")
 
         await register_as(client, email="seeker5@example.com")
         resume_id = (await client.post("/resumes", **resume_upload())).json()["id"]
@@ -336,6 +341,7 @@ class TestErasure:
         """
         await register_as(client, email="hirer6@example.com", role="recruiter")
         keeper_job = (await client.post("/jobs", json=JOB)).json()["id"]
+        await publish_job(client, job_id=keeper_job, as_email="hirer6@example.com")
         keeper = client.headers["Authorization"]
 
         await register_as(client, email="admin6@example.com", role="recruiter")

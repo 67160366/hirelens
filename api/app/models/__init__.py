@@ -18,6 +18,7 @@ from app.models.core import (
 from app.models.matching import (
     Job,
     JobRequirement,
+    JobStatus,
     RequirementKind,
     Screening,
     ScreeningStatus,
@@ -32,6 +33,7 @@ __all__ = [
     "ExtractedProfileRow",
     "Job",
     "JobRequirement",
+    "JobStatus",
     "LLMCallLog",
     "RequirementKind",
     "Resume",

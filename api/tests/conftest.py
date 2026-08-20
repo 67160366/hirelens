@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -22,7 +23,7 @@ from app.db import enforce_foreign_keys, get_session
 from app.jobs import JobContext
 from app.llm.fake import FakeExtractor, FakeMode
 from app.main import create_app
-from app.models import Base
+from app.models import Base, Candidate, Role
 from app.pipeline.retrieval import build_retriever
 from app.queue import InlineQueue, JobQueue
 from app.storage import LocalStorage
@@ -149,6 +150,53 @@ async def register_as(client: AsyncClient, *, email: str, role: str = "candidate
     return client
 
 
+async def set_role(sessionmaker: async_sessionmaker[AsyncSession], email: str, role: Role) -> None:
+    """Change an account's role out of band, the way an operator would.
+
+    There is no endpoint for this on purpose — `admin` in particular is not
+    self-selectable (`SelfServiceRole`), so a SQL statement is how it is granted. It
+    lives here rather than in one test module because four of them now need it.
+    """
+    async with sessionmaker() as session:
+        account = (
+            await session.execute(select(Candidate).where(Candidate.email == email))
+        ).scalar_one()
+        account.role = role
+        await session.commit()
+
+
+async def publish_job(client: AsyncClient, *, job_id: str, as_email: str) -> None:
+    """Put a posting on the public site, which takes an admin and nothing less.
+
+    Promotes whichever account the client is currently signed in as, publishes, and
+    puts that account's role back. The round trip is the point rather than an
+    inconvenience: a helper that could publish without it would be exercising a
+    system where anyone who registers can publish, which is exactly what
+    `app/publication.py` exists to prevent. It promotes the **caller** rather than the
+    owner because that is what really happens — an administrator publishes somebody
+    else's posting, and publishing requires no ownership at all.
+
+    The sessionmaker comes off the client rather than through a fixture parameter.
+    `client` already carries its app and the app already carries the factory, so
+    reaching it here keeps ~a dozen call sites from having to grow an argument that
+    is not about what they are testing.
+    """
+    sessionmaker = client.app.state.sessionmaker  # type: ignore[attr-defined]
+    previous = await _role_of(sessionmaker, as_email)
+    await set_role(sessionmaker, as_email, Role.ADMIN)
+    response = await client.post(f"/jobs/{job_id}/publication", json={"status": "published"})
+    assert response.status_code == 200, response.text
+    await set_role(sessionmaker, as_email, previous)
+
+
+async def _role_of(sessionmaker: async_sessionmaker[AsyncSession], email: str) -> Role:
+    async with sessionmaker() as session:
+        account = (
+            await session.execute(select(Candidate).where(Candidate.email == email))
+        ).scalar_one()
+        return account.role
+
+
 @pytest.fixture
 async def authed_client(client: AsyncClient) -> AsyncClient:
     """A client carrying a bearer token for a freshly registered **candidate**.
@@ -211,4 +259,11 @@ async def upload_and_read(client: AsyncClient, name: str = "resume_en.pdf") -> d
     return response.json()  # type: ignore[no-any-return]
 
 
-__all__ = ["CONSENT", "get_current_candidate", "resume_upload", "upload_and_read"]
+__all__ = [
+    "CONSENT",
+    "get_current_candidate",
+    "publish_job",
+    "resume_upload",
+    "set_role",
+    "upload_and_read",
+]

@@ -53,6 +53,33 @@ class RequirementKind(StrEnum):
     OTHER = "other"
 
 
+class JobStatus(StrEnum):
+    """Where a posting is in its editorial life.
+
+    Stored as the enum **name** (`DRAFT`), serialized as the value (`draft`) —
+    the same split `Role`, `ResumeStatus` and `RequirementKind` already have.
+
+    Reversible on purpose, and `app/publication.py` says why at length: a
+    posting's status is an editorial fact about a document the employer wrote,
+    not a claim about a person, so it needs no append-only log and taking one
+    down is an ordinary thing to do.
+    """
+
+    DRAFT = "draft"
+    """Written, editable, and visible to nobody but its owner. The default, and
+    the only status a posting can be created in."""
+
+    PUBLISHED = "published"
+    """On the public careers site. **Only an admin may set this** — anyone can
+    register as a recruiter, so publishing cannot be a power an account grants
+    itself."""
+
+    CLOSED = "closed"
+    """No longer accepting applications. Distinct from `draft`: a closed posting
+    was public and the applications against it are still real, so it is not the
+    same thing as one that never appeared."""
+
+
 class Job(UUIDPrimaryKey, Timestamps, Base):
     __tablename__ = "jobs"
 
@@ -67,6 +94,32 @@ class Job(UUIDPrimaryKey, Timestamps, Base):
     Deliberately *not* what a candidate is judged against — the requirements below
     are. Judging free text would make it impossible to say which part of a posting a
     verdict answered.
+    """
+
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, native_enum=False, length=20),
+        default=JobStatus.DRAFT,
+        nullable=False,
+        index=True,
+    )
+    """Draft until an admin publishes it. Indexed because the public board's
+    only filter is this column."""
+
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When it first became public, or null while it never has.
+
+    A separate column rather than reading `updated_at`, because a board orders by
+    *when a posting appeared* and an edit to a live posting must not send it back
+    to the top. Set once and left alone: republishing something that was taken
+    down does not make it new.
+    """
+
+    location: Mapped[str | None] = mapped_column(String(120))
+    """Where the work is, as free text. Null while nobody has said.
+
+    Free text rather than a taxonomy: "Bangkok", "Remote (Thailand)" and
+    "Hybrid — Chiang Mai" are all answers a real posting gives, and nothing in
+    this system reasons about it. A verdict is never derived from it.
     """
 
     owner: Mapped[Candidate] = relationship()

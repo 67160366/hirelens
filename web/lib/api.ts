@@ -11,12 +11,7 @@ export type MatchKind = "exact" | "whitespace_collapsed" | "whitespace_stripped"
 /** `unknown_requirement` is judging's: a quote aimed at a requirement that does not exist. */
 export type RejectReason = "empty" | "too_short" | "not_found" | "unknown_requirement";
 export type ResumeStatus =
-  | "pending"
-  | "processing"
-  | "parsed"
-  | "extracted"
-  | "failed"
-  | "dead_lettered";
+  "pending" | "processing" | "parsed" | "extracted" | "failed" | "dead_lettered";
 
 export interface EvidenceRef {
   quote: string;
@@ -173,12 +168,7 @@ export interface TokenPair {
 /* -------------------------------------------------------------------------- */
 
 export type ApplicationState =
-  | "applied"
-  | "screening"
-  | "screened"
-  | "shortlisted"
-  | "rejected"
-  | "withdrawn";
+  "applied" | "screening" | "screened" | "shortlisted" | "rejected" | "withdrawn";
 
 export interface Application {
   id: string;
@@ -228,10 +218,19 @@ export interface Requirement {
   weight: number;
 }
 
+/** Where a posting is in its editorial life — see `api/app/publication.py`. */
+export type JobStatus = "draft" | "published" | "closed";
+
 export interface Job {
   id: string;
   title: string;
   description: string | null;
+  location: string | null;
+  /** `draft` until an **admin** publishes it. A recruiter cannot: anyone can
+   *  register as one, so publishing is deliberately not self-grantable. */
+  status: JobStatus;
+  /** When it first appeared publicly, or null while it never has. */
+  published_at: string | null;
   requirements: Requirement[];
 }
 
@@ -277,11 +276,7 @@ export interface RequirementJudgment {
 }
 
 export type ScreeningStatus =
-  | "pending"
-  | "processing"
-  | "completed"
-  | "failed"
-  | "dead_lettered";
+  "pending" | "processing" | "completed" | "failed" | "dead_lettered";
 
 /** Mirrors `ScreeningOut` in `api/app/api/routes/screenings.py`. */
 export interface Screening {
@@ -612,8 +607,7 @@ export const api = {
   listResumes: () => request<Resume[]>("/resumes", {}),
 
   /** Put a stopped resume back on the queue — the dead-letter replay path. */
-  retryResume: (id: string) =>
-    request<Resume>(`/resumes/${id}/retry`, { method: "POST" }),
+  retryResume: (id: string) => request<Resume>(`/resumes/${id}/retry`, { method: "POST" }),
 
   getProfile: (id: string) => request<ProfileResponse>(`/resumes/${id}`, {}),
 
@@ -632,8 +626,7 @@ export const api = {
     (await send(`/resumes/${id}/file`, {})).arrayBuffer(),
 
   /** Where each character of the document sits, for the overlay to draw. */
-  getResumeGeometry: (id: string) =>
-    request<GeometryReport>(`/resumes/${id}/geometry`, {}),
+  getResumeGeometry: (id: string) => request<GeometryReport>(`/resumes/${id}/geometry`, {}),
 
   /* ---------------------------------------------------------------------- */
   /* Jobs and their requirements                                             */
@@ -668,11 +661,7 @@ export const api = {
    * here omitted `Content-Type`, so the body was never parsed as JSON and the
    * server answered 422 to *every* transition — shortlist, reject and withdraw
    * alike — with a pydantic message shown to the user verbatim. */
-  moveApplication: (
-    applicationId: string,
-    toState: ApplicationState,
-    reason?: string,
-  ) =>
+  moveApplication: (applicationId: string, toState: ApplicationState, reason?: string) =>
     request<Application>(
       `/applications/${applicationId}/transitions`,
       json("POST", { to_state: toState, reason: reason ?? null }),
@@ -684,8 +673,7 @@ export const api = {
   getJob: (id: string) => request<Job>(`/jobs/${id}`, {}),
 
   /** Title, description and the whole requirement list in one call. */
-  createJob: (payload: JobInput) =>
-    request<Job>("/jobs", json("POST", payload)),
+  createJob: (payload: JobInput) => request<Job>("/jobs", json("POST", payload)),
 
   deleteJob: async (id: string): Promise<void> => {
     await send(`/jobs/${id}`, { method: "DELETE" });
@@ -702,20 +690,10 @@ export const api = {
    * `kind`, `label` and `detail` are what the judge was shown, so editing one makes
    * every existing screening stale. `staleningFields` names the difference.
    */
-  updateRequirement: (
-    jobId: string,
-    requirementId: string,
-    patch: RequirementPatch,
-  ) =>
-    request<Requirement>(
-      `/jobs/${jobId}/requirements/${requirementId}`,
-      json("PATCH", patch),
-    ),
+  updateRequirement: (jobId: string, requirementId: string, patch: RequirementPatch) =>
+    request<Requirement>(`/jobs/${jobId}/requirements/${requirementId}`, json("PATCH", patch)),
 
-  deleteRequirement: async (
-    jobId: string,
-    requirementId: string,
-  ): Promise<void> => {
+  deleteRequirement: async (jobId: string, requirementId: string): Promise<void> => {
     await send(`/jobs/${jobId}/requirements/${requirementId}`, { method: "DELETE" });
   },
 
@@ -746,11 +724,9 @@ export const api = {
   },
 
   /** The raw list, including the ones still running and the ones that failed. */
-  listScreenings: (jobId: string) =>
-    request<Screening[]>(`/jobs/${jobId}/screenings`, {}),
+  listScreenings: (jobId: string) => request<Screening[]>(`/jobs/${jobId}/screenings`, {}),
 
-  getScreening: (id: string) =>
-    request<ScreeningDetail>(`/screenings/${id}`, {}),
+  getScreening: (id: string) => request<ScreeningDetail>(`/screenings/${id}`, {}),
 
   retryScreening: (id: string) =>
     request<Screening>(`/screenings/${id}/retry`, { method: "POST" }),
@@ -761,8 +737,7 @@ export const api = {
    * Costs one query and no model call, which is what lets a weight edit reorder the
    * list immediately while every screening stays current. Re-fetch it freely.
    */
-  getRanking: (jobId: string) =>
-    request<Ranking>(`/jobs/${jobId}/ranking`, {}),
+  getRanking: (jobId: string) => request<Ranking>(`/jobs/${jobId}/ranking`, {}),
 
   /**
    * What this account's model calls consumed, and how well the guardrail held.
@@ -787,10 +762,9 @@ export const api = {
    * the server capped the connection, or the row is gone. The caller falls back.
    */
   async streamResume(id: string, onProgress?: ProgressHandler) {
-    const response = await send(
-      `/resumes/${id}/events`,
-      { headers: { Accept: "text/event-stream" } },
-    );
+    const response = await send(`/resumes/${id}/events`, {
+      headers: { Accept: "text/event-stream" },
+    });
     if (!response.body) return null;
 
     for await (const frame of readFrames(response.body)) {
@@ -814,10 +788,7 @@ export const api = {
    * from the API itself — 401 in particular has to reach the caller, which trades
    * the refresh token for a new pair — so only a broken stream falls back.
    */
-  async waitForProfile(
-    id: string,
-    onProgress?: ProgressHandler,
-  ): Promise<ProfileResponse> {
+  async waitForProfile(id: string, onProgress?: ProgressHandler): Promise<ProfileResponse> {
     try {
       const settled = await api.streamResume(id, onProgress);
       if (settled) return await api.getProfile(id);

@@ -23,6 +23,7 @@ import {
   countCompletedScreenings,
   exclusionMessage,
   makesScreeningsStale,
+  publicationNote,
   resumeLabel,
   scorePercent,
 } from "./screening";
@@ -248,5 +249,22 @@ describe("countCompletedScreenings", () => {
 
   it("counts nothing on an empty list", () => {
     expect(countCompletedScreenings([])).toBe(0);
+  });
+});
+
+describe("what a posting's status means to the person looking at it", () => {
+  it("names who can publish, not merely that you cannot", () => {
+    // A recruiter who has written a posting and cannot find it anywhere a candidate
+    // looks needs to know that is a rule. The sentence carries the *reason* for the
+    // same reason the API answers 409 with one instead of a bare 403.
+    const draft = publicationNote("draft");
+    expect(draft).toContain("administrator");
+    expect(draft).toContain("register as a recruiter");
+  });
+
+  it("distinguishes closed from draft, because they are not the same absence", () => {
+    // A closed posting was public and its applications are real; a draft never was.
+    expect(publicationNote("closed")).toContain("already made are unaffected");
+    expect(publicationNote("published")).toContain("accepting applications");
   });
 });

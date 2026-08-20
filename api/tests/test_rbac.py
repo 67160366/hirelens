@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import Candidate, Role
-from tests.conftest import register_as, resume_upload
+from tests.conftest import publish_job, register_as, resume_upload
 
 JOB = {"title": "Backend Engineer", "requirements": [{"kind": "skill", "label": "Python"}]}
 
@@ -138,7 +138,11 @@ class TestWhatARoleGates:
         assert (await client.get(f"/jobs/{job_id}")).status_code == 200
         assert (await client.get("/jobs")).status_code == 200
 
-    async def test_a_candidate_sees_a_posting_they_do_not_own(self, client: AsyncClient):
+    async def test_a_candidate_sees_a_published_posting_they_do_not_own(
+        self,
+        client: AsyncClient,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
         """The one that was missing, and the reason the journey was unreachable.
 
         Asserting the *status code* of `GET /jobs` passed against a version that
@@ -147,13 +151,25 @@ class TestWhatARoleGates:
         the apply screen — which builds its list from here — had nothing to offer.
 
         The assertion that matters is therefore about the **contents**, not the code:
-        the same lesson as slice 3's `actor_role`-not-`actor_id`.
+        the same lesson as slice 3's `actor_role`-not-`actor_id`. Migration `0013`
+        makes that sharper rather than weaker — the filter is `status`, not owner,
+        so the empty-list failure mode is still one line away and still caught here.
         """
         await register_as(client, email="hirer@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
 
         await register_as(client, email="seeker@example.com", role="candidate")
 
+        # A draft is not on the discovery surface at all, which is the half the
+        # publication lifecycle adds. Asserted before publishing so the assertion
+        # below cannot pass by accident.
+        assert (await client.get("/jobs")).json() == []
+
+        await publish_job(
+            client,
+            job_id=job_id,
+            as_email="seeker@example.com",
+        )
         listed = await client.get("/jobs")
         assert listed.status_code == 200
         assert [job["id"] for job in listed.json()] == [job_id]
@@ -235,7 +251,11 @@ class TestTheTwoRefusalsStayApart:
             await client.post(f"/jobs/{job_id}/requirements", json={"label": "Go"})
         ).status_code == 404
 
-    async def test_a_public_posting_does_not_make_its_screenings_public(self, client: AsyncClient):
+    async def test_a_public_posting_does_not_make_its_screenings_public(
+        self,
+        client: AsyncClient,
+        sessionmaker_for_tests: async_sessionmaker[AsyncSession],
+    ):
         """Opening the posting must not open what the posting *produced*.
 
         A ranking and a screening carry verdicts about named people, so they stay on
@@ -245,6 +265,11 @@ class TestTheTwoRefusalsStayApart:
         """
         await register_as(client, email="poster@example.com", role="recruiter")
         job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+        await publish_job(
+            client,
+            job_id=job_id,
+            as_email="poster@example.com",
+        )
 
         await register_as(client, email="onlooker@example.com", role="recruiter")
 

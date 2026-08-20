@@ -6,9 +6,11 @@ import { useCallback, useEffect, useState } from "react";
 import { AuthPanel } from "@/components/AuthPanel";
 import { RequirementFields } from "@/components/RequirementFields";
 import { Banner } from "@/components/ui/Banner";
+import { Badge } from "@/components/ui/Badge";
 import { MAX_REQUIREMENTS_PER_JOB, api, type Job, type RequirementInput } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
 import { BLANK_REQUIREMENT } from "@/lib/requirements";
+import { publicationNote } from "@/lib/screening";
 
 export default function JobsPage() {
   const { session, ready, authenticate, authorized } = useAuth();
@@ -202,7 +204,17 @@ export default function JobsPage() {
                 href={`/jobs/${job.id}`}
                 className="ring-focus flex items-baseline justify-between gap-4 rounded-card border border-line bg-surface px-4 py-3 transition-colors hover:border-accent hover:bg-surface-sunken"
               >
-                <span className="text-sm font-medium">{job.title}</span>
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  {job.title}
+                  {/* Neutral, like every other workflow state: where a posting is
+                      in its editorial life is not something the system found in a
+                      document. The word carries it. */}
+                  {job.status !== "published" ? (
+                    <Badge tone="neutral" title={publicationNote(job.status)}>
+                      {job.status}
+                    </Badge>
+                  ) : null}
+                </span>
                 <span className="text-xs text-ink-muted">
                   {job.requirements.length}{" "}
                   {job.requirements.length === 1 ? "requirement" : "requirements"}

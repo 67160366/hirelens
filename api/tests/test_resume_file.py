@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.api.deps import get_storage
 from app.models import Candidate, Resume, Role
 from app.storage import ObjectNotFoundError, Storage, StorageError
-from tests.conftest import register_as, resume_upload
+from tests.conftest import publish_job, register_as, resume_upload
 
 JOB = {
     "title": "Backend Engineer",
@@ -51,6 +51,7 @@ async def _applied(client: AsyncClient) -> dict[str, str]:
     """
     await register_as(client, email="hirer@example.com", role="recruiter")
     job_id = (await client.post("/jobs", json=JOB)).json()["id"]
+    await publish_job(client, job_id=job_id, as_email="hirer@example.com")
     recruiter = client.headers["Authorization"]
 
     await register_as(client, email="seeker@example.com")

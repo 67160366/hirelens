@@ -10,6 +10,7 @@
 import type {
   EvidenceRef,
   ExcludedEntry,
+  JobStatus,
   RankedEntry,
   RequirementJudgment,
   RequirementPatch,
@@ -70,7 +71,9 @@ export function exclusionMessage(entry: ExcludedEntry): string {
     case "stale":
       return "The requirements changed after this ran, so it answers an older question. Screen it again to bring it back.";
     case "not_completed":
-      return NOT_COMPLETED_MESSAGES[entry.status] ?? `Not finished — status is ${entry.status}.`;
+      return (
+        NOT_COMPLETED_MESSAGES[entry.status] ?? `Not finished — status is ${entry.status}.`
+      );
     case "malformed":
       return "The stored result does not line up with the job's current requirements, so it was left out rather than matched against the wrong ones.";
   }
@@ -100,6 +103,33 @@ export function resumeLabel(entry: RankedEntry | ExcludedEntry): string {
 }
 
 /** The weighted share of requirements met, as a percentage for display. */
+/**
+ * What a posting's status means for the person looking at it, in one sentence.
+ *
+ * Here rather than inline in JSX for the reason `droppedNote` is: a sentence built
+ * in a component is a sentence `web/`'s DOM-free vitest cannot reach, which is how
+ * "1 claims dropped" reached a screen with every gate green.
+ *
+ * The draft line names **who** can publish, not just that you cannot. A recruiter
+ * who has written a posting and cannot see it anywhere a candidate looks needs to
+ * know that is a rule rather than a bug — the same instinct as the API answering
+ * 409 with a reason instead of a bare 403.
+ */
+export function publicationNote(status: JobStatus): string {
+  switch (status) {
+    case "draft":
+      return (
+        "Only you can see this. An administrator publishes it to the careers site — " +
+        "anyone can register as a recruiter, so publishing is not something an " +
+        "account can grant itself."
+      );
+    case "closed":
+      return "No longer accepting applications. The ones already made are unaffected.";
+    case "published":
+      return "Live on the careers site and accepting applications.";
+  }
+}
+
 export function scorePercent(entry: RankedEntry): string {
   return `${(entry.score * 100).toFixed(1)}%`;
 }
@@ -120,6 +150,8 @@ export function scorePercent(entry: RankedEntry): string {
  * reason `droppedNote` is: a sentence built in JSX is somewhere `web/`'s no-DOM
  * vitest cannot reach, and that is exactly how "1 claims dropped" shipped.
  */
-export function countCompletedScreenings(screenings: readonly { status: ScreeningStatus }[]): number {
+export function countCompletedScreenings(
+  screenings: readonly { status: ScreeningStatus }[],
+): number {
   return screenings.filter((screening) => screening.status === "completed").length;
 }
