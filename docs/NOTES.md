@@ -24,7 +24,9 @@ mid-edit state, compiled clean at 00:12). There is **no `web` container** — :3
 the browser, and the usual "is the container serving the new bundle?" trap does not apply.
 
 Gates re-run first, because group D landed after the last full run: `typecheck` clean,
-`lint` clean, vitest **168**. Nothing under `api/` touched, so `pytest` was not re-run.
+`lint` clean, vitest **168** — and **171** at the end of the session, after the defect
+below was fixed with three cases. Nothing under `api/` touched, so `pytest` was not
+re-run: a moved number there would have meant the work reached somewhere it should not.
 
 Driven on `LLM_PROVIDER=fake` — **zero Gemini quota**. Console instrument proven to speak
 first (a `console.log`/`console.error` probe pair, both confirmed visible) before any
@@ -38,6 +40,7 @@ absence was believed.
 | **A2, why the remount does not cover for it** | `detail` is state on the *page*, not inside the keyed subtree, so a late `setDetail` would have landed regardless of the remount and paired en's verdicts with th's text. The `requestedScreeningId` guard is what does the work |
 | **A4 — the served filename** | The ranking table names `resume_th.pdf` / `resume_en.pdf` from `RankedEntry.resume_filename`, with no client-side join |
 | **A3 — `/applications` history keyed by id** | Passed, and **no throwaway account was needed**: `applications.py:164` says applying is *"open to any role"*, so the recruiter authored a second posting and applied to both. The sharp half was driven — `fetch` patched to fail the *second* history request — and the row read **"Loading the history…"** with a red banner, **not** the first row's timeline, which is the state that used to persist. On the success path the two logs carry different timestamps (`11:51:52` vs `11:52:10`), so they are genuinely two logs rather than one leaked between rows |
+| **Why A3 needed a second posting** | Not obvious, and it cost ten minutes: `jobs.py:222` branches the scope by role — *"a recruiter's `/jobs` is an authoring surface"* — so a recruiter sees only postings they own and can only apply to those. One account holding two applications therefore needs two of its **own** postings, not two of anybody's |
 | **B1 — `.docx` in the picker** | `accept` carries both MIME types and both extensions |
 | **B2 — the consent label split** | Two separate labels; the consent one contains only the checkbox and the file one contains neither. Clicking the consent **text** ticks the box and unlocks the picker rather than opening a file dialog. Consent unticked on load, picker `disabled` — the 2026-08-13 property, still holding |
 | **B3 — error and retry on `/jobs`** | Forced with a patched `fetch`: the banner names the API and the list area reads **"The list of jobs could not be loaded. [Try again]"**, where it used to be silently empty — indistinguishable from "you have no postings". "Try again" then recovered |
@@ -135,6 +138,13 @@ before and worth not relearning.
    same call as the 2026-08-19 canvas. A later session edits the published page by reading
    it back with the `design` skill's `--extract`, not by hunting for them.
 
+   **Two things about the canvas tool itself, so the next session does not re-learn them.**
+   A freshly published canvas shows its artboards **blank white for the first ~25 seconds** —
+   the preview iframes load lazily, and it looks exactly like content that failed to render;
+   wait before diagnosing. And an artboard **frame must be wider than its root element**: set
+   equal and the vertical scrollbar forces a horizontal one, so every board arrived with two
+   scrollbars. The frames are 32px wider than their content now.
+
    **One thing worth carrying:** the first draft spelled the resume's employer
    `บริษัท เอชีเอ็มดี โลจิสติกส์`. The real fixture says `บริษัท เอซีเอ็มอี โลจิสติกส์`, read out
    of `document_text` in Postgres. On a product whose entire claim is *the quoted text
@@ -147,6 +157,13 @@ before and worth not relearning.
 4. **Everything else waits behind those**: recording the careers-site direction and the
    Thai-first decision in `docs/PLAN.md` (it still ends at M6), and the eleven-slice
    careers-site build.
+
+**Left in the dev database on purpose, so it is not a mystery later:** a second posting
+`Data Engineer (history check)` owned by `slice1-check@example.com`, and **two applications**
+by that same account, one per posting (`resume_th.pdf` and `resume_en.pdf`). They exist because
+A3 needs one account holding two applications — a shape this database did not have — and they
+are worth keeping rather than sweeping, since the next check of that kind would have to build
+them again.
 
 **The two smells found while reading B's code are both settled:**
 
