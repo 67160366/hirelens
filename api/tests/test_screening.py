@@ -32,7 +32,7 @@ from app.pipeline.prompts import JUDGMENT_PROMPT_VERSION
 from app.schemas.judgment import RequirementSpec, Verdict
 from app.services.screening_service import NotScreenable
 from app.storage import LocalStorage
-from tests.conftest import resume_upload
+from tests.conftest import register_as, resume_upload
 from tests.test_worker import RecordingQueue
 
 JOB_PAYLOAD = {
@@ -303,18 +303,10 @@ class TestOwnership:
     async def test_another_candidates_job_is_not_found(
         self, client: AsyncClient, context: JobContext
     ):
-        owner = await client.post(
-            "/auth/register",
-            json={"email": "owner@example.com", "password": "a-good-password", "role": "recruiter"},
-        )
-        client.headers["Authorization"] = f"Bearer {owner.json()['access_token']}"
+        await register_as(client, email="owner@example.com", role="recruiter")
         job_id, _ = await _job_and_resume(client, context)
 
-        intruder = await client.post(
-            "/auth/register",
-            json={"email": "other@example.com", "password": "a-good-password", "role": "recruiter"},
-        )
-        client.headers["Authorization"] = f"Bearer {intruder.json()['access_token']}"
+        await register_as(client, email="other@example.com", role="recruiter")
         their = await client.post("/resumes", **resume_upload())
 
         response = await client.post(
@@ -323,23 +315,11 @@ class TestOwnership:
         assert response.status_code == 404
 
     async def test_another_candidates_resume_is_not_found(self, client: AsyncClient):
-        stranger = await client.post(
-            "/auth/register",
-            json={
-                "email": "stranger@example.com",
-                "password": "a-good-password",
-                "role": "recruiter",
-            },
-        )
-        client.headers["Authorization"] = f"Bearer {stranger.json()['access_token']}"
+        await register_as(client, email="stranger@example.com", role="recruiter")
         theirs = await client.post("/resumes", **resume_upload())
         their_resume_id = theirs.json()["id"]
 
-        mine = await client.post(
-            "/auth/register",
-            json={"email": "mine@example.com", "password": "a-good-password", "role": "recruiter"},
-        )
-        client.headers["Authorization"] = f"Bearer {mine.json()['access_token']}"
+        await register_as(client, email="mine@example.com", role="recruiter")
         job = await client.post("/jobs", json=JOB_PAYLOAD)
 
         response = await client.post(
@@ -350,28 +330,12 @@ class TestOwnership:
     async def test_reading_someone_elses_screening_is_not_found(
         self, client: AsyncClient, context: JobContext
     ):
-        owner = await client.post(
-            "/auth/register",
-            json={
-                "email": "owner2@example.com",
-                "password": "a-good-password",
-                "role": "recruiter",
-            },
-        )
-        client.headers["Authorization"] = f"Bearer {owner.json()['access_token']}"
+        await register_as(client, email="owner2@example.com", role="recruiter")
         job_id, resume_id = await _job_and_resume(client, context)
         created = await client.post(f"/jobs/{job_id}/screenings", json={"resume_id": resume_id})
         screening_id = created.json()["id"]
 
-        intruder = await client.post(
-            "/auth/register",
-            json={
-                "email": "other2@example.com",
-                "password": "a-good-password",
-                "role": "recruiter",
-            },
-        )
-        client.headers["Authorization"] = f"Bearer {intruder.json()['access_token']}"
+        await register_as(client, email="other2@example.com", role="recruiter")
 
         assert (await client.get(f"/screenings/{screening_id}")).status_code == 404
         assert (await client.post(f"/screenings/{screening_id}/retry")).status_code == 404

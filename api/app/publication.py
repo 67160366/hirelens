@@ -14,10 +14,13 @@ ceremony, and pretending otherwise would make the append-only rule look like a h
 rather than the specific answer it is to claims about people.
 
 **One rule carries the security of every public route that comes after it.** Only an
-`ADMIN` may publish. `SelfServiceRole` (`api/app/api/routes/auth.py`) lets anyone register
-as a recruiter, so if a recruiter could publish, then anyone who can register can put a
-posting on the public careers site. `ADMIN` is the one role that is deliberately not
-self-selectable, which is exactly why it is the one that may publish.
+`ADMIN` may publish. This was written when `SelfServiceRole` still let anyone register as
+a recruiter, so a publishing recruiter meant a publishing stranger. That hole was closed
+at the source afterwards — `candidate` is now the only self-selectable role — and **the
+rule stays**, on a reason that never depended on the hole: putting a posting on the site
+under the company's name is an editorial act, and a recruiter authoring one is not the
+same as the company saying it. The registration fix means a stranger cannot reach either
+door; this means an insider still cannot open the outer one alone.
 
 The owner is not powerless: they draft, they edit, they close, and they may take their own
 posting back down to a draft. What they may not do is decide that something appears on the

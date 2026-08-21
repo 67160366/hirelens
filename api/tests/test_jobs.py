@@ -36,12 +36,8 @@ async def create_job(client: AsyncClient, payload: dict | None = None) -> dict:
 
 
 async def register_another_candidate(client: AsyncClient, email: str) -> None:
-    """Swap the client onto a second account, so the first one's rows are foreign."""
-    response = await client.post(
-        "/auth/register", json={"email": email, "password": "another-pw", "role": "recruiter"}
-    )
-    assert response.status_code == 201, response.text
-    client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+    """Swap the client onto a second recruiter, so the first one's rows are foreign."""
+    await register_as(client, email=email, role="recruiter")
 
 
 @pytest.fixture

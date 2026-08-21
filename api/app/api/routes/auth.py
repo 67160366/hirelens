@@ -35,21 +35,29 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class SelfServiceRole(StrEnum):
-    """The roles an account may claim for itself.
+    """The roles an account may claim for itself. There is exactly one.
 
-    `admin` is absent on purpose: an account that can grant itself admin is not a
-    role system. It is set out of band, which for now means a SQL statement.
+    **`recruiter` used to be here, and removing it is the point.** It was recorded as
+    a known limitation on the reasoning that verifying somebody really represents the
+    company they claim to is an identity problem this project cannot solve. That
+    reasoning held while HireLens was shaped like software an employer buys. It does
+    not hold now: the site has **one** employer, HireLens itself
+    (`docs/PLAN.md` — the careers-site section), so there is no company to verify
+    anybody against. A stranger claiming `recruiter` was not an unverified employer;
+    they were a stranger inside this company's own hiring side.
 
-    **`recruiter` being self-selectable is a known limitation, not a decision that
-    an employer needs no verification.** Checking that someone really represents the
-    company they say they do is an identity problem, and this project has no answer
-    to it — so the limitation is written down (`README.md`) rather than papered over
-    with a check that proves nothing. What the role does buy is real: a `candidate`
-    account cannot reach a recruiter route at all.
+    `admin` was never here, for the reason that still applies to both: an account
+    that can grant itself a role is not a role system. Both are granted out of band,
+    which for now means a SQL statement — `tests/conftest.py::set_role` is that
+    statement, and it is deliberately not an endpoint.
+
+    **One member rather than no field at all.** A `role` this model does not declare
+    would be *ignored*, so `{"role": "recruiter"}` would quietly create a candidate
+    and answer 201. Asking for a role you may not have is a request worth refusing
+    out loud, and 422 is that refusal.
     """
 
     CANDIDATE = "candidate"
-    RECRUITER = "recruiter"
 
 
 class RegisterRequest(BaseModel):

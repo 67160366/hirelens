@@ -46,14 +46,39 @@ class TestTheDefault:
         assert response.status_code == 200
         assert response.json()["role"] == "candidate"
 
-    async def test_an_account_may_register_as_a_recruiter(self, recruiter_client: AsyncClient):
+    async def test_an_account_may_not_register_as_a_recruiter(self, client: AsyncClient):
+        """It used to be able to, and this test used to assert the opposite.
+
+        The old version passed for a real reason and now would pass for a false one:
+        `recruiter_client` promotes out of band, so asserting that the fixture's role
+        is `recruiter` says nothing about what registration accepts. The refusal is
+        what needs pinning, and this is where it lives.
+
+        Why the rule changed is in `SelfServiceRole`: with one employer there is no
+        company to verify a recruiter against, so a stranger claiming the role was
+        not an unverified employer but a stranger inside this company's hiring side.
+        """
+        response = await client.post(
+            "/auth/register",
+            json={
+                "email": "hopeful@example.com",
+                "password": "a-good-password",
+                "role": "recruiter",
+            },
+        )
+        assert response.status_code == 422
+
+    async def test_a_recruiter_is_made_out_of_band(self, recruiter_client: AsyncClient):
+        """And once made, the account is a recruiter on the very next request — the
+        role is read from the row, never from the token it was issued before."""
         assert (await recruiter_client.get("/auth/me")).json()["role"] == "recruiter"
 
     async def test_an_account_may_not_register_as_an_admin(self, client: AsyncClient):
-        """Self-granted admin is not a role system.
+        """Self-granted admin is not a role system, and never was.
 
         `SelfServiceRole` omits it, so the request never reaches a handler — the
         refusal is schema validation, which is the cheapest place for it to live.
+        `recruiter` joined it above; this is the case that was always refused.
         """
         response = await client.post(
             "/auth/register",

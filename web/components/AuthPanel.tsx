@@ -2,26 +2,12 @@
 
 import { useState } from "react";
 
-import { api, type SelfServiceRole } from "@/lib/api";
+import { api } from "@/lib/api";
 import { Banner } from "@/components/ui/Banner";
 import { Button } from "@/components/ui/Button";
 import { errorMessage, establishSession, type Session } from "@/lib/auth";
 
 type Mode = "login" | "register";
-
-/** What each self-service role gets, in the terms someone choosing would use. */
-const ROLE_CHOICES: { value: SelfServiceRole; label: string; blurb: string }[] = [
-  {
-    value: "candidate",
-    label: "I'm looking for work",
-    blurb: "Upload a CV and apply to postings.",
-  },
-  {
-    value: "recruiter",
-    label: "I'm hiring",
-    blurb: "Post jobs and screen the people who apply.",
-  },
-];
 
 /**
  * Sign in or create an account.
@@ -30,11 +16,12 @@ const ROLE_CHOICES: { value: SelfServiceRole; label: string; blurb: string }[] =
  * same panel when there is no session, and duplicating a login form is how two of
  * them drift apart.
  *
- * **Registration asks for a role**, because there is no other way to become a
- * recruiter — M4 slice 2 made it a registration field for exactly that reason, and
- * this panel not offering it meant a browser could only ever create candidates.
- * Every recruiter screen was therefore unreachable without going around the UI.
- * `admin` is not offered, and `SelfServiceRole` is why it cannot be.
+ * **Registration no longer asks for a role, and the question is gone rather than
+ * fixed to one answer.** It used to offer "I'm hiring", because a role was the only
+ * way to become a recruiter. The site has one employer now, so that question has no
+ * honest answer to give a stranger: everybody arriving at this panel from the public
+ * site is an applicant, and the two people who are not are granted their role out of
+ * band. A radio group with one option would still be asking.
  */
 export function AuthPanel({
   onAuthenticated,
@@ -44,7 +31,6 @@ export function AuthPanel({
   const [mode, setMode] = useState<Mode>("register");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<SelfServiceRole>("candidate");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -59,7 +45,7 @@ export function AuthPanel({
       // signing in successfully and being unauthenticated a moment later is the most
       // confusing state this client has, and it names the cause instead.
       const session = await establishSession(() =>
-        mode === "register" ? api.register(email, password, role) : api.login(email, password),
+        mode === "register" ? api.register(email, password) : api.login(email, password),
       );
       onAuthenticated(session);
     } catch (caught) {
@@ -93,40 +79,6 @@ export function AuthPanel({
         autoComplete={mode === "register" ? "new-password" : "current-password"}
         className="field"
       />
-      {mode === "register" && (
-        <fieldset className="space-y-1.5">
-          <legend className="mb-1 text-xs text-ink-muted">What brings you here?</legend>
-          {ROLE_CHOICES.map((choice) => (
-            <label
-              key={choice.value}
-              className="flex cursor-pointer items-start gap-2 rounded-control border border-line px-2.5 py-2 hover:bg-surface-sunken"
-            >
-              <input
-                type="radio"
-                name="role"
-                value={choice.value}
-                checked={role === choice.value}
-                onChange={() => setRole(choice.value)}
-                className="mt-0.5"
-              />
-              <span className="min-w-0">
-                <span className="block text-xs font-medium">{choice.label}</span>
-                <span className="block text-micro text-ink-muted">{choice.blurb}</span>
-              </span>
-            </label>
-          ))}
-          {/* The limitation is stated rather than papered over with a check that
-              proves nothing — the same wording `README.md` and `SelfServiceRole`
-              carry. Someone choosing "I'm hiring" should know it is taken on
-              trust. */}
-          {role === "recruiter" && (
-            <p className="text-micro text-ink-muted">
-              Nothing here verifies that you represent an employer. That is a known limitation,
-              not a claim that it has been checked.
-            </p>
-          )}
-        </fieldset>
-      )}
       {error && <Banner tone="danger">{error}</Banner>}
       <Button type="submit" variant="primary" size="lg" disabled={busy} className="w-full">
         {busy ? "Working…" : mode === "register" ? "Create account" : "Sign in"}

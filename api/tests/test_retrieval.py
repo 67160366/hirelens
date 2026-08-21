@@ -29,7 +29,7 @@ from app.pipeline.retrieval import (
     tokenize,
 )
 from app.storage import LocalStorage
-from tests.conftest import resume_upload
+from tests.conftest import register_as, resume_upload
 from tests.test_worker import RecordingQueue
 
 # The real line out of the Thai fixture, not a hand-made one: the terms below sit
@@ -312,18 +312,10 @@ class TestTheCandidatesRoute:
         assert body[0]["score"] == 0
 
     async def test_another_candidates_job_is_not_found(self, client: AsyncClient) -> None:
-        first = await client.post(
-            "/auth/register",
-            json={"email": "one@example.com", "password": "correct horse b", "role": "recruiter"},
-        )
-        client.headers["Authorization"] = f"Bearer {first.json()['access_token']}"
+        await register_as(client, email="one@example.com", role="recruiter")
         job_id = await self._job(client)
 
-        second = await client.post(
-            "/auth/register",
-            json={"email": "two@example.com", "password": "correct horse b", "role": "recruiter"},
-        )
-        client.headers["Authorization"] = f"Bearer {second.json()['access_token']}"
+        await register_as(client, email="two@example.com", role="recruiter")
 
         response = await client.get(f"/jobs/{job_id}/candidates")
         assert response.status_code == 404

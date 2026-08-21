@@ -137,7 +137,7 @@ anywhere script can read it. Bearer wins when both are sent. Full schema at `/do
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/auth/register` | Create an account; returns an access + refresh pair **and** sets it as cookies. `role` is `candidate` (default) or `recruiter` — see the limitation below |
+| `POST` | `/auth/register` | Create an account; returns an access + refresh pair **and** sets it as cookies. Always a **candidate** — `recruiter` and `admin` are granted out of band |
 | `POST` | `/auth/login` | Exchange credentials for a token pair, in the body and in cookies |
 | `POST` | `/auth/refresh` | Rotate the pair; the token presented is revoked, so it is genuinely single-use. The body is optional — a browser cannot read its own httpOnly cookie to send one, so the cookie is used instead |
 | `POST` | `/auth/logout` | End this session — the access token, the refresh token behind it, and the cookies carrying them |
@@ -314,14 +314,19 @@ Recorded honestly, with tests pinning current behaviour so fixes are visible:
   which replaced the test that used to pin the opposite as a known limitation.
 - **There is no "sign out everywhere" route**, though the epoch above makes one cheap.
   `/auth/logout` deliberately ends only the session it is given.
-- **Anyone may register as a recruiter.** The role is a field on `POST /auth/register`,
-  because there is no other way to become one. Verifying that somebody really
-  represents the company they claim to is an identity problem this project has no
-  answer to, so the gap is recorded rather than papered over with a check that proves
-  nothing. What the role *does* buy is real and tested: a `candidate` account cannot
-  reach a recruiter route at all, and `admin` is deliberately **not** self-selectable —
-  an account that can grant itself admin is not a role system. Pinned by
-  `tests/test_rbac.py`.
+- ~~**Anyone may register as a recruiter.**~~ **Closed 2026-08-22.** It was recorded
+  here as a gap this project could not answer: verifying that somebody really
+  represents the company they claim to is an identity problem, and a check that proves
+  nothing is worse than an honest hole. What dissolved it was not a solution to that
+  problem but a decision about what this site *is* — one employer, HireLens itself
+  (`docs/PLAN.md`, the careers-site section). There is no company left to verify anyone
+  against, and a stranger claiming `recruiter` was never an unverified employer; they
+  were a stranger inside this company's own hiring side. `SelfServiceRole` now has one
+  member. `recruiter` and `admin` are both granted out of band, for the reason that
+  always applied to `admin` alone: an account that can grant itself a role is not a
+  role system. Pinned by `tests/test_rbac.py`, where the test that asserted the
+  opposite is replaced rather than deleted — it would have gone on passing against the
+  promoted fixture and proved nothing.
 - **The web client's session is an httpOnly cookie**, so no token is reachable from
   script. What is left in `localStorage` is an identity marker — id, email, role —
   which React renders from and which is how one tab learns another signed out, since

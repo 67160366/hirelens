@@ -137,16 +137,25 @@ async def client(
 async def register_as(client: AsyncClient, *, email: str, role: str = "candidate") -> AsyncClient:
     """Register an account, put its token on the client, and hand the client back.
 
-    `role` is a registration field because there is no other way to become a
-    recruiter — see `SelfServiceRole` in `app/api/routes/auth.py` for why that is a
-    recorded limitation rather than a claim that employers need no verification.
+    **Registration always creates a candidate; anything else is granted afterwards.**
+    `role` stayed in this signature so that ~30 call sites still read as "an account
+    of this kind", but it is no longer a registration field — `SelfServiceRole` in
+    `app/api/routes/auth.py` accepts `candidate` and nothing else, and a recruiter or
+    an admin is made the way an operator makes one, with `set_role` below.
+
+    The token issued before the promotion keeps working, which is worth knowing
+    rather than discovering: a role is read from the account row on every request,
+    never from the token, so `require_role` sees the new one immediately. Nothing
+    here needs a second sign-in.
     """
     response = await client.post(
         "/auth/register",
-        json={"email": email, "password": "correct horse battery", "role": role},
+        json={"email": email, "password": "correct horse battery"},
     )
     assert response.status_code == 201, response.text
     client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+    if role != Role.CANDIDATE.value:
+        await set_role(client.app.state.sessionmaker, email, Role(role))  # type: ignore[attr-defined]
     return client
 
 

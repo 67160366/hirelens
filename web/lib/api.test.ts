@@ -340,18 +340,15 @@ describe("register", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sends the role it was given", async () => {
-    const sent = captureBody();
-    await api.register("hirer@example.com", "a-good-password", "recruiter");
-    expect(sent[0]).toMatchObject({ email: "hirer@example.com", role: "recruiter" });
-  });
-
-  it("defaults to candidate rather than omitting the field", async () => {
+  it("sends no role at all", async () => {
     const sent = captureBody();
     await api.register("seeker@example.com", "a-good-password");
-    // Omitting it would let the server's own default decide, which happens to
-    // agree — but the request should say what it means, and a silent omission is
-    // how the field went missing in the first place.
-    expect(sent[0]).toMatchObject({ role: "candidate" });
+    expect(sent[0]).toMatchObject({ email: "seeker@example.com" });
+    // Not `role: "candidate"`, which is what this asserted until 2026-08-22.
+    // Sending the only permitted value would still be the client stating a choice
+    // it does not have, and the server's schema is now the single place the answer
+    // lives. A request that names a role is a request that could name a different
+    // one next time somebody edits this line.
+    expect(sent[0]).not.toHaveProperty("role");
   });
 });
