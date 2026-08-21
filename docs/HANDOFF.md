@@ -1613,11 +1613,20 @@ box 4 proposed      = (0.0, 243.95, 263.06, 842.25)   <- 7.83pt below the page
 ```
 
 `pdfplumber.Page.crop` refuses a box that is not fully inside the page, `parse_pdf`
-turns any `ValueError` from the read into `CorruptDocumentError`, and that is the
-**terminal `failed` status, not the retryable `dead_lettered` one**. So a document
-that reads perfectly well came back as one that cannot be processed, and `POST
-/resumes/{id}/retry` could not help. Measured on the same file with column detection
+turns any `ValueError` from the read into `CorruptDocumentError`, and `ParseError` is on
+`decide_retry`'s permanent whitelist — so the row rests at **`failed`**: the status that
+means the document cannot be processed. Measured on the same file with column detection
 switched off: 1102 characters, one page, 238 geometry runs — nothing wrong with it.
+
+**`failed` is still retryable, and that is what made it worse rather than better.**
+`RETRYABLE_STATUSES` in `api/app/api/routes/resumes.py:98` includes `FAILED`, so the
+banner offers *Try again* and `POST /resumes/{id}/retry` accepts it. Every retry re-ran
+the same broken arithmetic and failed identically. The owner had pressed it **six
+times** before this session; the row carried `attempts = 6` and the same reason each
+time. A retry button that is honest about the row and useless against the cause is a
+worse experience than no button, and nothing in the system could tell the difference —
+which is the argument for `dead_lettered` and `failed` being separate words, made from
+the wrong side.
 
 **What makes it worse than it looks:** the trigger is *"this page is multi-column"*.
 Column detection was M2 #6, added to serve exactly the resumes people actually have,
@@ -1656,3 +1665,22 @@ was printed at any point; every number above is structural.
 
 Gates after the fix: `pytest -q` **705 passed, 38 skipped** (700 before), `ruff check`
 clean, `ruff format --check` clean, `mypy app` clean.
+
+**And then it was driven, which is the rule this project bought on 2026-08-13.** The
+`api` and `worker` images were rebuilt (the running ones predated the fix by twenty
+minutes, and uploading against them would have "proved" nothing), and the owner's own
+stuck row was retried from the banner rather than from `curl`: `failed` with
+`attempts = 6` became **extracted, 2/2 claims verified, 0.0% unverifiable, 1 model call**,
+with both citations resolving `exact` at `p1 · chars 0–6` and `p1 · chars 7–20`. On
+`LLM_PROVIDER=fake`, so no quota. Dedupe is what made the check possible at all: the
+re-upload matched the existing row by hash and returned it, which is also why the screen
+still showed the old failure until the retry.
+
+One thing the drive surfaced that is **not** a finding yet: the extracted Thai is
+fragmented — 164 Thai characters in 44 runs, mean length 3.73, longest 10, where
+`ประวัติส่วนตัว` alone is 14. Spaces really are in `document_text` (the mono pane's
+per-cell rendering of combining marks would look like that too, but the counts are
+measured, not read off the screen). Whether that is pdfplumber inserting spaces at the
+x-gaps of a letter-spaced designer PDF, and whether it costs a real provider anything,
+is unestablished — `fake` cannot tell us. It breaks no guarantee: the offsets index into
+exactly the text that was stored, and both citations resolved.

@@ -21,10 +21,16 @@ last band ended 7.83pt below the bottom of the page and `crop` refused it.
 
 Three things make it worse than a bad number:
 
-- **`CorruptDocumentError` is the terminal status.** `failed`, not `dead_lettered` — so
-  `POST /resumes/{id}/retry` cannot help, and the applicant is told their document cannot
-  be processed. With column detection switched off the same file reads fine: 1102
-  characters, 238 geometry runs.
+- **It rests at `failed`** — `ParseError` is on `decide_retry`'s permanent whitelist —
+  and the applicant is told their document cannot be processed. With column detection
+  switched off the same file reads fine: 1102 characters, 238 geometry runs.
+- **`failed` *is* retryable, which made it worse.** `RETRYABLE_STATUSES` includes it, so
+  the UI offers *Try again* and every press re-ran the same broken arithmetic. The owner
+  had pressed it six times. I first wrote the opposite into `HANDOFF.md` §12 — that retry
+  could not help — from `CLAUDE.md`'s wording rather than from
+  `api/app/api/routes/resumes.py:98`. The distinction between `failed` and
+  `dead_lettered` is about what the *status means*, not about which one the endpoint
+  accepts.
 - **The trigger is "this page is multi-column."** Column detection was M2 #6, built for
   exactly the resumes people actually have. This file would have parsed *before* that
   feature existed. It broke the case it was built for.
@@ -52,6 +58,25 @@ test rather than line coverage.
 
 Gates: `pytest -q` **700 → 705 passed**, 38 skipped; `ruff check`, `ruff format --check`,
 `mypy app` all clean. Nothing under `web/` was touched.
+
+**Then it was driven, not just gated.** `api` and `worker` rebuilt first — the running
+images predated the fix by twenty minutes, and an upload against them would have proved
+nothing — then the owner's own stuck row retried from the banner: `failed`,
+`attempts = 6` → **extracted, 2/2 claims verified, 0.0% unverifiable, 1 model call**,
+both citations `exact` at `p1 · chars 0–6` and `chars 7–20`. Zero quota, `fake`
+throughout.
+
+**And the file is a Canva template, not anybody's resume** — Juliana Silva, Lorem ipsum,
+reallygreatsite. Rendered locally with pypdfium2 to look at it, because the chat client
+could not read it either. It stays out of the repo anyway: a licensed template with a
+stock photograph of a real person is not a fixture.
+
+**One observation, deliberately not filed as a finding**: the extracted Thai is
+fragmented — 164 Thai characters in 44 runs, mean 3.73, longest 10, where
+`ประวัติส่วนตัว` alone is 14. The spaces are really in `document_text`; the cause is not
+established and `fake` cannot tell us whether it costs a real provider anything. It
+breaks no guarantee — the offsets index into exactly the stored text and both citations
+resolved. Worth one session, on a real provider, before assuming either way.
 
 **No document text was printed at any point** and the file never entered the repo — it was
 copied to a scratchpad outside it, under an ASCII name, because this machine's codepage is
