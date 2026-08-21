@@ -231,12 +231,42 @@ audit that found them is summarised in `docs/NOTES.md`.
 
 Recorded so they read as decisions rather than oversights:
 
-- Gradient heroes, glassmorphism, glow, decorative parallax.
+- Gradient heroes, glassmorphism, glow, decorative parallax. **Relaxed on the public
+  marketing surface, 2026-08-22 — see below.**
 - Any colour serving both meaning and decoration.
 - Any animation attached to a claim that is not that claim's own evidence.
 - Marketing polish that outruns what the system can back up. A screening product that
   looks like a crypto landing page argues against its own thesis — the same instinct as
   refusing to publish a hallucination rate measured on our own synthetic corpus.
+
+### The one relaxation, and the three things it does not touch
+
+The owner asked on 2026-08-22 for a landing page that looks like a technology company's:
+a background that suggests the work, colour, and movement that responds to the pointer.
+That is a direct conflict with the first bullet, so the bullet moved rather than being
+quietly ignored.
+
+**The relaxation is scoped to the public marketing surface** — `/`, and the public pages
+that carry the same shell. It reaches no screen that sits beside a claim about a person.
+The distinction is the whole reason the first bullet existed: decoration next to a verdict
+can be mistaken for part of the verdict, and on a page that makes no claim about anybody
+it cannot be.
+
+Three things did not relax, and each is enforced in code rather than promised:
+
+1. **No reserved colour is spent.** The landing's palette is `accent` and the neutrals.
+   Nothing there touches `cited`, `ambiguous` or `dropped` — which is also why the aurora
+   is indigo rather than the green a "verified" landing page would reach for. §1 is
+   untouched and is still the rule everything else answers to.
+2. **The motion still shows the mechanism.** The hero's highlight sweep is Motion 1 —
+   the one the product runs when a citation is located — and the picture beside it is a
+   cited line with its character offsets, not a stock photograph of an office. The page
+   runs the idea rather than decorating around it.
+3. **The last bullet stands in full.** No hallucination rate, no customer count, no logo
+   wall, no number the system cannot demonstrate on demand.
+
+And the chrome is shared with the product screens, so the header keeps its opaque bar:
+the relaxation covers a page's own background, not the frame around every screen.
 
 ---
 

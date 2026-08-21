@@ -56,6 +56,26 @@ export function navItemsFor(role: Role): readonly NavItem[] {
   return NAV_ITEMS.filter((item) => item.roles === undefined || item.roles.includes(role));
 }
 
+/**
+ * Route prefixes that belong to the company's public site rather than to the app.
+ *
+ * **The shell is chosen by route, not by session**, and that is the decision. It
+ * used to be chosen by session, which meant a signed-in applicant reading a job
+ * advertisement saw a bar offering Documents, Usage and — for a recruiter — Hire.
+ * The public surface then quietly became the back office's front page for exactly
+ * the people it was written to reassure.
+ *
+ * Being signed in changes one thing here: the sign-in link becomes a link to your
+ * own applications. It does not import the back office onto a marketing page.
+ */
+const PUBLIC_PREFIXES = ["/careers", "/how-we-screen", "/demo"] as const;
+
+/** Is this one of the pages a stranger is meant to land on? */
+export function isPublicRoute(pathname: string): boolean {
+  const path = normalise(pathname);
+  return path === "/" || PUBLIC_PREFIXES.some((prefix) => isActiveNav(path, prefix));
+}
+
 /** Drop a trailing slash so `/hire/` and `/hire` are the same place. The root is
  *  left alone, since stripping its slash would leave an empty string. */
 function normalise(path: string): string {

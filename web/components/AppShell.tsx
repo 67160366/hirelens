@@ -9,38 +9,53 @@ import { Button } from "@/components/ui/Button";
 import { ThemeControl } from "@/components/ThemeControl";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-import { PUBLIC_NAV_ITEMS, activeNavHref, navItemsFor, type NavItem } from "@/lib/nav";
+import {
+  PUBLIC_NAV_ITEMS,
+  activeNavHref,
+  isPublicRoute,
+  navItemsFor,
+  type NavItem,
+} from "@/lib/nav";
 
 /**
- * The frame every screen sits in.
+ * The frame every screen sits in — and there are two of them.
  *
- * Before this there was no shell at all — `layout.tsx` was `<body>{children}</body>`
- * and each of the five screens hand-wrote a header carrying one "← back" link and
- * its own Sign out. So where you could go depended on where you already were, the
- * same control was written five times in four different shapes, and the only route
- * to `/metrics` was a link on the home page.
+ * Before this there was no shell at all: `layout.tsx` was `<body>{children}</body>`
+ * and each screen hand-wrote a header carrying one "← back" link and its own Sign
+ * out. So where you could go depended on where you already were, the same control
+ * was written five times in four shapes, and the only route to the dashboard was a
+ * link on the home page.
+ *
+ * **Which header you get is decided by the route, not by the session.** That was
+ * the other way round for one commit, and it was wrong in a way worth recording:
+ * a signed-in applicant reading a job advertisement was shown a bar offering
+ * Documents, Usage and — if they happened to be a recruiter — Hire. The company's
+ * public site quietly became the back office's front page, for exactly the
+ * audience it exists to reassure. Being signed in now changes one thing out here:
+ * the sign-in link becomes a link to your own applications.
  *
  * **The bar is opaque on purpose.** A translucent, blurred sticky header is the
  * house style everywhere right now, and `docs/DESIGN.md` §6 refuses glassmorphism.
- * Elevation here is a border and a shadow, which is what direction C actually asked
- * for — depth you can read, not a material effect.
+ * Elevation here is a border and a shadow — depth you can read, not a material
+ * effect. §6's relaxation on 2026-08-22 covers the landing page's own background;
+ * it does not reach the chrome, which is shared with the product screens.
  *
  * **The active item is tinted `accent`, never `cited`.** Being on a page is a
  * control state, and §1 reserves the three meaning colours for what the system says
  * about a document. Measured rather than assumed: accent on accent-wash is 5.62:1
  * on paper and **4.98:1** in the dark theme — the tightest pairing this file
  * introduces, and still clear of the 4.5:1 floor.
- *
- * **Two navigations, not one filtered down.** Signed out, this is the company's
- * careers site and the links are the public ones; signed in, it is the application
- * and the links are the ones this account's role may reach. They are different sets
- * of places rather than a subset, which is why `lib/nav.ts` declares both.
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const { session, ready, signOut } = useAuth();
   const pathname = usePathname();
+  const isPublic = isPublicRoute(pathname);
 
-  const items: readonly NavItem[] = session ? navItemsFor(session.role) : PUBLIC_NAV_ITEMS;
+  const items: readonly NavItem[] = isPublic
+    ? PUBLIC_NAV_ITEMS
+    : session
+      ? navItemsFor(session.role)
+      : [];
   // One place decides, so the bar can never light two items — `/me` is a prefix of
   // `/me/documents`, and `isActiveNav` alone is true for both.
   const active = activeNavHref(pathname, items);
@@ -95,7 +110,17 @@ export function AppShell({ children }: { children: ReactNode }) {
               </nav>
 
               <div className="flex shrink-0 items-center gap-2.5">
-                {session ? (
+                {isPublic ? (
+                  // The public bar carries no identity and no sign-out. Who you are
+                  // is the application's business; out here the only question is
+                  // whether there is somewhere of yours to go back to.
+                  <Link
+                    href="/me"
+                    className="ring-focus whitespace-nowrap rounded-control px-2.5 py-1.5 text-xs font-medium text-ink-muted hover:bg-surface-sunken hover:text-ink"
+                  >
+                    {session ? "ใบสมัครของฉัน" : "เข้าสู่ระบบ"}
+                  </Link>
+                ) : session ? (
                   <>
                     {/* The email is the first thing to go when the bar is narrow: the
                         role is the part that explains why a screen refuses something,
@@ -108,34 +133,23 @@ export function AppShell({ children }: { children: ReactNode }) {
                       Sign out
                     </Button>
                   </>
-                ) : (
-                  // Points at the applicant's own area rather than at a `/sign-in`
-                  // route, because there is no such screen: every signed-in page
-                  // renders `AuthPanel` in place until there is a session, so the
-                  // sign-in form is wherever you were going.
-                  <Link
-                    href="/me"
-                    className="ring-focus whitespace-nowrap rounded-control px-2.5 py-1.5 text-xs font-medium text-ink-muted hover:bg-surface-sunken hover:text-ink"
-                  >
-                    เข้าสู่ระบบ
-                  </Link>
-                )}
+                ) : null}
               </div>
             </>
           ) : (
             <span className="flex-1" />
           )}
 
-          {/* Outside the signed-in branch on purpose: the sign-in form is a screen
-              too, and it has to be readable — and checkable — in both themes by
-              somebody who has no session yet. */}
+          {/* Outside every branch on purpose: the sign-in form is a screen too, and
+              it has to be readable — and checkable — in both themes by somebody who
+              has no session yet. */}
           <ThemeControl />
         </div>
       </header>
 
       {/* The landmark lives here and the measure lives on the page, because the
-          five screens genuinely want different widths — the workbench needs 6xl and
-          an application list reads badly wider than 3xl.
+          screens genuinely want different widths — the workbench needs 6xl and an
+          application list reads badly wider than 3xl.
 
           `tabIndex={-1}` is what makes the skip link do its job. `<main>` is not
           focusable on its own, so following the fragment moved the *scroll* and left
@@ -146,6 +160,35 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none">
         {children}
       </main>
+
+      {/* A footer on the public site only. On a product screen it would be one more
+          thing between the reader and the row they came for. */}
+      {isPublic && (
+        <footer className="border-t border-line bg-surface">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-6">
+            <p className="text-micro text-ink-faint">
+              HireLens · คัดกรองเรซูเม่โดยอ้างอิงข้อความจริงในเอกสาร
+            </p>
+            <nav aria-label="Footer" className="flex items-center gap-4">
+              {PUBLIC_NAV_ITEMS.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="ring-focus rounded-control text-micro text-ink-muted hover:text-ink"
+                >
+                  {item.label}
+                </Link>
+              ))}
+              <Link
+                href="/me"
+                className="ring-focus rounded-control text-micro text-ink-muted hover:text-ink"
+              >
+                ใบสมัครของฉัน
+              </Link>
+            </nav>
+          </div>
+        </footer>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   PUBLIC_NAV_ITEMS,
   activeNavHref,
   isActiveNav,
+  isPublicRoute,
   navItemsFor,
 } from "./nav";
 
@@ -97,5 +98,34 @@ describe("activeNavHref", () => {
     expect(activeNavHref("/careers", PUBLIC_NAV_ITEMS)).toBe("/careers");
     expect(activeNavHref("/careers/9f3c1d2e", PUBLIC_NAV_ITEMS)).toBe("/careers");
     expect(activeNavHref("/", PUBLIC_NAV_ITEMS)).toBeNull();
+  });
+});
+
+describe("isPublicRoute", () => {
+  // The rule this predicate exists for: which shell you get is decided by the
+  // route, not by the session. It was the other way round for one commit, and a
+  // signed-in applicant reading a job advertisement was shown Documents, Usage and
+  // Hire — the back office's bar on the company's front page.
+  it.each(["/", "/careers", "/careers/9f3c1d2e", "/how-we-screen", "/demo"])(
+    "treats %s as the public site",
+    (pathname) => {
+      expect(isPublicRoute(pathname)).toBe(true);
+    },
+  );
+
+  it.each(["/me", "/me/documents", "/hire", "/hire/jobs/9f3c1d2e", "/usage"])(
+    "treats %s as the application",
+    (pathname) => {
+      expect(isPublicRoute(pathname)).toBe(false);
+    },
+  );
+
+  // A prefix is not a path segment, here as everywhere else in this file.
+  it("does not hand the public shell to a route that merely starts the same", () => {
+    expect(isPublicRoute("/careers-archive")).toBe(false);
+  });
+
+  it("treats a trailing slash as the same place", () => {
+    expect(isPublicRoute("/careers/")).toBe(true);
   });
 });

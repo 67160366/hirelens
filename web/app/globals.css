@@ -336,6 +336,163 @@ body {
   @apply block font-mono text-micro tracking-tight text-ink-muted;
 }
 
+/* ---------------------------------------------------------------------------
+   The public landing surface only.
+
+   `docs/DESIGN.md` §6 refuses gradient heroes, glow and decorative parallax, and
+   §6 still governs every screen that sits next to a claim about a person. The
+   owner relaxed it on 2026-08-22 for the **marketing** surface, where nothing on
+   the page is a claim about anybody and decoration cannot be mistaken for
+   evidence. Two halves of the rule did not relax and are enforced here rather
+   than promised: nothing below touches `--cited`, `--ambiguous` or `--dropped`,
+   and every animation here is `transform`/`opacity` so the block at the bottom of
+   this file neutralises all of it under `prefers-reduced-motion`.
+
+   Scoped by name — `hero-*` and `reveal` — so none of it can leak onto a product
+   screen by being a generic-sounding class somebody reaches for later.
+   --------------------------------------------------------------------------- */
+
+.hero-stage {
+  /* Pointer position, 0..1 across the stage. Written by JS, read by the layers
+     below, and only ever multiplied into a `translate3d` — no layout property is
+     driven from it. Defaults put every layer at rest, which is what a keyboard
+     reader and a touch device get. */
+  --mx: 0.5;
+  --my: 0.5;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.hero-layer {
+  position: absolute;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.hero-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(72px);
+  opacity: 0.55;
+  animation: hero-drift 26s ease-in-out infinite alternate;
+}
+
+:root:not([data-theme="dark"]) .hero-blob {
+  opacity: 0.4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .hero-blob {
+    opacity: 0.55;
+  }
+}
+
+:root[data-theme="dark"] .hero-blob {
+  opacity: 0.55;
+}
+
+@keyframes hero-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(4%, -6%, 0) scale(1.12);
+  }
+}
+
+/* The grid a "tech" page is expected to have, drawn rather than downloaded: two
+   repeating gradients and a radial mask, so it costs no request and no bytes and
+   is theme-aware for free. */
+.hero-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--ink) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--ink) 8%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(120% 80% at 50% 25%, #000 30%, transparent 78%);
+  -webkit-mask-image: radial-gradient(120% 80% at 50% 25%, #000 30%, transparent 78%);
+}
+
+/* Parallax depths. Three factors so the layers separate; the numbers are small on
+   purpose — this is depth, not a ride. */
+.hero-depth-1 {
+  transform: translate3d(calc((var(--mx) - 0.5) * -14px), calc((var(--my) - 0.5) * -14px), 0);
+}
+.hero-depth-2 {
+  transform: translate3d(calc((var(--mx) - 0.5) * -28px), calc((var(--my) - 0.5) * -22px), 0);
+}
+.hero-depth-3 {
+  transform: translate3d(calc((var(--mx) - 0.5) * 22px), calc((var(--my) - 0.5) * 18px), 0);
+  transition: transform var(--duration-base) var(--ease-out-quint);
+}
+
+/* A card that lifts, and lights up under the cursor. `--px`/`--py` are the pointer
+   position inside the card; with no pointer the spotlight sits at the centre at
+   zero opacity, so nothing is lost without one. */
+.hero-card {
+  --px: 50%;
+  --py: 50%;
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform var(--duration-base) var(--ease-out-quint),
+    border-color var(--duration-base) var(--ease-out-quint);
+}
+
+.hero-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    22rem circle at var(--px) var(--py),
+    color-mix(in oklab, var(--accent) 16%, transparent),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out-quint);
+  pointer-events: none;
+}
+
+.hero-card:hover,
+.hero-card:focus-within {
+  transform: translateY(-3px);
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+}
+
+.hero-card:hover::before,
+.hero-card:focus-within::before {
+  opacity: 1;
+}
+
+/* The hero's own sweep: the highlight grows left-to-right, holds, and resets.
+   Same gesture as `.cite-sweep`, which is Motion 1 — a citation being located. */
+@keyframes hero-sweep {
+  0% {
+    transform: scaleX(0);
+  }
+  22%,
+  76% {
+    transform: scaleX(1);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+/* Scroll reveal. The element is visible by default and only hidden once JS has
+   said it will be revealed — so with JS off, or with the observer never firing,
+   the page reads rather than staying blank. */
+.reveal-armed {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+.reveal-in {
+  animation: fade-up var(--duration-slow) var(--ease-out-quint) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
