@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import applications, auth, jobs, metrics, resumes, screenings
+from app.api.routes import applications, auth, careers, jobs, metrics, resumes, screenings
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.jobs import JobContext
@@ -93,6 +93,9 @@ def create_app() -> FastAPI:
     app.include_router(screenings.router)
     app.include_router(applications.router)
     app.include_router(metrics.router)
+    # The only router that resolves no account. Read-only, published postings only —
+    # see its module docstring for what it deliberately does not serve.
+    app.include_router(careers.router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
