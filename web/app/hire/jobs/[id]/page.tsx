@@ -516,7 +516,7 @@ export default function JobPage() {
               <p className="text-sm text-ink-muted">
                 Nothing to screen yet — nobody has applied, and you have uploaded no resumes of
                 your own.{" "}
-                <Link href="/" className="ring-focus rounded-control text-accent underline">
+                <Link href="/me/documents" className="ring-focus rounded-control text-accent underline">
                   Upload one.
                 </Link>
               </p>

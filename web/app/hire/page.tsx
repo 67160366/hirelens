@@ -201,7 +201,7 @@ export default function JobsPage() {
           {jobs.map((job) => (
             <li key={job.id}>
               <Link
-                href={`/jobs/${job.id}`}
+                href={`/hire/jobs/${job.id}`}
                 className="ring-focus flex items-baseline justify-between gap-4 rounded-card border border-line bg-surface px-4 py-3 transition-colors hover:border-accent hover:bg-surface-sunken"
               >
                 <span className="flex items-center gap-2 text-sm font-medium">

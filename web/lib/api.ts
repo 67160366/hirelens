@@ -236,6 +236,38 @@ export interface Job {
   requirements: Requirement[];
 }
 
+/**
+ * One requirement as the public careers site shows it — `PostingRequirementOut`.
+ *
+ * No `weight` and no `id`. The weight is ranking's tuning and publishing it
+ * publishes instructions for gaming the screening; the id would invite joining a
+ * public list against a private one. `must_have` is here because what you are
+ * measured on is not a secret.
+ */
+export interface PostingRequirement {
+  kind: RequirementKind;
+  label: string;
+  detail: string | null;
+  must_have: boolean;
+}
+
+/**
+ * A published posting as a stranger sees it — `PostingOut` in
+ * `api/app/api/routes/careers.py`.
+ *
+ * Deliberately not `Job`. There is no `status`, because everything this type can
+ * describe is published by construction, and no `owner_id`, because which employee
+ * typed the advertisement is not something to publish to the internet.
+ */
+export interface Posting {
+  id: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  published_at: string | null;
+  requirements: PostingRequirement[];
+}
+
 /** The whole job in one call, which is how a posting is usually authored. */
 export interface JobInput {
   title: string;
@@ -639,6 +671,16 @@ export const api = {
   me: () => request<Account>("/auth/me", {}),
 
   listJobs: () => request<Job[]>("/jobs", {}),
+
+  /* ---------------------------------------------------------------------- */
+  /* The public careers site — the only calls here that need no session       */
+  /* ---------------------------------------------------------------------- */
+
+  /** Every published posting, newest first. Answers 200 to a stranger. */
+  listPostings: () => request<Posting[]>("/careers/postings", {}),
+
+  /** One published posting. A draft and a fiction are the same 404, on purpose. */
+  getPosting: (id: string) => request<Posting>(`/careers/postings/${id}`, {}),
 
   /* ---------------------------------------------------------------------- */
   /* Applications                                                            */

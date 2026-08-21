@@ -50,11 +50,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // `lang` is "en" because these screens are the internal ones and their copy is
-    // English — see `docs/DESIGN.md` §8. The Thai-first decision governs the public
-    // careers pages, and `th` lands here when they do.
+    // `th`, because the public pages are the ones a stranger reaches first and
+    // `docs/DESIGN.md` §8 makes them Thai-first. The screens that predate the
+    // careers site keep their English copy and declare it on their own segment —
+    // `app/{hire,me,usage}/layout.tsx` — since Next allows one `<html>` and a
+    // document that lies about half its own language is worse than a nested
+    // exception a screen reader can act on.
     <html
-      lang="en"
+      lang="th"
       className={`${plexSans.variable} ${plexThai.variable} ${plexMono.variable}`}
       suppressHydrationWarning
     >

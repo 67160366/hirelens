@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { ThemeControl } from "@/components/ThemeControl";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-import { NAV_ITEMS, isActiveNav } from "@/lib/nav";
+import { PUBLIC_NAV_ITEMS, activeNavHref, navItemsFor, type NavItem } from "@/lib/nav";
 
 /**
  * The frame every screen sits in.
@@ -30,10 +30,20 @@ import { NAV_ITEMS, isActiveNav } from "@/lib/nav";
  * about a document. Measured rather than assumed: accent on accent-wash is 5.62:1
  * on paper and **4.98:1** in the dark theme — the tightest pairing this file
  * introduces, and still clear of the 4.5:1 floor.
+ *
+ * **Two navigations, not one filtered down.** Signed out, this is the company's
+ * careers site and the links are the public ones; signed in, it is the application
+ * and the links are the ones this account's role may reach. They are different sets
+ * of places rather than a subset, which is why `lib/nav.ts` declares both.
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const { session, ready, signOut } = useAuth();
   const pathname = usePathname();
+
+  const items: readonly NavItem[] = session ? navItemsFor(session.role) : PUBLIC_NAV_ITEMS;
+  // One place decides, so the bar can never light two items — `/me` is a prefix of
+  // `/me/documents`, and `isActiveNav` alone is true for both.
+  const active = activeNavHref(pathname, items);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -53,10 +63,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             HireLens
           </Link>
 
-          {/* Hidden entirely while signed out: every one of these routes answers
-              with the sign-in panel until there is a session, so offering them
-              would be four links to the same form. */}
-          {ready && session ? (
+          {ready ? (
             <>
               {/* Scrolls rather than wraps at 375px — a navigation that reflows onto
                   two lines pushes the page content below the fold on a phone. The bar
@@ -68,39 +75,51 @@ export function AppShell({ children }: { children: ReactNode }) {
                 className="no-scrollbar -mx-1 flex-1 overflow-x-auto px-1"
               >
                 <ul className="flex items-center gap-1">
-                  {NAV_ITEMS.map((item) => {
-                    const active = isActiveNav(pathname, item.href);
-                    return (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          aria-current={active ? "page" : undefined}
-                          className={cn(
-                            "ring-focus block whitespace-nowrap rounded-control px-2.5 py-1.5 text-xs font-medium transition-colors",
-                            active
-                              ? "bg-accent-wash text-accent"
-                              : "text-ink-muted hover:bg-surface-sunken hover:text-ink",
-                          )}
-                        >
-                          {item.label}
-                        </Link>
-                      </li>
-                    );
-                  })}
+                  {items.map((item) => (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        aria-current={active === item.href ? "page" : undefined}
+                        className={cn(
+                          "ring-focus block whitespace-nowrap rounded-control px-2.5 py-1.5 text-xs font-medium transition-colors",
+                          active === item.href
+                            ? "bg-accent-wash text-accent"
+                            : "text-ink-muted hover:bg-surface-sunken hover:text-ink",
+                        )}
+                      >
+                        {item.label}
+                      </Link>
+                    </li>
+                  ))}
                 </ul>
               </nav>
 
               <div className="flex shrink-0 items-center gap-2.5">
-                {/* The email is the first thing to go when the bar is narrow: the
-                    role is the part that explains why a screen refuses something,
-                    and it is two words rather than an address. */}
-                <span className="hidden max-w-[16ch] truncate text-xs text-ink-muted md:inline">
-                  {session.email}
-                </span>
-                <Badge tone="neutral">{session.role}</Badge>
-                <Button variant="ghost" onClick={() => void signOut()}>
-                  Sign out
-                </Button>
+                {session ? (
+                  <>
+                    {/* The email is the first thing to go when the bar is narrow: the
+                        role is the part that explains why a screen refuses something,
+                        and it is two words rather than an address. */}
+                    <span className="hidden max-w-[16ch] truncate text-xs text-ink-muted md:inline">
+                      {session.email}
+                    </span>
+                    <Badge tone="neutral">{session.role}</Badge>
+                    <Button variant="ghost" onClick={() => void signOut()}>
+                      Sign out
+                    </Button>
+                  </>
+                ) : (
+                  // Points at the applicant's own area rather than at a `/sign-in`
+                  // route, because there is no such screen: every signed-in page
+                  // renders `AuthPanel` in place until there is a session, so the
+                  // sign-in form is wherever you were going.
+                  <Link
+                    href="/me"
+                    className="ring-focus whitespace-nowrap rounded-control px-2.5 py-1.5 text-xs font-medium text-ink-muted hover:bg-surface-sunken hover:text-ink"
+                  >
+                    เข้าสู่ระบบ
+                  </Link>
+                )}
               </div>
             </>
           ) : (
