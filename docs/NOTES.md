@@ -6,7 +6,81 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-21 (latest) — the redesign lands: every screen is on the tokens, and the light theme exists
+## 2026-08-22 (latest) — one real resume finds what nine synthetic ones could not
+
+The owner attached a resume PDF to the session. The chat client could not read it either,
+and its error was the tell: *"Bounding box … is not fully within parent page bounding
+box"* — a complaint about **geometry**, not about glyphs. Running it through our own
+parser gave the identical message wrapped in `CorruptDocumentError`.
+
+**It was our bug, and a bad one.** The page is a designer-tool export with a bleed box, so
+it runs from `-7.83` to `834.42` instead of from `0` to `842.25`. Same height; every other
+reader unbothered. `detect_reading_order` built its crop boxes out of the page's
+**lengths** — `page.width`, `page.height` — where it needed the page's **edges**, so the
+last band ended 7.83pt below the bottom of the page and `crop` refused it.
+
+Three things make it worse than a bad number:
+
+- **`CorruptDocumentError` is the terminal status.** `failed`, not `dead_lettered` — so
+  `POST /resumes/{id}/retry` cannot help, and the applicant is told their document cannot
+  be processed. With column detection switched off the same file reads fine: 1102
+  characters, 238 geometry runs.
+- **The trigger is "this page is multi-column."** Column detection was M2 #6, built for
+  exactly the resumes people actually have. This file would have parsed *before* that
+  feature existed. It broke the case it was built for.
+- **The gate that should have caught it could not fail.** All nine fixtures start at the
+  origin, where a page's edges and its lengths are the same numbers, so the arithmetic was
+  not merely untested — it was untestable. `test_regions_tile_the_page_vertically` even
+  asserted the bands reach "the page edges" and checked `page.height` to prove it. The
+  assertion was false in general and true on every file in the repo.
+
+**The fix**: `_Edges` read from `page.bbox`, carried through `_bands` and the box
+arithmetic in both axes — the x literals had the same bug latent, with no file yet to
+expose it. Behind it, `_within` clamps each box to the page and returns `None` if one
+clamps away to nothing, so a page whose numbers cannot be trusted **loses its columns,
+never its text**. That is the module's standing promise and the reason the fix is not
+"widen the page".
+
+**The fixture is synthetic, and it had to be.** `CLAUDE.md` forbids a real person's
+resume in this repo, so `generate.py` now writes `resume_two_column_shifted_box.pdf`: two
+columns under a header, on a page whose MediaBox starts below the origin. reportlab offers
+no way to ask for that — it always writes `[0 0 w h]` — but it only fills `MediaBox` in
+when it is still unset, so a `PDFPage` subclass patched over it for one `save()` survives.
+Then the fixture was loaded against the **pre-fix** module pulled out of git: it raises
+there, and the two existing two-column fixtures do not. That is what makes it a regression
+test rather than line coverage.
+
+Gates: `pytest -q` **700 → 705 passed**, 38 skipped; `ruff check`, `ruff format --check`,
+`mypy app` all clean. Nothing under `web/` was touched.
+
+**No document text was printed at any point** and the file never entered the repo — it was
+copied to a scratchpad outside it, under an ASCII name, because this machine's codepage is
+cp874 and the original filename is Thai. Every number reported was structural: page count,
+character count, span monotonicity, geometry coverage.
+
+### Next step
+
+1. Unchanged from yesterday: the careers site, **slice 8** (public board and posting page)
+   is next and is unblocked. Slices 3, 4, 6, 9, 10, 11 after it.
+2. **`docs/HANDOFF.md` §12** is the full record of this defect, written beside §11 on
+   purpose — that is now twice that one real PDF found what the whole suite could not, and
+   §11's own closing note about unrepresented damage classes (mixed encodings, broken
+   xrefs, real photographs) should be read as still open. **A bleed box was not even on
+   that list.**
+3. Still not watched, unchanged: the timeline's `cited evidence` badge needs seeded demo
+   data moved through a shortlist.
+4. Still deferred: the three opt-in suites (`test_postgres.py`, `test_minio.py`,
+   `test_ocr_tesseract.py`), quiet since 2026-08-14.
+
+**Environment note that cost a detour**: the `web` container was serving a build from
+08-18, i.e. the whole redesign was invisible at `localhost:3000` while the working tree
+had it. `docker compose up -d --build web` rebuilds from the tree and recreates the
+container without needing anything stopped by hand — worth preferring over stopping the
+container for `npm run dev` unless an edit actually needs to be visible without a rebuild.
+
+---
+
+## 2026-08-21 — the redesign lands: every screen is on the tokens, and the light theme exists
 
 **The migration is complete.** Seven commits, all pushed, and after them the only `dark:`
 strings left in `web/` are a doc comment quoting a value that was removed and two object

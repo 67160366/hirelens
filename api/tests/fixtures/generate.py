@@ -20,7 +20,7 @@ from docx import Document
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase import pdfdoc, pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
@@ -193,6 +193,82 @@ def write_two_column_with_header(path: Path) -> None:
     c.setFont("Helvetica", 9)
     c.drawString(50, 60, "References available on request — generated fixture, not a real person")
     c.save()
+
+
+BLEED = 7.83
+"""How far below the origin `resume_two_column_shifted_box.pdf`'s MediaBox starts.
+
+Copied from a real Canva export that `CorruptDocumentError`'d on 2026-08-22 — the
+number is arbitrary, but a *plausible* one is worth more than a round one here,
+because the bug it reproduces was invisible for exactly as long as every fixture
+started at the origin.
+"""
+
+
+class _ShiftedBoxPage(pdfdoc.PDFPage):
+    """A page whose MediaBox does not start at (0, 0).
+
+    reportlab writes `[0 0 width height]` and offers no way to ask for anything else,
+    but it only fills `MediaBox` in when it is still unset — so a subclass that sets
+    it first survives. Patched over `pdfdoc.PDFPage` for one `save()` below.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.MediaBox = pdfdoc.PDFArray([0, BLEED, PAGE_W, PAGE_H + BLEED])
+
+
+def write_two_column_shifted_box(path: Path) -> None:
+    """Two columns on a page whose MediaBox starts below the origin.
+
+    **The shape a real resume had and none of these fixtures did.** Design tools
+    export a bleed box, so the page runs from `-7.83` to `834.06` rather than from
+    `0` to `841.89` — the height is the same and every other reader is unbothered.
+    Column detection built its crop boxes out of the page's *lengths*, which are
+    still 595.28 x 841.89, so the last band ended 7.83pt below the bottom of the
+    page; `pdfplumber.Page.crop` refused it and the whole document came back
+    `CorruptDocumentError` — terminal `failed`, not retryable — for a page that reads
+    perfectly well. Two columns are what makes it fire, which is to say: the most
+    common shape of real resume there is.
+    """
+    original_page = pdfdoc.PDFPage
+    pdfdoc.PDFPage = _ShiftedBoxPage  # type: ignore[misc]
+    try:
+        c = canvas.Canvas(str(path), pagesize=A4)
+        draw_lines(
+            c,
+            [
+                ("H1", "Pimchanok Sirisak"),
+                ("BODY", "Data Engineer  |  pimchanok.s@example.com  |  Phuket, Thailand"),
+            ],
+            body_font="Helvetica",
+            bold_font="Helvetica-Bold",
+            x=50,
+            top=PAGE_H - 90,
+        )
+        left = [
+            ("H2", "CONTACT"),
+            ("BODY", "pimchanok.s@example.com"),
+            ("BODY", "Phuket, Thailand"),
+            ("GAP", ""),
+            ("H2", "SKILLS"),
+            ("BODY", "Python, Airflow"),
+            ("BODY", "dbt, BigQuery"),
+        ]
+        right = [
+            ("H2", "EXPERIENCE"),
+            ("BODY", "Andaman Analytics — Data (2021 - Present)"),
+            ("BODY", "  Owned the warehouse ingestion"),
+            ("BODY", "  for 30 upstream sources."),
+            ("GAP", ""),
+            ("BODY", "Phuket Freight — Analyst (2018 - 2021)"),
+        ]
+        body_top = PAGE_H - 170
+        draw_lines(c, left, body_font="Helvetica", bold_font="Helvetica-Bold", x=50, top=body_top)
+        draw_lines(c, right, body_font="Helvetica", bold_font="Helvetica-Bold", x=300, top=body_top)
+        c.save()
+    finally:
+        pdfdoc.PDFPage = original_page  # type: ignore[misc]
 
 
 def write_right_aligned_dates(path: Path) -> None:
@@ -449,6 +525,7 @@ def main() -> int:
     write_single_page(FIXTURE_DIR / "resume_th.pdf", RESUME_TH, thai=True)
     write_two_column(FIXTURE_DIR / "resume_two_column.pdf")
     write_two_column_with_header(FIXTURE_DIR / "resume_two_column_header.pdf")
+    write_two_column_shifted_box(FIXTURE_DIR / "resume_two_column_shifted_box.pdf")
     write_right_aligned_dates(FIXTURE_DIR / "resume_right_aligned_dates.pdf")
     write_multipage(FIXTURE_DIR / "resume_multipage.pdf")
     write_scanned(FIXTURE_DIR / "resume_scanned.pdf")

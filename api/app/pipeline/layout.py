@@ -89,6 +89,57 @@ class _Word:
     bottom: float
 
 
+@dataclass(frozen=True, slots=True)
+class _Edges:
+    """Where the page actually is, in the space `pdfplumber.Page.crop` checks against.
+
+    **Not the same thing as width and height**, and that is the whole reason this
+    exists. A page whose MediaBox does not start at the origin — a bleed box from a
+    design tool is the common one, and every resume exported from Canva has one —
+    runs from `top` to `bottom`, not from `0` to `height`. A box built out of the
+    lengths instead of the edges hangs off the page by exactly the offset, `crop`
+    refuses it, and `parse_pdf` turns that into `CorruptDocumentError` — a terminal
+    `failed` status for a document that reads perfectly well.
+    """
+
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+    @property
+    def width(self) -> float:
+        return self.right - self.left
+
+
+def _edges_of(page: Any) -> _Edges:
+    left, top, right, bottom = (float(value) for value in page.bbox)
+    return _Edges(left=left, top=top, right=right, bottom=bottom)
+
+
+def _within(boxes: list[BBox], edges: _Edges) -> tuple[BBox, ...] | None:
+    """Clamp every box to the page, or decline the page if that leaves nothing.
+
+    The arithmetic above already keeps inside the edges; this is here because the
+    edges are floats read out of a PDF and a boundary computed to land exactly on
+    one can miss it by a rounding step, which `crop` treats as off the page. Failing
+    that check must cost the page its columns, never its text — so a box that clamps
+    away to nothing returns `None` and the page is read the way it always was.
+    """
+    clamped: list[BBox] = []
+    for x0, top, x1, bottom in boxes:
+        box = (
+            max(x0, edges.left),
+            max(top, edges.top),
+            min(x1, edges.right),
+            min(bottom, edges.bottom),
+        )
+        if box[2] <= box[0] or box[3] <= box[1]:
+            return None
+        clamped.append(box)
+    return tuple(clamped)
+
+
 @dataclass(slots=True)
 class _Band:
     """A horizontal slice of the page, and the gutter in it if it has one."""
@@ -109,26 +160,25 @@ def detect_reading_order(page: Any) -> tuple[BBox, ...] | None:
     if len(words) < MIN_WORDS:
         return None
 
-    page_width = float(page.width)
-    page_height = float(page.height)
+    edges = _edges_of(page)
 
-    bands = _bands(words, page_height=page_height, page_width=page_width)
+    bands = _bands(words, edges=edges)
     if not any(band.gutter for band in bands):
         return None
 
     boxes: list[BBox] = []
     for band in _merge_columned_bands(bands):
         if band.gutter is None:
-            boxes.append((0.0, band.top, page_width, band.bottom))
+            boxes.append((edges.left, band.top, edges.right, band.bottom))
         else:
             # Cut at the middle of the gutter rather than at its edges. `crop` keeps
             # anything that *overlaps* the box, so a boundary drawn through a glyph
             # would put that glyph in both columns; the middle of a gutter has no
             # glyph in it by construction.
             middle = (band.gutter[0] + band.gutter[1]) / 2
-            boxes.append((0.0, band.top, middle, band.bottom))
-            boxes.append((middle, band.top, page_width, band.bottom))
-    return tuple(boxes)
+            boxes.append((edges.left, band.top, middle, band.bottom))
+            boxes.append((middle, band.top, edges.right, band.bottom))
+    return _within(boxes, edges)
 
 
 def extract_in_reading_order(
@@ -205,7 +255,7 @@ def _rows(words: list[_Word]) -> list[list[_Word]]:
     return rows
 
 
-def _bands(words: list[_Word], *, page_height: float, page_width: float) -> list[_Band]:
+def _bands(words: list[_Word], *, edges: _Edges) -> list[_Band]:
     """Split the page at wide horizontal gaps and look for a gutter in each slice.
 
     Boundaries are drawn through the *middle* of each gap, and the first and last
@@ -228,16 +278,16 @@ def _bands(words: list[_Word], *, page_height: float, page_width: float) -> list
     bands: list[_Band] = []
     for index, group in enumerate(groups):
         band_words = [word for row in group for word in row]
-        top = 0.0
+        top = edges.top
         if index > 0:
             above = [word for row in groups[index - 1] for word in row]
             top = (max(word.bottom for word in above) + min(w.top for w in band_words)) / 2
-        bottom = page_height
+        bottom = edges.bottom
         if index + 1 < len(groups):
             below = [word for row in groups[index + 1] for word in row]
             bottom = (max(w.bottom for w in band_words) + min(word.top for word in below)) / 2
         bands.append(
-            _Band(top=top, bottom=bottom, gutter=_gutter(band_words, page_width=page_width))
+            _Band(top=top, bottom=bottom, gutter=_gutter(band_words, page_width=edges.width))
         )
     return bands
 

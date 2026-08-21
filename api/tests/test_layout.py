@@ -21,8 +21,10 @@ import pytest
 
 from app.pipeline.layout import (
     _Band,
+    _Edges,
     _gutter,
     _merge_columned_bands,
+    _within,
     _Word,
     detect_reading_order,
 )
@@ -91,16 +93,91 @@ class TestTwoColumnPagesAreSplit:
     def test_regions_tile_the_page_vertically(self):
         """Bands are cut through the middle of the gaps between them, and the first
         and last reach the page edges, so every character lands in exactly one
-        region: nothing can be dropped and nothing can be read twice."""
+        region: nothing can be dropped and nothing can be read twice.
+
+        The edges are read off `page.bbox`, not off `page.height`. The two agree on
+        every page that starts at the origin, which is exactly why measuring the
+        wrong one went unnoticed until a page turned up that does not."""
         with pdfplumber.open(FIXTURES / "resume_two_column_header.pdf") as pdf:
             page = pdf.pages[0]
             boxes = detect_reading_order(page)
         assert boxes is not None
         tops = sorted({(box[1], box[3]) for box in boxes})
-        assert tops[0][0] == 0.0
-        assert tops[-1][1] == pytest.approx(float(page.height))
+        assert tops[0][0] == pytest.approx(float(page.bbox[1]))
+        assert tops[-1][1] == pytest.approx(float(page.bbox[3]))
         for upper, lower in pairwise(tops):
             assert upper[1] == pytest.approx(lower[0])
+
+
+class TestAPageWhoseBoxDoesNotStartAtTheOrigin:
+    """The shape a real resume had on 2026-08-22 and no fixture here did.
+
+    A design tool exports a bleed box, so the page runs from -7.83 to 834.06 instead
+    of from 0 to 841.89. The height is unchanged and nothing else in the stack
+    notices. Column detection built its crop boxes out of the page's *lengths*, so
+    the last band ended 7.83pt below the bottom of the page, `crop` refused it, and
+    `parse_pdf` turned that into `CorruptDocumentError` — the terminal `failed`
+    status, not the retryable one — for a document that reads perfectly well.
+
+    Two columns are what makes it fire, which is to say: the most common shape of
+    real resume there is.
+    """
+
+    FIXTURE = "resume_two_column_shifted_box.pdf"
+
+    def test_the_fixture_still_has_a_shifted_box(self):
+        """Pinned, because the bug is invisible without it. A regenerated fixture
+        that quietly went back to starting at the origin would leave every test
+        below passing against a page that cannot fail."""
+        with pdfplumber.open(FIXTURES / self.FIXTURE) as pdf:
+            page = pdf.pages[0]
+            assert float(page.bbox[1]) < 0.0
+            assert float(page.bbox[3]) == pytest.approx(float(page.height) + float(page.bbox[1]))
+
+    def test_every_region_stays_inside_the_page(self):
+        """What `crop` checks, checked here where the numbers are visible."""
+        with pdfplumber.open(FIXTURES / self.FIXTURE) as pdf:
+            page = pdf.pages[0]
+            boxes = detect_reading_order(page)
+            assert boxes is not None
+            for box in boxes:
+                assert box[0] >= float(page.bbox[0])
+                assert box[1] >= float(page.bbox[1])
+                assert box[2] <= float(page.bbox[2])
+                assert box[3] <= float(page.bbox[3])
+                page.crop(box)
+
+    def test_the_document_parses_and_reads_in_column_order(self):
+        """The regression itself: this raised `CorruptDocumentError` before the fix.
+
+        The assertion is the last line of the left column against the first line of
+        the right one — the pair that interleaving puts the wrong way round."""
+        document = parse_pdf(FIXTURES / self.FIXTURE)
+        assert document.text.index("dbt, BigQuery") < document.text.index("Andaman Analytics")
+        assert document.pages_without_text == ()
+
+
+class TestABoxThatCannotBeTrusted:
+    """A box is clamped to the page, and a page that clamps away keeps its text.
+
+    `_within` is the guard behind the arithmetic rather than instead of it: the
+    edges are floats read out of a PDF, and a boundary computed to land exactly on
+    one can miss it by a rounding step. Failing that must cost the page its columns,
+    never its text.
+    """
+
+    EDGES = _Edges(left=0.0, top=-7.83, right=595.0, bottom=834.0)
+
+    def test_a_box_hanging_off_the_page_is_pulled_back(self):
+        clamped = _within([(0.0, -8.0, 595.0, 841.89)], self.EDGES)
+        assert clamped == ((0.0, -7.83, 595.0, 834.0),)
+
+    def test_a_box_with_nothing_left_declines_the_whole_page(self):
+        """`None`, not a shorter list: dropping one region would drop the characters
+        in it, and this module's one promise is that a page it cannot handle is read
+        the way it always was."""
+        off_the_page = (700.0, 100.0, 800.0, 200.0)
+        assert _within([(0.0, 100.0, 595.0, 200.0), off_the_page], self.EDGES) is None
 
 
 class TestGutterGuards:
