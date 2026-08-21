@@ -268,6 +268,47 @@ export interface Posting {
   requirements: PostingRequirement[];
 }
 
+/**
+ * One requirement on a screening receipt — `ReceiptRequirement`.
+ *
+ * Deliberately not `RequirementJudgment`. There is no `requirement_id`, because
+ * the receipt is not joinable back to the posting's current rows, and no `weight`,
+ * because a weight is ranking's tuning and only means anything beside other
+ * candidates. `label` is the one that was judged, frozen at screening time: an
+ * edited posting must not silently relabel a verdict somebody was already shown.
+ */
+export interface ReceiptRequirement {
+  label: string;
+  must_have: boolean;
+  verdict: Verdict;
+  evidence: EvidenceRef[];
+}
+
+/**
+ * What the employer read about you — `ReceiptOut` in
+ * `api/app/api/routes/applications.py`.
+ *
+ * Not `ScreeningDetail`, which is the recruiter's view of the same row.
+ * `attempts`, `cost_usd` and `requirements_hash` are facts about running a
+ * screening and belong to whoever paid for it; this is the verdict and the
+ * evidence, which belong to whoever the verdict is about.
+ */
+export interface Receipt {
+  application_id: string;
+  job_title: string;
+  state: ApplicationState;
+  /** Why the application is where it is, when the move recorded one. A rejection
+   *  always has one — the API refuses the transition without. */
+  reason: string | null;
+  screened_at: string;
+  requirements: ReceiptRequirement[];
+  dropped: DroppedClaim[];
+  document_text: string | null;
+  /** Whether the posting's requirements were edited after this was judged. Said
+   *  out loud rather than hidden: the verdicts are still what was read. */
+  posting_changed_since: boolean;
+}
+
 /** The whole job in one call, which is how a posting is usually authored. */
 export interface JobInput {
   title: string;
@@ -695,6 +736,12 @@ export const api = {
     request<Application[]>(`/jobs/${jobId}/applications`, {}),
 
   listMyApplications: () => request<Application[]>("/me/applications", {}),
+
+  /** The screening behind one application, for the person it is about. 404 while
+   * nothing has been screened yet — not an empty receipt, which would read as
+   * "nothing was found in your document". */
+  getReceipt: (applicationId: string) =>
+    request<Receipt>(`/applications/${applicationId}/screening`, {}),
 
   /** Move an application. The server answers **409 with the reason** when the move
    * is not allowed, which surfaces here as an `ApiError` carrying that sentence —

@@ -5,14 +5,17 @@ import { useCallback, useEffect, useState } from "react";
 import { ApplicationActions } from "@/components/ApplicationActions";
 import { ApplicationTimeline } from "@/components/ApplicationTimeline";
 import { AuthPanel } from "@/components/AuthPanel";
+import { ScreeningReceipt } from "@/components/ScreeningReceipt";
 import { Badge } from "@/components/ui/Badge";
 import {
   api,
+  ApiError,
   type Account,
   type Application,
   type ApplicationEvent,
   type ApplicationState,
   type Job,
+  type Receipt,
   type Resume,
 } from "@/lib/api";
 // One neutral tone for every state, which is the decision here.
@@ -58,6 +61,20 @@ export default function ApplicationsPage() {
    * Keyed by id, a row can only ever render its own log or nothing at all.
    */
   const [events, setEvents] = useState<Record<string, ApplicationEvent[]>>({});
+  /**
+   * The screening receipt, **keyed by application for the reason the log is**.
+   *
+   * One person's verdicts under another person's job title is the failure this
+   * screen has already had once, in the timeline, and the receipt is the artefact
+   * where it would matter most: it is a claim about a named individual, resting on
+   * quotes out of a named document.
+   *
+   * `null` is a real value and means "asked, and there is nothing yet" — the API
+   * answers 404 until a completed screening exists, which is a state to render
+   * rather than an error to report.
+   */
+  const [receipts, setReceipts] = useState<Record<string, Receipt | null>>({});
+  const [openReceiptId, setOpenReceiptId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -101,6 +118,32 @@ export default function ApplicationsPage() {
         return next;
       });
       setError(errorMessage(caught, "Could not load the history"));
+    }
+  }
+
+  /**
+   * Show or hide one application's receipt, fetching it the first time.
+   *
+   * A 404 is the ordinary answer while nobody has screened the document yet, so it
+   * lands in state as `null` rather than in the error banner. Anything else is a
+   * real failure and says so.
+   */
+  async function openReceipt(applicationId: string) {
+    if (openReceiptId === applicationId) {
+      setOpenReceiptId(null);
+      return;
+    }
+    setOpenReceiptId(applicationId);
+    if (applicationId in receipts) return;
+    try {
+      const loaded = await authorized(() => api.getReceipt(applicationId));
+      setReceipts((current) => ({ ...current, [applicationId]: loaded }));
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 404) {
+        setReceipts((current) => ({ ...current, [applicationId]: null }));
+        return;
+      }
+      setError(errorMessage(caught, "Could not load the screening result"));
     }
   }
 
@@ -248,13 +291,24 @@ export default function ApplicationsPage() {
                       </span>
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void openHistory(application.id)}
-                    className="ring-focus shrink-0 rounded-control text-xs text-ink-muted underline underline-offset-2 hover:text-ink"
-                  >
-                    {openId === application.id ? "Hide history" : "History"}
-                  </button>
+                  <span className="flex shrink-0 items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void openReceipt(application.id)}
+                      className="ring-focus rounded-control text-xs text-accent underline underline-offset-2"
+                    >
+                      {openReceiptId === application.id
+                        ? "Hide screening result"
+                        : "Screening result"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openHistory(application.id)}
+                      className="ring-focus rounded-control text-xs text-ink-muted underline underline-offset-2 hover:text-ink"
+                    >
+                      {openId === application.id ? "Hide history" : "History"}
+                    </button>
+                  </span>
                 </div>
 
                 {me && !isTerminal(application.state) ? (
@@ -269,6 +323,29 @@ export default function ApplicationsPage() {
                       busy={busy}
                       onMove={(to, reason) => void move(application.id, to, reason)}
                     />
+                  </div>
+                ) : null}
+
+                {openReceiptId === application.id ? (
+                  <div className="mt-3">
+                    {!(application.id in receipts) ? (
+                      <p className="text-xs text-ink-muted">Loading the screening result…</p>
+                    ) : receipts[application.id] ? (
+                      <ScreeningReceipt
+                        // Non-null by the branch above; written as a lookup rather
+                        // than an assertion so a future refactor cannot quietly turn
+                        // "not screened" into a crash.
+                        receipt={receipts[application.id] as Receipt}
+                        resumeFilename={application.resume_filename}
+                        resumeId={application.resume_id}
+                        authorized={authorized}
+                      />
+                    ) : (
+                      <p className="text-xs text-ink-muted">
+                        Nobody has screened this document yet. When they do, the verdicts
+                        they read — and the quotes behind them — appear here.
+                      </p>
+                    )}
                   </div>
                 ) : null}
 
