@@ -514,3 +514,118 @@ class TestApplyingToAJobThatIsGone:
             f"/jobs/{uuid.uuid4()}/applications", json={"resume_id": resume_id}
         )
         assert response.status_code == 404
+
+
+class TestTheReceipt:
+    """`GET /applications/{id}/screening` — the route this project was founded on.
+
+    `README.md` names the pain point as candidates rejected by automated screening
+    with no explanation. Every screen before this one served the side doing the
+    rejecting, so these tests are less about a payload than about who may see one.
+    """
+
+    async def _screened(self, client: AsyncClient) -> dict[str, str]:
+        ids = await _apply(client)
+        client.headers["Authorization"] = ids["recruiter"]
+        queued = await client.post(
+            f"/jobs/{ids['job']}/screenings", json={"resume_id": ids["resume"]}
+        )
+        assert queued.status_code in (200, 202), queued.text
+        client.headers["Authorization"] = ids["applicant"]
+        return ids
+
+    async def test_the_applicant_sees_the_verdicts_and_their_citations(self, client: AsyncClient):
+        ids = await self._screened(client)
+
+        response = await client.get(f"/applications/{ids['application']}/screening")
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        assert body["job_title"] == JOB["title"]
+        assert body["state"] == "screened"
+        assert body["requirements"], "a screening with no requirements is not a receipt"
+        assert body["document_text"], "an offset with nothing to index into cannot be shown"
+
+        for requirement in body["requirements"]:
+            assert requirement["verdict"] in {"met", "not_evidenced"}
+            for citation in requirement["evidence"]:
+                start, end = citation["char_start"], citation["char_end"]
+                # The whole idea, checked from the applicant's side for the first
+                # time: the quote is not searched for, it is at these offsets.
+                assert body["document_text"][start:end] == citation["quote"]
+
+    async def test_no_weight_and_no_score_reach_the_applicant(self, client: AsyncClient):
+        """A weight never reached the judge and a score only means something beside
+        other candidates. Neither belongs on a document about one person."""
+        ids = await self._screened(client)
+
+        body = (await client.get(f"/applications/{ids['application']}/screening")).json()
+        assert "score" not in body
+        for requirement in body["requirements"]:
+            assert "weight" not in requirement
+            assert "must_have" in requirement, "what you were measured on is not a secret"
+
+    async def test_the_recruiter_sees_it_too(self, client: AsyncClient):
+        """Both parties to an application, which is what `_visible_application` means."""
+        ids = await self._screened(client)
+        client.headers["Authorization"] = ids["recruiter"]
+
+        assert (
+            await client.get(f"/applications/{ids['application']}/screening")
+        ).status_code == 200
+
+    async def test_a_stranger_gets_404_not_403(self, client: AsyncClient):
+        """403 on an id confirms the id exists. The same rule as `_owned_job`."""
+        ids = await self._screened(client)
+        await register_as(client, email="nosy@example.com")
+
+        response = await client.get(f"/applications/{ids['application']}/screening")
+        assert response.status_code == 404
+
+    async def test_an_unscreened_application_is_404_too(self, client: AsyncClient):
+        """Not 204 and not an empty receipt. "Nothing found yet" and "nothing found
+        in your document" are different sentences, and one of them is a claim."""
+        ids = await _apply(client)
+        client.headers["Authorization"] = ids["applicant"]
+
+        response = await client.get(f"/applications/{ids['application']}/screening")
+        assert response.status_code == 404
+
+    async def test_the_labels_are_the_ones_that_were_judged(self, client: AsyncClient):
+        """Editing the posting must not relabel a verdict already shown.
+
+        The receipt reads `RequirementJudgment.label`, stored at judging time. A join
+        back to the posting's rows would answer this differently, which is the whole
+        reason it does not.
+        """
+        ids = await self._screened(client)
+        before = (await client.get(f"/applications/{ids['application']}/screening")).json()
+        labels_before = [item["label"] for item in before["requirements"]]
+        assert before["posting_changed_since"] is False
+
+        client.headers["Authorization"] = ids["recruiter"]
+        requirements = (await client.get(f"/jobs/{ids['job']}")).json()["requirements"]
+        patched = await client.patch(
+            f"/jobs/{ids['job']}/requirements/{requirements[0]['id']}",
+            json={"label": "Rust"},
+        )
+        assert patched.status_code == 200, patched.text
+
+        client.headers["Authorization"] = ids["applicant"]
+        after = (await client.get(f"/applications/{ids['application']}/screening")).json()
+        assert [item["label"] for item in after["requirements"]] == labels_before
+        assert after["posting_changed_since"] is True, "and it says so rather than hiding it"
+
+    async def test_a_rejection_carries_its_reason(self, client: AsyncClient):
+        ids = await self._screened(client)
+        client.headers["Authorization"] = ids["recruiter"]
+        rejected = await client.post(
+            f"/applications/{ids['application']}/transitions",
+            json={"to_state": "rejected", "reason": "looking for more Go experience"},
+        )
+        assert rejected.status_code == 200, rejected.text
+
+        client.headers["Authorization"] = ids["applicant"]
+        body = (await client.get(f"/applications/{ids['application']}/screening")).json()
+        assert body["state"] == "rejected"
+        assert body["reason"] == "looking for more Go experience"

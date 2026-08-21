@@ -86,11 +86,22 @@ def screening_view(screening: Screening, *, resume_filename: str | None = None) 
         completed=screening.status is ScreeningStatus.COMPLETED,
         requirements_hash=screening.requirements_hash,
         prompt_version=screening.prompt_version,
-        judgment=_stored_judgment(screening),
+        judgment=stored_judgment(screening),
     )
 
 
-def _stored_judgment(screening: Screening) -> Judgment | None:
+def fingerprint_of(job: Job) -> str:
+    """What the judge would be shown for this posting, as a fingerprint.
+
+    Public because two routes need the same answer: `screenings.py` asks whether a
+    stored screening is stale enough to re-run, and `applications.py` asks whether a
+    receipt should say the posting changed after it was judged. Two spellings of
+    this is how the recruiter's idea of stale and the applicant's come apart.
+    """
+    return requirements_fingerprint(requirement_specs(job))
+
+
+def stored_judgment(screening: Screening) -> Judgment | None:
     """The stored result rebuilt, or `None` when there is no usable one.
 
     Anything `_record_result` wrote validates. Answering `None` instead of raising

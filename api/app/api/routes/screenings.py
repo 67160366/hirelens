@@ -203,7 +203,7 @@ async def _applied_to(session: SessionDep, job: Job, resume: Resume) -> bool:
 
 
 def _fingerprint(job: Job) -> str:
-    return requirements_fingerprint(screening_service.requirement_specs(job))
+    return screening_service.fingerprint_of(job)
 
 
 def _retrieval_terms(job: Job) -> list[str]:

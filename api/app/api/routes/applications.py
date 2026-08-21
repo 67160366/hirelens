@@ -23,9 +23,11 @@ from sqlalchemy.orm import selectinload
 from app import publication
 from app.api.deps import CandidateDep, SessionDep
 from app.applications import Actor
-from app.models import Candidate, Job, Resume, ResumeStatus, Role
+from app.models import Candidate, Job, Resume, ResumeStatus, Role, Screening
 from app.models.application import Application, ApplicationEvent, ApplicationState
-from app.services import application_service
+from app.schemas.judgment import Verdict
+from app.schemas.profile import DroppedClaim, EvidenceRef
+from app.services import application_service, screening_service
 from app.services.application_service import TransitionRefused
 
 router = APIRouter(tags=["applications"])
@@ -286,6 +288,153 @@ async def move_application(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.why) from exc
 
     return ApplicationOut.of(application, job=job, resume=resume)
+
+
+class ReceiptRequirement(BaseModel):
+    """One requirement as the applicant is shown it.
+
+    **Every field is read off the stored judgment, never off the posting.** The
+    posting's requirement rows can be edited after a screening ran, and joining to
+    them would silently relabel a verdict somebody has already been shown — the
+    receipt would then be a claim about a person made from words nobody judged them
+    against.
+
+    No `weight`. It is ranking's input, it never reached the judge, and it is a
+    number that only means anything next to other candidates — which is the one
+    comparison a receipt must not invite.
+    """
+
+    label: str
+    must_have: bool
+    verdict: Verdict
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+
+
+class ReceiptOut(BaseModel):
+    """What the employer read about you, on your own document.
+
+    Deliberately **not** `ScreeningDetail`, which the recruiter's screen gets.
+    That carries `attempts`, `cost_usd`, `failure_reason` and `requirements_hash` —
+    facts about running a screening, which belong to whoever paid for it. This
+    carries the verdict and the evidence, which belong to whoever the verdict is
+    about (`services/privacy_service.py`, which already exports exactly this on the
+    grounds that a verdict about you is yours). The narrower shape is the boundary,
+    not a copy of one.
+    """
+
+    application_id: str
+    job_title: str
+    state: ApplicationState
+    reason: str | None
+    """Why the application is where it is, when the move recorded one.
+
+    Read off the most recent event, which is the move that produced the current
+    state — `Application.state` being a projection of the log is what makes those
+    the same thing. A rejection always has one; M4 refuses the transition without.
+    """
+
+    screened_at: str
+    requirements: list[ReceiptRequirement]
+    dropped: list[DroppedClaim] = Field(default_factory=list)
+    """The guardrail, shown rather than described. A claim the model made that could
+    not be located in this document was refused, and the applicant is entitled to
+    see that it happened to *their* document."""
+
+    document_text: str | None
+    """The text every offset above indexes into, so a citation can be highlighted
+    rather than searched for."""
+
+    posting_changed_since: bool
+    """Whether the posting's requirements have been edited since this was judged.
+
+    Said out loud rather than hidden or quietly corrected. The verdicts above are
+    still exactly what was read; what changed is what the posting now asks for, and
+    an applicant comparing the two deserves to know which is which.
+    """
+
+
+@router.get("/applications/{application_id}/screening", response_model=ReceiptOut)
+async def get_application_receipt(
+    application_id: uuid.UUID, candidate: CandidateDep, session: SessionDep
+) -> ReceiptOut:
+    """The screening behind one application, for the person it is about.
+
+    **This is the route the whole project was founded on.** `README.md` names the
+    pain point as candidates rejected by automated screening with no explanation;
+    every screen before this one served the side doing the rejecting.
+
+    Reached through `_visible_application`, so both parties to an application get
+    it and nobody else does — **404, not 403**, for a stranger and for an
+    application that has not been screened yet. A 403 on either would confirm the id
+    exists, which is what `_owned_job` and `_owned_resume` answer 404 to avoid, and
+    "screened but you may not see it" is not a state this system has.
+
+    The screening is found through `application_service.completed_screening_id`,
+    the same lookup a shortlist rests on. That alignment is worth keeping rather
+    than coincidental: a receipt exists exactly when the employer had something
+    complete enough to act on.
+    """
+    not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No screening yet")
+
+    application, job, resume, _ = await _visible_application(
+        session, application_id=application_id, candidate=candidate
+    )
+
+    screening_id = await application_service.completed_screening_id(
+        session, application=application
+    )
+    if screening_id is None:
+        raise not_found
+    screening = await session.get(Screening, screening_id)
+    if screening is None:
+        raise not_found
+
+    judgment = screening_service.stored_judgment(screening)
+    if judgment is None:
+        # A completed screening whose stored result will not validate. `ranking`
+        # reports this as `malformed` and carries on; here there is nothing to show,
+        # and inventing an empty receipt would read as "nothing was found in your
+        # document" — a claim about the applicant rather than about a broken row.
+        raise not_found
+
+    # `_visible_application` fetches the posting by primary key, so its requirements
+    # are unloaded — and a lazy load under `AsyncSession` is not a slow path, it is a
+    # `MissingGreenlet`. Asked for explicitly here rather than widened there: this is
+    # the only caller that needs them, and every other route through that helper
+    # would pay for a join it never reads.
+    await session.refresh(job, attribute_names=["requirements"])
+
+    latest = (
+        await session.execute(
+            select(ApplicationEvent)
+            .where(ApplicationEvent.application_id == application.id)
+            .order_by(ApplicationEvent.position.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    return ReceiptOut(
+        application_id=str(application.id),
+        job_title=job.title,
+        state=application.state,
+        reason=latest.reason if latest else None,
+        screened_at=(screening.updated_at or screening.created_at).isoformat(),
+        requirements=[
+            ReceiptRequirement(
+                label=item.label,
+                must_have=item.must_have,
+                verdict=item.verdict,
+                evidence=item.evidence,
+            )
+            for item in judgment.requirements
+        ],
+        dropped=judgment.dropped,
+        document_text=resume.document_text,
+        posting_changed_since=(
+            screening.requirements_hash is not None
+            and screening.requirements_hash != screening_service.fingerprint_of(job)
+        ),
+    )
 
 
 @router.get("/applications/{application_id}/events", response_model=list[EventOut])
