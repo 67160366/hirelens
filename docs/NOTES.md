@@ -6,7 +6,128 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-22 (latest) — one real resume finds what nine synthetic ones could not
+## 2026-08-22 (latest) — the careers site gets a front door, and the applicant gets the receipt
+
+Seven commits after the parser fix, **committed locally and not pushed**. The careers
+site went from one slice done to seven, and the seven include the one the whole project
+exists for.
+
+**The applicant can now read the verdicts.** `GET /applications/{id}/screening`, rendered
+at `/me`: each requirement judged on its own, the quote that settled it, the offsets it
+sits at, and the document underneath with those spans highlighted. `README.md` opens by
+naming candidates rejected by automated screening with no explanation. Every screen built
+before today served the side doing the rejecting.
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Stop letting a stranger register as a recruiter | `SelfServiceRole` keeps one member. +1 test |
+| 2 | Give the applicant the verdicts the employer read | `ReceiptOut`, `_visible_application`, staleness. +7 |
+| 3 | Let a stranger read what the company published | `careers.py`, the first router with no account. +8 |
+| 4 | Put the company's front door where the internal tool used to be | routes move, nav goes role-aware, `lang` splits |
+| 5 | Show the applicant the receipt, on their own document | `ScreeningReceipt` |
+| 6 | Give the landing page a face | aurora, parallax, spotlight; §6 relaxed and recorded |
+| 7 | Move the accent off indigo, and write the copy like a person | azure, and Thai that reads as Thai |
+
+Gates at the end: `pytest -q` **705 → 721**, 38 skipped; `ruff check`, `ruff format`,
+`mypy app` clean; `npm run typecheck`, `lint`, `vitest` **211 → 232**, `build` clean.
+Driven on `LLM_PROVIDER=fake` throughout — **zero Gemini quota**.
+
+### The thing that was not on the list and went first
+
+`SelfServiceRole` let anyone register as a `recruiter`, and `README.md` recorded that as a
+limitation this project could not answer: verifying that somebody represents the company
+they claim to is an identity problem. **The careers-site decision dissolved it rather than
+solving it.** With one employer there is no company to verify anybody against — a stranger
+claiming `recruiter` was never an unverified employer, they were a stranger inside this
+company's hiring side. It went first because it churns tests, and everything after it
+should be written against the final auth shape.
+
+The test that asserted the opposite was **replaced rather than deleted**. It would have
+gone on passing against the promoted fixture while proving nothing about what registration
+accepts — the same species as the parser test from this morning that could not fail.
+
+### Three shapes worth carrying
+
+- **The receipt cost nothing to build.** `ScreeningDetail` was already it;
+  `_owned_screening` was the only reason it belonged to the posting's owner. Third time
+  running that the slice making a milestone visible was cheap because the ones before it
+  stored the right things.
+- **`ReceiptOut` is narrower than `ScreeningDetail`, and that is the boundary.**
+  `attempts`, `cost_usd`, `requirements_hash` are facts about *running* a screening and
+  belong to whoever paid. The verdict and its citations belong to whoever it is about. No
+  score, no rank, no weight — a score is comparative, and showing one to one person
+  invites "why 62%", which this system cannot answer honestly.
+- **The public shell is chosen by route, not by session.** It was by session for one
+  commit: a signed-in applicant reading a job advertisement was shown Documents, Usage
+  and, for a recruiter, Hire. The public site was quietly the back office's front page
+  for exactly the audience it exists to reassure.
+
+### Two defects the browser found and no gate could
+
+- **The receipt's date rendered `20/8/2569`.** `toLocaleDateString()` with the browser set
+  to Thai gives the Buddhist year — correct for that reader, baffling in the middle of an
+  English screen, and ambiguous either way once day and month are both under 13. It is the
+  ISO date now: a receipt is a document about a person and should read the same to
+  everyone handed it.
+- **The linter caught the other one before the browser could**: the posting page cleared
+  its session-scoped state inside an effect. That is the rule `useAuth`'s rewrite bought,
+  and the fix is the same one — carry the account id beside the rows it was fetched for
+  and derive.
+
+### The design rule that moved, and the two that did not
+
+The owner asked for a landing page that looks like a technology company's — background,
+colour, movement. That is a direct conflict with `DESIGN.md` §6, which refuses gradient
+heroes, glow and decorative parallax, so **§6 moved rather than being quietly ignored**.
+The relaxation is scoped to the public marketing surface, where nothing on the page is a
+claim about anybody and decoration cannot be mistaken for evidence.
+
+Two halves did not relax and are enforced in code: no reserved colour is spent (which is
+why the aurora is azure and cyan, not the green a "verified" landing page reaches for),
+and the hero's highlight sweep is Motion 1 — the page runs the idea rather than decorating
+around it. §6's last bullet stands in full: no hallucination rate, no customer count, no
+logo wall.
+
+**`accent` also left indigo for azure**, measured before shipping rather than after: light
+6.02 → 5.68, dark 6.33 → **8.82**, and the tightest pairing in the whole interface —
+`accent` on `accent-wash` in the dark theme — went **4.98 → 6.89**. The hue moved 243° →
+201°, which is 38° from `cited` at 163°: closer than indigo was, and worth saying rather
+than hiding. Checked in a browser and not only in a spreadsheet, with the receipt's green
+`Evidenced` badges and the blue nav tint in one viewport.
+
+### Next step
+
+1. **`/how-we-screen` and `/demo` do not exist, and the landing page links to the first
+   of them.** That is the one loose end pointing at a 404, and it is slice 6.
+2. `/me/documents` is the upload screen at a new address — **the CV library (slice 9) is
+   not built**. `/hire` likewise: the routes moved, the screens inside are unchanged, so
+   slice 10 is "moved, not reorganised". `PLAN.md`'s table says so per slice rather than
+   ticking them.
+3. **Per-posting metadata is deferred with a reason, not forgotten.** Server-rendering the
+   board needs a second API base for server-side fetches, because
+   `NEXT_PUBLIC_API_BASE` points at the `web` container from inside it. Today a search
+   engine sees an empty board.
+4. Still unchanged from this morning: the three opt-in suites have been quiet since
+   2026-08-14.
+
+**Left in the dev database**, checked against the table rather than remembered:
+
+- `slice1-check@example.com` / `slice1-check-pw` — recruiter, **and** the applicant on
+  both demo applications, which is what made the receipt drivable without inventing a
+  second person. Its screening on `resume_th.pdf` is the one the receipt renders.
+- `applicant-check@example.com` / `applicant-check-pw` — candidate, no applications. The
+  account that proves the navigation hides `/hire` from a candidate and still shows
+  `/usage`.
+- `plain-check@example.com` — created by the `curl` that proved registration answers 201
+  with no `role` field. The two probes that asked for `recruiter` and `admin` left
+  nothing behind, because both were refused at the schema.
+- One posting titled **"Draft that nobody published"**, which exists to prove the public
+  board and the public read both refuse a draft. Leave it there; deleting it removes the
+  only draft in the database.
+
+---
+
+## 2026-08-22 — one real resume finds what nine synthetic ones could not
 
 The owner attached a resume PDF to the session. The chat client could not read it either,
 and its error was the tell: *"Bounding box … is not fully within parent page bounding

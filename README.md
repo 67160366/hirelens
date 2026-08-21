@@ -160,6 +160,8 @@ anywhere script can read it. Bearer wins when both are sent. Full schema at `/do
 | `GET` | `/me/applications` | Everything you have applied for |
 | `GET` `POST` | `/applications/{id}[/transitions]` | One application, and moving it. **409** with the reason when the move is not allowed |
 | `GET` | `/applications/{id}/events` | The append-only log the state is derived from |
+| `GET` | `/applications/{id}/screening` | **The receipt**: the verdicts and citations the employer read, for the person they are about. Narrower than `/screenings/{id}` — no attempts, no cost, no score |
+| `GET` | `/careers/postings[/{id}]` | The public board and one posting. **The only routes that take no account at all**, read-only, published postings only |
 | `GET` | `/screenings/{id}` | One screening, with the text its citations index into |
 | `POST` | `/screenings/{id}/retry` | Replay a stopped screening |
 | `GET` | `/health` | Liveness, and which provider is active |
@@ -251,8 +253,10 @@ Recorded per document, with no labelling required:
 | Latency per document | `llm_call_logs`, one row per call, with prompt version |
 | Cost per document | Same — but **every figure is currently `$0.00`**, because the only live provider maps every model to a free tier. The column is real and the rule is enforced (an unknown price renders `unknown`, never `$0.00`); there is simply nothing to charge yet |
 
-All of them are on the `/metrics` dashboard, which is a query over rows the system
-already wrote and spends no model call of its own.
+All of them are on the usage dashboard — `GET /metrics/usage`, rendered at `/usage` in
+the web app — which is a query over rows the system already wrote and spends no model call
+of its own. It is open to every role, scoped in the `WHERE` clause rather than gated at
+the route, so a candidate reading it sees what their own documents cost.
 
 Deliberately **not** claimed: ranking quality against a BM25 or embedding baseline.
 That needs a labelled gold set, and a project that stakes its success on beating a

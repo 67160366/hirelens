@@ -21,10 +21,25 @@ carries style** — `cited`, `ambiguous` and `dropped` say what the system found
 *document*, and may never be spent on a control, a cost, or a workflow state, which is
 what five of the migrated files were doing. **The theme is a `data-theme` attribute the
 reader chooses** (`web/lib/theme.ts`), not a media query, because a theme nobody can
-select is a theme nobody can check — the light half had never been looked at. **The next
-named work is the careers site**, recorded in `docs/PLAN.md` with its eleven slices; its
-migration `0013` gates every public route, since `SelfServiceRole` lets anyone register
-as a recruiter today.
+select is a theme nobody can check — the light half had never been looked at. §6 of that
+file was **relaxed on 2026-08-22 for the public marketing surface only** — the landing
+page may have a background and movement — and the three things that did *not* relax are
+written there beside it.
+
+**The careers site is the work in progress: seven of its eleven slices are done**
+(`docs/PLAN.md` has the per-slice status, and says plainly which two are "route only" and
+"moved, not reorganised" rather than ticking them). The half that is built is the founding
+half — an applicant reads `GET /applications/{id}/screening` at `/me` and sees the same
+verdicts the recruiter read, on their own document, at the same offsets. Two rules fall
+out. **`recruiter` is no longer self-selectable**: with one employer there is nobody to
+verify a recruiter against, so `candidate` is the only role registration accepts and the
+other two are granted out of band. And **which shell a page gets is decided by its route,
+not by the session** (`web/lib/nav.ts`) — `/`, `/careers` and the other public pages carry
+the company's header and never the application's, because a signed-in applicant reading a
+job advertisement must not be shown the back office's navigation.
+
+`/how-we-screen` and `/demo` do not exist yet **and the landing page links to the first of
+them**. That is the next slice and the one loose end pointing at a 404.
 
 `useAuth` was rewritten onto `useSyncExternalStore` on 2026-08-16, so **the session is
 an external store and no component copies it into state** — `web/lib/auth.ts` is the

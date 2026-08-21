@@ -1451,16 +1451,17 @@ argue with.
 
 | # | Slice | |
 |---|---|---|
+| 0 | **Close recruiter self-registration** — not in the original list | S — **done** 2026-08-22; see below, it stopped being a limitation and became a hole |
 | 1 | Citation pairing correctness | S — **done** 2026-08-20, ahead of the rest |
-| 2 | One shell, role-aware nav, who is signed in | M — **done** 2026-08-20 |
-| 3 | Receipt route `GET /applications/{id}/screening` via `_visible_application` | M |
-| 4 | `/me` — applications, reason inline, receipt on screen | L |
+| 2 | One shell, role-aware nav, who is signed in | M — **done** 2026-08-20, **reworked** 2026-08-22 onto role *and* route |
+| 3 | Receipt route `GET /applications/{id}/screening` via `_visible_application` | M — **done** 2026-08-22 |
+| 4 | `/me` — applications, reason inline, receipt on screen | L — **done** 2026-08-22 |
 | 5 | Design tokens, the three declared typefaces, primitives | L — **done**, and the migration above is what cashed it |
-| 6 | Public demo + `/how-we-screen` | L |
+| 6 | Public demo + `/how-we-screen` | L — **not started**, and `/` links to it |
 | 7 | Migration `0013` — publication lifecycle and posting fields | L — **done** 2026-08-21 |
-| 8 | Public careers API + board + posting page + landing + metadata | L |
-| 9 | `/me/documents` — the CV library | M |
-| 10 | `/hire` — the back office, ranking first | L |
+| 8 | Public careers API + board + posting page + landing + metadata | L — **done 2026-08-22 except the metadata**, which is deferred with a reason |
+| 9 | `/me/documents` — the CV library | M — **route only**: the upload screen moved there, the library does not exist |
+| 10 | `/hire` — the back office, ranking first | L — **moved, not reorganised**: the routes are behind `/hire`, the screens are unchanged inside |
 | 11 | `/me/account` — export, password, erasure | M |
 
 **Slice 7 is done** (2026-08-21). `JobStatus` is `draft`/`published`/`closed`, and
@@ -1503,6 +1504,71 @@ reason the order above is not the obvious one:
    `FakeMode.HALLUCINATING` (`api/app/llm/fake.py:50-51`) attaches a quote that is not in
    the document, so a visitor watches a fabrication being refused rather than reading that
    one would be.
+
+### What the 2026-08-22 run actually built, and what it decided
+
+Seven commits, in dependency order. Each one green on every gate and driven in a browser
+before the next started — the rule bought on 2026-08-13, applied as a precondition rather
+than as a closing check.
+
+**The one thing that was not on the list, and went first.** `SelfServiceRole` let anyone
+register as a `recruiter`. That was recorded in `README.md` as a limitation this project
+could not answer — verifying that somebody represents the company they claim to is an
+identity problem — and the careers-site decision dissolved it rather than solving it:
+with **one** employer there is no company to verify anybody against, so a stranger
+claiming the role was never an unverified employer. They were a stranger inside this
+company's hiring side. `candidate` is the only self-selectable role now; `recruiter` and
+`admin` are granted out of band, for the reason that always applied to `admin` alone.
+
+**Three shapes worth carrying:**
+
+1. **The receipt cost no migration, no schema and no model call.** `ScreeningDetail` was
+   already the receipt; `_owned_screening` was the only reason it belonged to the
+   posting's owner. The same payload behind `_visible_application` is the whole slice —
+   the third time in this project a milestone's visible half has been cheap because the
+   slices before it stored the right things (M3 slice 5, M4 slice 5, this).
+2. **`ReceiptOut` is narrower than `ScreeningDetail` on purpose.** `attempts`,
+   `cost_usd`, `failure_reason` and `requirements_hash` are facts about *running* a
+   screening and belong to whoever paid for it. The verdict and its citations belong to
+   whoever the verdict is about. No score, no rank and no weight reach it: a score is
+   comparative, and showing one to a single person invites "why 62%", which this system
+   cannot answer honestly.
+3. **The public shell is chosen by route, not by session.** It was by session for one
+   commit, and that was wrong in a way worth keeping written down: a signed-in applicant
+   reading a job advertisement was shown a bar offering Documents, Usage and — if they
+   happened to be a recruiter — Hire. The company's public site was quietly the back
+   office's front page, for exactly the audience it exists to reassure.
+
+**Two decisions that departed from the plan above, and why:**
+
+- **`/usage` is not under `/hire`.** The plan said `/hire/usage`, which would have meant
+  hiding it from candidates. `GET /metrics/usage` takes `CandidateDep` and no role gate —
+  it scopes rows in the WHERE clause — so hiding it would be the client asserting a rule
+  the server does not have, which `web/lib/nav.ts` has forbidden since the shell landed.
+  The path was chosen so that rule stays easy to keep rather than tempting to break.
+- **The landing page and the route moves are one commit, not two.** Splitting them would
+  have left `/` as a placeholder in between, and a placeholder is not a state to commit.
+  `/me/documents` moved with them for the same reason: `/` had to be free.
+
+**Deferred with a reason rather than forgotten:**
+
+- **Per-posting metadata and server-side rendering for the board.** The public pages are
+  client components like every other screen here, which is what keeps `npm run build`
+  free of the API (repair #4). `force-dynamic` on a server component would fetch from
+  *inside* the `web` container, where `NEXT_PUBLIC_API_BASE` points at the container
+  itself. The cost is real: a posting's title is not in the server-rendered HTML, so a
+  search engine sees an empty board. Fixing it needs a second API base with its own
+  container-networking failure mode — a slice, not a line smuggled into another one.
+- **`/me` still carries its own "Apply to a job" list**, which is now a second board
+  beside `/careers`. Removing it is a decision about where applying belongs.
+
+**And the design rule that moved.** The owner asked on 2026-08-22 for a landing page that
+looks like a technology company's, which is a direct conflict with `docs/DESIGN.md` §6.
+§6 now records the relaxation, its scope — the public marketing surface only — and the
+three things that did not relax: no reserved colour is spent, the motion still shows the
+mechanism, and no number appears that the system cannot demonstrate. `accent` also moved
+off indigo to azure the same day, measured before shipping: every pairing improved, and
+the tightest one in the interface went 4.98 → 6.89 in the dark theme.
 
 **Refused, so they read as decisions:**
 

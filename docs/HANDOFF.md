@@ -18,10 +18,12 @@ Updated again 2026-08-18, when a password change stopped being something only th
 caller's own session noticed, and 2026-08-19, when the browser stopped holding a
 token at all. Updated 2026-08-21, when every screen came onto the design tokens and
 the light theme became something a reader can choose — and therefore something
-anybody can check. Updated 2026-08-22 with §12: one real resume, attached to a
-session, found a parser defect that nine synthetic fixtures could not — and the
-test that should have caught it was asserting a number that is only correct on the
-fixtures.
+anybody can check. Updated 2026-08-22 twice: with §12, where one real resume found a parser defect
+that nine synthetic fixtures could not — and the test that should have caught it
+was asserting a number only correct on those fixtures — and again when the careers
+site got its front door and **the applicant finally got a screen showing why**,
+which is the thing `README.md` opens by naming and which no surface built before
+that day provided.
 
 ---
 
@@ -1203,6 +1205,38 @@ lexical retriever already *is* BM25's idea, the embedding half is a paid adapter
 `CLAUDE.md`'s hard rule, and a gold set over nine synthetic fixtures would be marking its
 own homework. All four reasons are in `docs/PLAN.md`'s M6 section, along with the two
 honest shapes it could take if it is ever revisited.
+
+**The careers site is half built, and the half that is built is the founding
+half.** Seven commits on 2026-08-22 took it from one slice to seven, and what
+matters is which seven: an applicant can now open `GET
+/applications/{id}/screening` from `/me` and read **the same verdicts the recruiter
+read, on their own document, at the same character offsets**. `README.md`'s
+opening sentence names candidates rejected by automated screening with no
+explanation; until that day every screen in this system served the side doing the
+rejecting.
+
+Four things fall out of it and are the ones to hold:
+
+- **It cost no migration, no schema and no model call.** `ScreeningDetail` was
+  already the receipt and `_owned_screening` was the only reason it belonged to the
+  posting's owner; the same payload behind `_visible_application` is the slice.
+  Third time running that a milestone's visible half was cheap.
+- **`ReceiptOut` is deliberately narrower than what the recruiter's screen gets**,
+  and the boundary is the point: `attempts`, `cost_usd` and `requirements_hash` are
+  facts about running a screening; the verdict and its citations are facts about a
+  person. No score, no rank, no weight.
+- **A stranger can now read a published posting with no account at all** —
+  `api/app/api/routes/careers.py` is the first router in this system that resolves
+  none. Read-only is a boundary there rather than a phase.
+- **`recruiter` stopped being self-selectable.** With one employer there is no
+  company to verify anybody against, so the recorded limitation dissolved instead
+  of being solved. `candidate` is the only role registration accepts.
+
+`docs/PLAN.md`'s careers section carries the per-slice status, the two departures
+from the written plan and the two things deferred with a reason. **`/how-we-screen`
+and `/demo` do not exist yet and the landing page links to the first of them** —
+that is the next slice, and it is the one loose end this run left pointing at a
+404.
 
 **So there is no milestone in progress.** `useAuth`'s `useSyncExternalStore` rewrite
 landed on 2026-08-16 — the session is an external store now, `web/lib/auth.ts` is the only
