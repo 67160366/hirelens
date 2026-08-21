@@ -68,7 +68,7 @@ export default function PostingPage() {
         resumes: await api.listResumes(),
         applications: await api.listMyApplications(),
       });
-    }).catch((caught) => setError(errorMessage(caught, "ไม่สามารถโหลดข้อมูลของคุณได้")));
+    }).catch((caught) => setError(errorMessage(caught, "โหลดข้อมูลของคุณไม่สำเร็จ")));
   }, [owner, authorized]);
 
   // Nothing belonging to a previous session is ever on screen: the id it was
@@ -105,7 +105,7 @@ export default function PostingPage() {
       <div className="mx-auto max-w-3xl px-5 py-12">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">ไม่พบตำแหน่งนี้</h1>
         <p className="mt-2 text-sm text-ink-muted">
-          ตำแหน่งนี้อาจถูกปิดรับไปแล้ว หรือลิงก์ไม่ถูกต้อง
+          อาจปิดรับไปแล้ว หรือลิงก์ไม่ถูกต้อง
         </p>
         <Link href="/careers" className="btn btn-secondary mt-6 inline-flex">
           ดูตำแหน่งทั้งหมด
@@ -142,8 +142,8 @@ export default function PostingPage() {
 
       <Card>
         <CardHeader
-          title="คุณจะถูกวัดด้วยอะไร"
-          caption="ทุกข้อจะถูกตัดสินแยกกัน และคำตัดสินแต่ละข้อต้องอ้างข้อความในเอกสารของคุณได้"
+          title="ตำแหน่งนี้วัดจากอะไร"
+          caption="แต่ละข้อตัดสินแยกกัน และต้องชี้ได้ว่าอ้างจากข้อความไหนในเอกสารของคุณ"
         />
         <CardBody padded={false}>
           <ul className="divide-y divide-line">
@@ -165,16 +165,16 @@ export default function PostingPage() {
                   // colours for exactly that.
                   <Badge
                     tone="neutral"
-                    title="ข้อจำเป็น — ถ้าเอกสารของคุณไม่มีหลักฐานข้อนี้ คุณจะอยู่ท้ายลำดับ"
+                    title="ต้องมี — ถ้าเอกสารของคุณไม่มีข้อความยืนยันข้อนี้ คุณจะอยู่ท้ายลำดับ"
                   >
-                    ข้อจำเป็น
+                    ต้องมี
                   </Badge>
                 )}
               </li>
             ))}
             {posting.requirements.length === 0 && (
               <li className="px-4 py-3 text-sm text-ink-muted">
-                ตำแหน่งนี้ยังไม่ได้ระบุข้อกำหนดไว้
+                ตำแหน่งนี้ยังไม่ได้ระบุว่าวัดจากอะไร
               </li>
             )}
           </ul>
@@ -190,7 +190,7 @@ export default function PostingPage() {
 
           {ready && !session && (
             <p className="text-sm text-ink-muted">
-              เข้าสู่ระบบหรือสร้างบัญชีก่อน แล้วกลับมาที่หน้านี้เพื่อสมัคร{" "}
+              เข้าสู่ระบบก่อน แล้วกลับมากดสมัครได้เลย{" "}
               <Link href="/me" className="ring-focus rounded-control text-accent underline">
                 เข้าสู่ระบบ
               </Link>
@@ -199,30 +199,30 @@ export default function PostingPage() {
 
           {ready && session && already && (
             <p className="text-sm text-ink-muted">
-              คุณสมัครตำแหน่งนี้แล้ว{" "}
+              สมัครตำแหน่งนี้ไปแล้ว{" "}
               <Link href="/me" className="ring-focus rounded-control text-accent underline">
-                ดูใบสมัครของคุณ
+                ดูใบสมัคร
               </Link>
             </p>
           )}
 
           {ready && session && !already && mine.length === 0 && (
             <p className="text-sm text-ink-muted">
-              คุณยังไม่มีเอกสารในระบบ{" "}
+              ยังไม่มีเรซูเม่ในระบบ{" "}
               <Link
                 href="/me/documents"
                 className="ring-focus rounded-control text-accent underline"
               >
-                อัปโหลดเรซูเม่
+                อัปโหลดก่อน
               </Link>{" "}
-              แล้วกลับมาสมัคร
+              แล้วกลับมากดสมัคร
             </p>
           )}
 
           {ready && session && !already && mine.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <label className="sr-only" htmlFor="resume">
-                เลือกเอกสารที่จะใช้สมัคร
+                เลือกไฟล์ที่จะใช้สมัคร
               </label>
               <select
                 id="resume"
@@ -230,7 +230,7 @@ export default function PostingPage() {
                 onChange={(event) => setChosen(event.target.value)}
                 className="field w-auto min-w-[16rem]"
               >
-                <option value="">เลือกเอกสาร…</option>
+                <option value="">เลือกไฟล์…</option>
                 {mine.map((resume) => (
                   <option key={resume.id} value={resume.id}>
                     {resume.filename}

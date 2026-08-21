@@ -34,8 +34,8 @@ function prefersReducedMotion(): boolean {
  *
  * - **No reserved colour is spent.** Nothing on this page touches `cited`,
  *   `ambiguous` or `dropped`. The palette is `accent` and the neutrals — which is
- *   also why the aurora is indigo rather than the green a "verified" landing page
- *   would reach for.
+ *   why the aurora is azure and cyan rather than the green a "verified" landing
+ *   page would reach for.
  * - **The motion shows the mechanism.** The hero's highlight sweep is Motion 1,
  *   the one the product runs when a citation is located. The page is not
  *   decorating around the idea; it is running it.
@@ -115,19 +115,20 @@ export default function Home() {
   return (
     <>
       <section ref={stage} className="hero-stage border-b border-line">
-        {/* Layer 1 — the aurora. Indigo and violet only; the green a "verified"
-            landing page would reach for is `cited`, and it is not spendable here. */}
+        {/* Layer 1 — the aurora. Azure, cyan and sky: one family, and all of it far
+            from the three reserved hues. The green a "verified" landing page would
+            reach for is `cited`, and it is not spendable here. */}
         <div className="hero-layer hero-depth-1" aria-hidden="true">
           <span
             className="hero-blob left-[8%] top-[-14%] h-[38rem] w-[38rem] bg-[var(--accent)]"
             style={{ animationDelay: "0s" }}
           />
           <span
-            className="hero-blob right-[-6%] top-[6%] h-[30rem] w-[30rem] bg-[color-mix(in_oklab,var(--accent)_60%,#a855f7)]"
+            className="hero-blob right-[-6%] top-[6%] h-[30rem] w-[30rem] bg-[color-mix(in_oklab,var(--accent)_55%,#06b6d4)]"
             style={{ animationDelay: "-9s" }}
           />
           <span
-            className="hero-blob bottom-[-24%] left-[38%] h-[26rem] w-[26rem] bg-[color-mix(in_oklab,var(--accent)_40%,#0ea5e9)]"
+            className="hero-blob bottom-[-24%] left-[38%] h-[26rem] w-[26rem] bg-[color-mix(in_oklab,var(--accent)_45%,#0ea5e9)]"
             style={{ animationDelay: "-17s" }}
           />
         </div>
@@ -139,22 +140,22 @@ export default function Home() {
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent-wash px-3 py-1 text-micro font-medium text-accent">
               <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-              HireLens · เปิดรับสมัครงาน
+              HireLens · กำลังเปิดรับสมัคร
             </span>
 
             <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-ink sm:text-5xl">
-              เราคัดกรองเรซูเม่
+              ถ้าคุณไม่ผ่าน
               <br />
-              <span className="text-accent">ด้วยข้อความที่คุณเขียนเอง</span>
+              <span className="text-accent">เราบอกได้ว่าเพราะอะไร</span>
             </h1>
 
             <p className="mt-3 text-sm text-ink-faint" lang="en">
-              Resume screening where every claim cites the exact text it came from.
+              Resume screening that shows you the line it read.
             </p>
 
             <p className="mt-6 max-w-prose text-base leading-relaxed text-ink-muted">
-              ทุกข้อสรุปที่ระบบของเราพูดถึงคุณ ต้องชี้กลับไปได้ว่ามาจากข้อความไหนในเอกสารของคุณ
-              ข้อไหนชี้ไม่ได้ เราทิ้งข้อนั้นและบอกให้รู้ ไม่ใช่เอามาแสดงเฉย ๆ
+              ระบบคัดเรซูเม่ทั่วไปตอบได้แค่ผ่านหรือไม่ผ่าน ของเราชี้ได้ว่าไปอ่านเจอที่บรรทัดไหน
+              ตัวอักษรตำแหน่งที่เท่าไหร่ ส่วนข้อที่ชี้ไม่ได้ เราตัดทิ้งตั้งแต่ต้น ไม่ส่งต่อให้ใครอ่าน
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -162,7 +163,7 @@ export default function Home() {
                 ดูตำแหน่งที่เปิดรับ
               </Link>
               <Link href="/how-we-screen" className="btn btn-secondary btn-lg">
-                เราคัดกรองอย่างไร
+                วิธีที่เราคัด
               </Link>
             </div>
           </div>
@@ -177,10 +178,10 @@ export default function Home() {
 
       <section className="mx-auto max-w-6xl px-5 py-16">
         <h2 data-reveal className="text-xl font-semibold tracking-tight text-ink">
-          สิ่งที่เกิดขึ้นกับเอกสารของคุณ
+          เอกสารของคุณผ่านอะไรมาบ้าง
         </h2>
         <p data-reveal className="mt-1.5 max-w-prose text-sm text-ink-muted">
-          สามขั้น และขั้นที่สามคือขั้นที่ระบบคัดกรองส่วนใหญ่ไม่มี
+          สามขั้น ขั้นสุดท้ายคือขั้นที่ระบบอื่นข้ามไป
         </p>
 
         <ul className="mt-8 grid gap-4 sm:grid-cols-3">
@@ -211,10 +212,10 @@ export default function Home() {
           >
             <div>
               <h2 className="text-lg font-semibold tracking-tight text-ink">
-                อยากร่วมทีมกับเรา?
+                สนใจร่วมงานกับเรา
               </h2>
               <p className="mt-1 text-sm text-ink-muted">
-                ทุกตำแหน่งบอกล่วงหน้าว่าคุณจะถูกวัดด้วยอะไร และคุณเปิดดูผลได้หลังคัดกรอง
+                แต่ละตำแหน่งบอกไว้ก่อนว่าวัดจากอะไร พอคัดเสร็จ คุณเปิดดูผลของตัวเองได้
               </p>
             </div>
             <Link href="/careers" className="btn btn-primary btn-lg shrink-0">
@@ -223,8 +224,8 @@ export default function Home() {
           </div>
 
           <p className="mt-8 max-w-prose text-xs leading-relaxed text-ink-faint">
-            เอกสารที่คุณอัปโหลดถูกเก็บไว้เพื่อการคัดกรองตำแหน่งที่คุณสมัครเท่านั้น
-            คุณขอสำเนาข้อมูลทั้งหมดที่เราเก็บไว้ หรือขอให้ลบทิ้งเมื่อไหร่ก็ได้
+            ไฟล์ที่คุณส่งมา เราใช้กับตำแหน่งที่คุณสมัครเท่านั้น
+            อยากได้สำเนาข้อมูลทั้งหมด หรืออยากให้ลบทิ้ง บอกได้ตลอด
           </p>
         </div>
       </section>
@@ -237,15 +238,15 @@ export default function Home() {
  *  copy that stops matching it. */
 const STEPS = [
   {
-    title: "อ่านเอกสารของคุณ",
-    body: "ระบบอ่านไฟล์ของคุณและจำไว้ว่าตัวอักษรแต่ละตัวอยู่ตำแหน่งไหน สแกนเป็นรูปก็อ่านได้ และถ้าอ่านได้ไม่ชัดพอ ระบบปฏิเสธแทนที่จะเดา",
+    title: "อ่านทั้งไฟล์ ไม่ใช่แค่คีย์เวิร์ด",
+    body: "เราจำไว้ว่าตัวอักษรแต่ละตัวอยู่ตรงไหนในหน้า ไฟล์สแกนเป็นรูปก็อ่านออก และถ้าภาพเบลอจนอ่านไม่ชัดพอ เราบอกว่าอ่านไม่ได้ ดีกว่าเดาแล้วตัดสินคุณผิด",
   },
   {
-    title: "ถามหาข้อความ ไม่ใช่คำตัดสิน",
-    body: "โมเดลถูกถามแค่ว่า “ข้อความไหนในเอกสารนี้แสดงว่าตรงตามข้อกำหนด” ไม่เคยถูกถามว่าให้ตัดสินหรือให้คะแนน",
+    title: "ถามหาข้อความ ไม่ได้ถามหาคำตัดสิน",
+    body: "เราถาม AI แค่ว่าตรงไหนในเอกสารบอกเรื่องนี้ ไม่เคยถามว่าให้กี่คะแนนหรือคนนี้ควรผ่านไหม ผลออกมาจากว่าหาข้อความเจอหรือไม่เจอ",
   },
   {
-    title: "ข้อที่ชี้ไม่ได้ ถูกทิ้ง",
-    body: "ทุกข้อความที่โมเดลตอบมา ระบบไปหาในเอกสารจริงเอง หาไม่เจอคือแต่งขึ้น — ถูกทิ้งและถูกนับ ไม่ได้ถูกนำมาแสดง",
+    title: "อ้างไม่ได้ ก็ไม่นับ",
+    body: "ข้อความที่ AI ตอบมา เราเอาไปหาในไฟล์จริงอีกรอบ หาไม่เจอแปลว่ามันแต่งขึ้น — ตัดทิ้งแล้วนับไว้ ไม่ส่งต่อให้ใครอ่าน",
   },
 ] as const;

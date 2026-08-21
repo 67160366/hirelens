@@ -39,15 +39,15 @@ export default function CareersBoard() {
     api
       .listPostings()
       .then(setPostings)
-      .catch((caught) => setError(errorMessage(caught, "ไม่สามารถโหลดตำแหน่งงานได้")));
+      .catch((caught) => setError(errorMessage(caught, "โหลดตำแหน่งงานไม่สำเร็จ")));
   }, []);
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-12">
       <h1 className="text-2xl font-semibold tracking-tight text-ink">ร่วมงานกับเรา</h1>
       <p className="mt-2 max-w-prose text-sm leading-relaxed text-ink-muted">
-        ทุกตำแหน่งบอกไว้ล่วงหน้าว่าคุณจะถูกวัดด้วยอะไร และเมื่อคัดกรองแล้ว
-        คุณเปิดดูผลชุดเดียวกับที่ทีมเราอ่านได้
+        แต่ละตำแหน่งบอกไว้ก่อนว่าวัดจากอะไร พอคัดเสร็จ
+        คุณเปิดดูผลชุดเดียวกับที่ทีมเราอ่าน
       </p>
 
       {error && (
@@ -62,7 +62,7 @@ export default function CareersBoard() {
 
       {postings?.length === 0 && (
         <p className="mt-8 text-sm text-ink-muted">
-          ตอนนี้ยังไม่มีตำแหน่งที่เปิดรับ ลองกลับมาดูใหม่อีกครั้ง
+          ตอนนี้ยังไม่มีตำแหน่งที่เปิดรับ ไว้แวะมาดูใหม่นะ
         </p>
       )}
 
@@ -80,8 +80,8 @@ export default function CareersBoard() {
                   {posting.requirements.length > 0 && (
                     <>
                       {" · "}
-                      {posting.requirements.length} ข้อกำหนด
-                      {mustHaves(posting) > 0 && ` · ${mustHaves(posting)} ข้อจำเป็น`}
+                      {posting.requirements.length} ข้อที่วัด
+                      {mustHaves(posting) > 0 && ` · ต้องมี ${mustHaves(posting)} ข้อ`}
                     </>
                   )}
                 </span>

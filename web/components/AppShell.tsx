@@ -42,9 +42,11 @@ import {
  *
  * **The active item is tinted `accent`, never `cited`.** Being on a page is a
  * control state, and §1 reserves the three meaning colours for what the system says
- * about a document. Measured rather than assumed: accent on accent-wash is 5.62:1
- * on paper and **4.98:1** in the dark theme — the tightest pairing this file
- * introduces, and still clear of the 4.5:1 floor.
+ * about a document. Measured rather than assumed, and re-measured when the accent
+ * became azure on 2026-08-22: accent on accent-wash is **5.17:1** on paper and
+ * **6.89:1** in the dark theme — the tightest pairing this file introduces, and
+ * still clear of the 4.5:1 floor. The dark half used to be the tight one at 4.98
+ * and is now the comfortable one.
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const { session, ready, signOut } = useAuth();
@@ -167,7 +169,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <footer className="border-t border-line bg-surface">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-6">
             <p className="text-micro text-ink-faint">
-              HireLens · คัดกรองเรซูเม่โดยอ้างอิงข้อความจริงในเอกสาร
+              HireLens · คัดเรซูเม่แบบที่ชี้ได้ว่าอ่านมาจากบรรทัดไหน
             </p>
             <nav aria-label="Footer" className="flex items-center gap-4">
               {PUBLIC_NAV_ITEMS.map((item) => (

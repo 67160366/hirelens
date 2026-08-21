@@ -48,7 +48,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
  */
 export const PUBLIC_NAV_ITEMS: readonly NavItem[] = [
   { href: "/careers", label: "ร่วมงานกับเรา" },
-  { href: "/how-we-screen", label: "เราคัดกรองอย่างไร" },
+  { href: "/how-we-screen", label: "วิธีที่เราคัด" },
 ] as const;
 
 /** The items an account of this role may reach. */

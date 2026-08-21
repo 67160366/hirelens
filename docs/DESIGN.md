@@ -144,12 +144,24 @@ own tokens against its own grounds):
 | `ink` | 18.09:1 | 17.32:1 |
 | `ink-muted` | 7.30:1 | 12.69:1 |
 | `ink-faint` | **4.59:1** | 7.49:1 |
-| `accent` | 6.02:1 | 6.33:1 |
+| `accent` | 5.68:1 | 8.82:1 |
 | `cited` | 5.25:1 | 9.83:1 |
 | `ambiguous` | 4.81:1 | 11.32:1 |
 | `dropped` | 6.02:1 | 7.02:1 |
 
 Every token clears WCAG AA (4.5:1) in both themes.
+
+**`accent` was indigo until 2026-08-22**, when the owner asked for a palette that is not
+the violet every generated interface reaches for. It is azure now — `#0369a1` on paper,
+`#38bdf8` in the dark — and the swap was measured before it shipped rather than after.
+Both themes improved: light went 6.02 → 5.68 (still well clear), dark 6.33 → **8.82**,
+and the nav's tightest pairing, `accent` on `accent-wash`, went 5.62 → 5.17 in light and
+**4.98 → 6.89** in dark, which was the one that had least room.
+
+The hue moved from 243° to 201°, which puts it **38° from `cited`** at 163° — closer than
+indigo was, and still a separation nobody reads as the same colour: ocean blue against
+forest green. It also has a second guard behind it, from §5: a tone never arrives without
+a word, so no state in this interface is distinguished by hue alone.
 
 `ink-faint` at 4.59:1 is the tightest in the set, and it is what the *smallest* text
 uses. So one rule falls out of the table:

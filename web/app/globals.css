@@ -42,9 +42,9 @@
   --line: #e7e5e4;
   --line-strong: #d6d3d1;
 
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-wash: #eef2ff;
+  --accent: #0369a1;
+  --accent-hover: #075985;
+  --accent-wash: #e0f2fe;
   --on-accent: #ffffff;
 
   --cited: #047857;
@@ -56,7 +56,7 @@
 
   --shadow-card: 0 1px 2px rgb(15 17 21 / 0.04), 0 1px 3px rgb(15 17 21 / 0.06);
   --shadow-raised: 0 4px 6px -2px rgb(15 17 21 / 0.05), 0 12px 24px -6px rgb(15 17 21 / 0.12);
-  --ring-accent: 0 0 0 3px rgb(79 70 229 / 0.28);
+  --ring-accent: 0 0 0 3px rgb(3 105 161 / 0.28);
 }
 
 /* The dark half of the same palette, selected by an attribute rather than by
@@ -87,9 +87,9 @@
   --line: #272a32;
   --line-strong: #363a44;
 
-  --accent: #818cf8;
-  --accent-hover: #a5b4fc;
-  --accent-wash: color-mix(in oklab, #6366f1 16%, transparent);
+  --accent: #38bdf8;
+  --accent-hover: #7dd3fc;
+  --accent-wash: color-mix(in oklab, #0284c7 16%, transparent);
   --on-accent: #0f1115;
 
   --cited: #34d399;
@@ -101,7 +101,7 @@
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-raised: 0 12px 28px -8px rgb(0 0 0 / 0.6);
-  --ring-accent: 0 0 0 3px rgb(129 140 248 / 0.32);
+  --ring-accent: 0 0 0 3px rgb(56 189 248 / 0.32);
 }
 
 @theme inline {
