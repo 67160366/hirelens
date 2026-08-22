@@ -15,6 +15,7 @@
 *.pdf   binary
 *.docx  binary
 *.png   binary
+*.webp  binary
 *.jpg   binary
 *.jpeg  binary
 *.gif   binary
