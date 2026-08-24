@@ -26,7 +26,7 @@ file was **relaxed on 2026-08-22 for the public marketing surface only** — the
 page may have a background and movement — and the three things that did *not* relax are
 written there beside it.
 
-**The careers site is the work in progress: seven of its eleven slices are done**
+**The careers site is the work in progress: eight of its eleven slices are done**
 (`docs/PLAN.md` has the per-slice status, and says plainly which two are "route only" and
 "moved, not reorganised" rather than ticking them). The half that is built is the founding
 half — an applicant reads `GET /applications/{id}/screening` at `/me` and sees the same
@@ -38,8 +38,17 @@ not by the session** (`web/lib/nav.ts`) — `/`, `/careers` and the other public
 the company's header and never the application's, because a signed-in applicant reading a
 job advertisement must not be shown the back office's navigation.
 
-`/how-we-screen` and `/demo` do not exist yet **and the landing page links to the first of
-them**. That is the next slice and the one loose end pointing at a 404.
+**Slice 6 closed that on 2026-08-24**: `/how-we-screen` explains locate-then-keep and
+`/demo` runs it. The demo is **live rather than canned** — `GET /demo/screening` (the
+second router that resolves no account) judges a committed synthetic artefact in
+`api/app/demo/` through the real `judge_requirements` and `EvidenceResolver`, with a
+faithful/fabricating toggle. It **writes no rows, spends no model call and never touches
+`app.state.extractor`**, so a paid deployment cannot bill a marketing page; keep those
+three properties if the route is ever changed, and read the docstring before adding a
+session to it. The public pages are Thai and the product screens are English, so
+`DroppedClaims` and `DocumentPane` take a `language` prop and `web/lib/evidenceCopy.ts`
+holds both vocabularies — `lib/evidence.ts` stays the definition of what the words mean.
+Slices 9, 10 and 11 are what remain of the careers site.
 
 `useAuth` was rewritten onto `useSyncExternalStore` on 2026-08-16, so **the session is
 an external store and no component copies it into state** — `web/lib/auth.ts` is the

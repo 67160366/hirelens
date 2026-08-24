@@ -1457,7 +1457,7 @@ argue with.
 | 3 | Receipt route `GET /applications/{id}/screening` via `_visible_application` | M — **done** 2026-08-22 |
 | 4 | `/me` — applications, reason inline, receipt on screen | L — **done** 2026-08-22 |
 | 5 | Design tokens, the three declared typefaces, primitives | L — **done**, and the migration above is what cashed it |
-| 6 | Public demo + `/how-we-screen` | L — **not started**, and `/` links to it |
+| 6 | Public demo + `/how-we-screen` | L — **done 2026-08-24**, both routes; see below |
 | 7 | Migration `0013` — publication lifecycle and posting fields | L — **done** 2026-08-21 |
 | 8 | Public careers API + board + posting page + landing + metadata | L — **done 2026-08-22 except the metadata**, which is deferred with a reason |
 | 9 | `/me/documents` — the CV library | M — **route only**: the upload screen moved there, the library does not exist |
@@ -1569,6 +1569,43 @@ three things that did not relax: no reserved colour is spent, the motion still s
 mechanism, and no number appears that the system cannot demonstrate. `accent` also moved
 off indigo to azure the same day, measured before shipping: every pairing improved, and
 the tightest one in the interface went 4.98 → 6.89 in the dark theme.
+
+### Slice 6, and the defect it exposed (2026-08-24)
+
+Two commits. `/how-we-screen` explains locate-then-keep in the order the pipeline runs
+it and runs Motions 1 and 2 rather than describing them; `/demo` judges a committed
+synthetic document live through `GET /demo/screening`, with a faithful/fabricating
+toggle. Both were the routes `web/lib/nav.ts:51` and the landing page's second call to
+action had been pointing at since 2026-08-22.
+
+**The demo is live rather than canned, and that was the whole decision.** The route
+builds its own `FakeExtractor`, rebuilds the document with `ParsedDocument.from_stored`
+and runs the real `judge_requirements` — so the refusal a visitor watches is produced by
+`EvidenceResolver`, the module every verdict in this system rests on. Three properties
+are pinned in `tests/test_demo.py`: it writes no rows, it spends no model call, and it
+does not touch `app.state.extractor`, so a paid deployment never bills a marketing page
+and an outage there does not take the demo down. The sharp test is that the dropped quote
+is genuinely absent from `document_text` — every other assertion would pass against a
+canned refusal.
+
+**What the browser found that no gate could.** At 375 the public nav strip is only as
+wide as its first item, so with `/how-we-screen` open the lit item was clipped edge to
+edge and the reader had no visible answer to where they were. Nothing had surfaced it
+because the second public item led to a 404 and could never be active. `scrollLeftToShow`
+in `web/lib/nav.ts` scrolls the strip rather than the page, and getting it to *run* took
+two more findings, both watched failing first: the Thai webfont widens the items after
+the effect's first pass, so it is re-run from a `ResizeObserver`; and the whole header is
+gated on `ready`, so on a public route — where `items` and `active` never change — the
+first pass ran against a `null` ref and nothing ever ran again. Residual, named rather
+than implied: an item **wider** than the strip is anchored at its start and still clipped
+at its end, which is what `/careers` at 375 does.
+
+**Two components learned a second language instead of being copied.** The public site is
+Thai and the product screens are English (`docs/DESIGN.md` §8), so `DroppedClaims` and
+`DocumentPane` take a `language` prop and `web/lib/evidenceCopy.ts` holds both
+vocabularies, with `lib/evidence.ts` still the definition of what the words mean. The
+coordinate line stays untranslated: `p1 · chars 168–221 · exact` reads the same either
+way, and translating half of it would make it less legible.
 
 **Refused, so they read as decisions:**
 

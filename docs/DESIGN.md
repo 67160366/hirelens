@@ -77,7 +77,7 @@ spent on decoration:
 | `ambiguous` | a quote that matched in more than one place, reported rather than guessed at |
 | `dropped` | a claim that could not be located, and was refused |
 
-`accent` — the indigo used for navigation and actions — is deliberately a **different
+`accent` — the azure used for navigation and actions — is deliberately a **different
 hue** from all three. Nothing the product *asserts* about a person may ever be mistaken
 for a button, and no button may borrow the colour of a verdict.
 
@@ -259,7 +259,9 @@ That is a direct conflict with the first bullet, so the bullet moved rather than
 quietly ignored.
 
 **The relaxation is scoped to the public marketing surface** — `/`, and the public pages
-that carry the same shell. It reaches no screen that sits beside a claim about a person.
+that carry the same shell, which since 2026-08-24 includes `/how-we-screen` and `/demo`.
+Neither spends the relaxation on decoration: the explainer runs Motions 1 and 2 because
+they *are* the mechanism, and the demo renders real verdicts on a real document. It reaches no screen that sits beside a claim about a person.
 The distinction is the whole reason the first bullet existed: decoration next to a verdict
 can be mistaken for part of the verdict, and on a page that makes no claim about anybody
 it cannot be.
@@ -268,8 +270,10 @@ Three things did not relax, and each is enforced in code rather than promised:
 
 1. **No reserved colour is spent.** The landing's palette is `accent` and the neutrals.
    Nothing there touches `cited`, `ambiguous` or `dropped` — which is also why the aurora
-   is indigo rather than the green a "verified" landing page would reach for. §1 is
-   untouched and is still the rule everything else answers to.
+   is azure and cyan rather than the green a "verified" landing page would reach for. It
+   read "indigo" here until 2026-08-24, written hours before `accent` moved off indigo on
+   the same day and left behind as the one line in this file describing paint that had
+   changed. §1 is untouched and is still the rule everything else answers to.
 2. **The motion still shows the mechanism.** The hero's highlight sweep is Motion 1 —
    the one the product runs when a citation is located — and the picture beside it is a
    cited line with its character offsets, not a stock photograph of an office. The page

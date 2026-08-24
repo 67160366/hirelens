@@ -6,7 +6,107 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-22 (latest) — the careers site gets a front door, and the applicant gets the receipt
+## 2026-08-24 (latest) — slice 6 closes, and the last public link stops pointing at a 404
+
+Two commits, and with them **eight of the careers site's eleven slices are done**. The
+loose end the last two entries both named — `/how-we-screen` linked from the public
+header on every page and from the landing hero's second button, `/demo` in
+`PUBLIC_PREFIXES`, neither route existing — is closed.
+
+| # | Commit | What it is |
+|---|---|---|
+| 1 | Give the header's second link somewhere to go | `/how-we-screen`, `lib/sample.ts`, the shared `useScrollReveal`, and a nav fix the page exposed. +12 vitest |
+| 2 | Let a stranger watch a fabrication be refused | `GET /demo/screening`, `app/demo/`, `/demo`, and a second language for two components. +13 pytest, +12 vitest |
+
+Gates: `pytest -q` **721 → 734**, 38 skipped; `ruff check`, `ruff format --check`,
+`mypy app` (62 files) clean; `npm run typecheck`, `lint`, vitest **232 → 256**, `build`
+clean. Driven on `LLM_PROVIDER=fake` throughout — **zero Gemini quota**.
+
+### The demo is live, and that was the whole decision
+
+`/demo` could have been a screenshot of a refusal. It runs the real
+`judge_requirements` and the real `EvidenceResolver` over a committed synthetic
+document instead, and `FakeMode.HALLUCINATING` attaches the quote that gets dropped.
+The page that argues we verify every claim we make must not be the one page that had
+not. Three properties are pinned rather than promised — no rows, no model call, and no
+use of `app.state.extractor`, so a paid deployment cannot bill a marketing page — and
+the sharp test is that the dropped quote is genuinely absent from `document_text`.
+Every other assertion in `test_demo.py` would pass against a canned refusal.
+
+Watched, and it is the check worth keeping: flipping to the fabricating model leaves
+**all four verdicts and all three coordinate lines identical** and adds exactly one
+struck claim. A fabrication buys nothing. Then ten runs against the containers left
+`llm_call_logs` at **50 rows** in `psql` — which is what separates "the demo runs the
+pipeline" from "the demo bills a screening".
+
+### The defect the browser found, and the two that stopped the fix working
+
+At 375 the public nav strip is only as wide as its first item. With `/how-we-screen`
+open the **lit item was clipped edge to edge**, so the reader had no visible answer to
+where they were — and nothing had surfaced it before, because the second public item
+led to a 404 and could never be active. The strip's own comment promises the
+half-visible next item as the affordance; at that width the promise fails completely.
+
+Getting `scrollLeftToShow` to actually run cost two more findings, **both watched
+failing rather than reasoned about**:
+
+- **`offsetLeft` is measured from the header**, because the bar is `position: sticky`
+  and that makes it the offset parent. The helper takes rects now.
+- **The effect ran once against a `null` ref and never again.** The whole header is
+  gated on `ready`, and on a public route `items` and `active` are identical before and
+  after — so nothing in the dependency list ever changed. `ready` is in it now.
+- And **the Thai webfont widens the items after the first pass**, so the adjustment is
+  re-run from a `ResizeObserver`. Setting `scrollLeft` by hand worked every time, which
+  is what said the arithmetic was right and the *timing* was wrong.
+
+Residual, named rather than implied: an item **wider** than the strip is anchored at its
+start and still clipped at its end. That is what `/careers` at 375 does, and no scroll
+position fixes it — the header is simply crowded at that width.
+
+### Two components learned a second language
+
+The public site is Thai and the product screens are English (`docs/DESIGN.md` §8), so
+`DroppedClaims` and `DocumentPane` take a `language` prop and `web/lib/evidenceCopy.ts`
+holds both vocabularies. `lib/evidence.ts` stays the definition of what the words *mean*;
+the new module only decides which language they are in. The coordinate line is left
+untranslated on purpose — `p1 · chars 168–221 · exact` reads the same either way.
+
+### The two commits nobody wrote down, recorded now
+
+`369223f` and `6875c91` landed on 2026-08-22 at 10:03, six hours after that day's entry
+was written, and neither appears in it. Rule 7 asks for the note; this is it.
+
+- **`369223f` brought `docs/WALKTHROUGH-th.md` up to the careers site** and gave it a
+  ground floor — +820/−443 lines. It is the Thai walkthrough, and it had been describing
+  a system whose front door had moved.
+- **`6875c91` added `docs/pitch/`**: an eleven-slide deck built on the product's own
+  tokens, a spoken script, and `sample/compare_parse.py`, which measures the two slides
+  that carry the argument rather than asserting them — three fused lines in a plain
+  extraction, and one of seven cited quotes that does not exist in it at all. The sample
+  resume is synthetic, and the deck publishes no hallucination-rate figure.
+
+`docs/DESIGN.md` §6 was corrected in the same commit as this entry: it still said the
+aurora was **indigo**, written hours before `accent` moved off indigo on the same day.
+
+### Next step
+
+1. **Slices 9, 10 and 11 are what remain**, in the owner's order: `/me/account` (11),
+   the CV library (9), the `/hire` reorganisation (10), then the board's metadata and
+   server rendering. Every route slice 11 needs already exists — `POST
+   /auth/change-password`, `GET /auth/me/export`, `DELETE /auth/me` — and `web/lib/api.ts`
+   has a client method for none of them.
+2. **The three opt-in suites have now been quiet for ten days** (`test_postgres.py`,
+   `test_minio.py`, `test_ocr_tesseract.py`). One of them rotted silently once already.
+   Docker is running today, so this is cheap.
+3. Still open, unchanged: the Thai fragmentation observation from 2026-08-22 needs one
+   run on a real provider, and the timeline's `cited evidence` badge has still never been
+   watched.
+4. **`/me` still carries its own "Apply to a job" list**, which is a second board beside
+   `/careers`. Removing it is a decision about where applying belongs, not a tidy-up.
+
+---
+
+## 2026-08-22 — the careers site gets a front door, and the applicant gets the receipt
 
 Seven commits after the parser fix, **committed locally and not pushed**. The careers
 site went from one slice done to seven, and the seven include the one the whole project
