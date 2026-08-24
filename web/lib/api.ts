@@ -309,6 +309,17 @@ export interface Receipt {
   posting_changed_since: boolean;
 }
 
+/** What an erasure destroyed — `ErasureOut` in `api/app/api/routes/auth.py`.
+ *
+ *  A receipt rather than a bare 204: `stored_files_removed` is the half a row count
+ *  cannot show, and it is the half that matters, because files are deleted *before*
+ *  rows precisely so a file can never outlive the row pointing at it. */
+export interface Erasure {
+  account_id: string;
+  stored_files_removed: number;
+  message: string;
+}
+
 /** Which model the public demo should run — `DemoMode` in
  *  `api/app/api/routes/demo.py`. */
 export type DemoMode = "faithful" | "fabricating";
@@ -737,6 +748,31 @@ export const api = {
    * candidate their applications and a recruiter their postings, instead of
    * offering both and letting one of them 403. */
   me: () => request<Account>("/auth/me", {}),
+
+  /** Change the password, proving the old one first.
+   *
+   * **This ends every session on every device**, including ones the server has no
+   * record of — the account's `token_epoch` moves past every token minted under the
+   * old password. It answers with a fresh pair for the caller, so the tab that did
+   * it stays signed in; that is why the screen calls it through `establishSession`
+   * rather than treating the response as a formality. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<TokenPair>(
+      "/auth/change-password",
+      json("POST", { current_password: currentPassword, new_password: newPassword }),
+    ),
+
+  /** Everything the system holds about this account, as one JSON document.
+   *
+   * Typed `unknown`: it is a subject-access response whose shape belongs to
+   * `privacy_service`, and the client's only job is to hand it to the reader
+   * unaltered. Giving it an interface here would invite a screen to render a
+   * summary of it, which is the thing that would make the right to a copy
+   * decorative. */
+  exportMe: () => request<unknown>("/auth/me/export", {}),
+
+  /** Erase this account and everything that cascades from it. Not undoable. */
+  eraseMe: () => request<Erasure>("/auth/me", { method: "DELETE" }),
 
   listJobs: () => request<Job[]>("/jobs", {}),
 

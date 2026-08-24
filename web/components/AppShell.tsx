@@ -179,13 +179,22 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </Link>
                 ) : session ? (
                   <>
-                    {/* The email is the first thing to go when the bar is narrow: the
-                        role is the part that explains why a screen refuses something,
-                        and it is two words rather than an address. */}
-                    <span className="hidden max-w-[16ch] truncate text-xs text-ink-muted md:inline">
-                      {session.email}
-                    </span>
-                    <Badge tone="neutral">{session.role}</Badge>
+                    {/* Who you are is also the way to your account, which is how
+                        `/me/account` is reached without a sixth item in a bar that
+                        already does not fit at 375. The email is the first thing to
+                        go when the bar is narrow: the role is the part that explains
+                        why a screen refuses something, and it is two words rather
+                        than an address — so the link keeps a target at every width. */}
+                    <Link
+                      href="/me/account"
+                      aria-label="Account"
+                      className="ring-focus flex items-center gap-2 rounded-control px-1 py-0.5 hover:bg-surface-sunken"
+                    >
+                      <span className="hidden max-w-[16ch] truncate text-xs text-ink-muted md:inline">
+                        {session.email}
+                      </span>
+                      <Badge tone="neutral">{session.role}</Badge>
+                    </Link>
                     <Button variant="ghost" onClick={() => void signOut()}>
                       Sign out
                     </Button>
