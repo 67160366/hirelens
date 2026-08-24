@@ -95,9 +95,14 @@ aurora was **indigo**, written hours before `accent` moved off indigo on the sam
    server rendering. Every route slice 11 needs already exists — `POST
    /auth/change-password`, `GET /auth/me/export`, `DELETE /auth/me` — and `web/lib/api.ts`
    has a client method for none of them.
-2. **The three opt-in suites have now been quiet for ten days** (`test_postgres.py`,
-   `test_minio.py`, `test_ocr_tesseract.py`). One of them rotted silently once already.
-   Docker is running today, so this is cheap.
+2. ~~**The three opt-in suites have been quiet for ten days.**~~ **Run, and all three are
+   green**: Postgres **5**, MinIO **9**, Tesseract **12** — against the compose stack and
+   the real portable Tesseract. Nothing had rotted this time, and the run still found
+   something: `HANDOFF.md`'s row for the OCR suite had said **6 passed** since M2 while
+   its own skip breakdown four rows above said 12, and the breakdown said "4 Postgres"
+   where the module has five. Both corrected. **The reason to re-run an opt-in suite is
+   that nothing else moves its number** — a stale row and a rotted suite look identical
+   from the outside.
 3. Still open, unchanged: the Thai fragmentation observation from 2026-08-22 needs one
    run on a real provider, and the timeline's `cited evidence` badge has still never been
    watched.
