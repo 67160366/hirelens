@@ -309,6 +309,33 @@ export interface Receipt {
   posting_changed_since: boolean;
 }
 
+/** Which model the public demo should run — `DemoMode` in
+ *  `api/app/api/routes/demo.py`. */
+export type DemoMode = "faithful" | "fabricating";
+
+/**
+ * The public demo's result — `DemoOut`.
+ *
+ * Shaped after `Receipt` rather than after `ScreeningDetail`, and for the same
+ * reason: no score, no rank, no weight. What a stranger is shown about a
+ * document is the same set of facts the person that document belongs to gets.
+ *
+ * `verified` and `dropped_count` are served rather than derived from the arrays,
+ * because they are the guardrail's own tally — the same numbers that feed the
+ * hallucination rate — and a client recomputing them would be a second opinion on
+ * a figure that must have exactly one.
+ */
+export interface DemoScreening {
+  posting_title: string;
+  filename: string;
+  mode: DemoMode;
+  document_text: string;
+  requirements: ReceiptRequirement[];
+  dropped: DroppedClaim[];
+  verified: number;
+  dropped_count: number;
+}
+
 /** The whole job in one call, which is how a posting is usually authored. */
 export interface JobInput {
   title: string;
@@ -722,6 +749,11 @@ export const api = {
 
   /** One published posting. A draft and a fiction are the same 404, on purpose. */
   getPosting: (id: string) => request<Posting>(`/careers/postings/${id}`, {}),
+
+  /** Run the guardrail over the committed demo document. Needs no session, writes
+   *  no rows and spends no model call — see the route's docstring. */
+  getDemo: (mode: DemoMode) =>
+    request<DemoScreening>(`/demo/screening?mode=${mode}`, {}),
 
   /* ---------------------------------------------------------------------- */
   /* Applications                                                            */

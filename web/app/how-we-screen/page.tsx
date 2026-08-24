@@ -134,7 +134,10 @@ export default function HowWeScreenPage() {
             </h2>
             <p data-reveal className="mt-1.5 max-w-prose text-sm text-ink-muted">
               เอกสารตัวอย่างข้างล่างเป็นของสมมติที่เราเขียนขึ้นเอง โมเดลยกมาสองข้อ
-              ข้อหนึ่งอยู่ในเอกสารจริง อีกข้อไม่มีอยู่
+              ข้อหนึ่งอยู่ในเอกสารจริง อีกข้อไม่มีอยู่ ภาพนี้นิ่ง ๆ ถ้าอยากเห็นระบบคัดสด ๆ{" "}
+              <Link href="/demo" className="text-accent underline underline-offset-2">
+                กดดูที่หน้าตัวอย่าง
+              </Link>
             </p>
           </div>
           {/* Not the `Button` primitive: this is a replay control for the example,
@@ -223,8 +226,8 @@ export default function HowWeScreenPage() {
           <Link href="/careers" className="btn btn-primary btn-lg">
             ดูตำแหน่งที่เปิดรับ
           </Link>
-          <Link href="/" className="btn btn-secondary btn-lg">
-            กลับหน้าแรก
+          <Link href="/demo" className="btn btn-secondary btn-lg">
+            ลองระบบกับเอกสารตัวอย่าง
           </Link>
         </div>
       </section>

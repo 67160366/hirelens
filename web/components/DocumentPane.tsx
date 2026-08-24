@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 
 import { Card, CardHeader } from "@/components/ui/Card";
 import type { EvidenceRef, ExtractedProfile } from "@/lib/api";
+import { paneVocabulary, type Language } from "@/lib/evidenceCopy";
 
 /**
  * The source document with every citation highlighted in place.
@@ -136,7 +137,18 @@ function highlightClass(reference: EvidenceRef, isActive: boolean): string {
   return `${wash} cite-sweep cite-sweep-${tone} text-ink ring-1 ring-accent`;
 }
 
-export function DocumentPane({ text, references }: { text: string; references: EvidenceRef[] }) {
+export function DocumentPane({
+  text,
+  references,
+  language = "en",
+}: {
+  text: string;
+  references: EvidenceRef[];
+  /** English on the product screens, Thai on the public demo — the pane's two
+   *  sentences are the only prose in it (`docs/DESIGN.md` §8). */
+  language?: Language;
+}) {
+  const words = paneVocabulary(language);
   const selection = useEvidenceSelection();
   const activeKey = selection?.activeKey ?? null;
   const marks = useRef(new Map<string, HTMLElement>());
@@ -153,12 +165,10 @@ export function DocumentPane({ text, references }: { text: string; references: E
     // pane pinned 24px from the top slid underneath it and lost its own heading.
     <Card className="lg:sticky lg:top-20">
       <CardHeader
-        title="Source document"
+        title={words.title}
         action={
           <p className="text-micro text-ink-faint">
-            {activeKey
-              ? `${references.length} cited ${references.length === 1 ? "span" : "spans"}`
-              : "Select a citation to locate it"}
+            {activeKey ? words.spanCount(references.length) : words.prompt}
           </p>
         }
       />
