@@ -23,7 +23,10 @@ that nine synthetic fixtures could not — and the test that should have caught 
 was asserting a number only correct on those fixtures — and again when the careers
 site got its front door and **the applicant finally got a screen showing why**,
 which is the thing `README.md` opens by naming and which no surface built before
-that day provided.
+that day provided. Updated 2026-08-24, when the careers site closed at eleven of
+eleven slices: a stranger can now watch a fabrication be refused at `/demo` rather
+than read that one would be, the board is in the HTML a crawler reads, and the
+PDPA routes that had needed a terminal since M4 have a screen.
 
 ---
 
@@ -206,8 +209,15 @@ important?" but **"is this the system saying something about a *document*?"**
 | **Both browser tabs fell back, and neither reloaded** | Two tabs signed in at :3000; a *third* session outside the browser changed the password. The next authenticated read in tab B went 401 → renewal 401 → `clearSession`, and **both tabs** showed the sign-in form with `localStorage` empty and `performance.getEntriesByType('navigation').length === 1` in each. The epoch and the `useSyncExternalStore` store composing, watched rather than inferred. Console clean **on an instrument proven to speak first** — a probe pair emitted and confirmed visible, because this tool only starts capturing when it is first called (2026-08-18) |
 | **The runbook's epoch bump, run before it was written down** | `update candidates set token_epoch = token_epoch + 1` → the account's access token **401** and its refresh token **401**, the same password then signing in fine, and **0** rows in `revoked_tokens` for it — which is the caveat the runbook now carries: this one leaves no record of itself (2026-08-18) |
 | Migration `0012` on both dialects | SQLite `upgrade head` → `downgrade base` under `set -e`, which is where CI runs it — and under `set -e` specifically, because a self-written `OK` echo on a command that failed is how migration `0011` nearly reported a pass. Then Postgres `upgrade head` → `downgrade -1` → `upgrade head` with `alembic check` clean, `token_epoch` read out of `information_schema` as **`integer NOT NULL` with no server default left behind**, and all **23** existing accounts backfilled to 0 (2026-08-18) |
-| `pytest -q` | **700** passed, 38 skipped as of 2026-08-21 (+19 for the publication lifecycle, and +1 where one test about a public posting became two — a draft is not readable and a published one is, which used to be the same assertion). **680** passed, 38 skipped as of 2026-08-19 (+19 for cookie auth, +4 for its settings guard). **657** as of 2026-08-18 (+6 for the token epoch, of which one *replaces* the test that pinned the limitation it closed). **651** as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 5 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in (the first was written as 4 until 2026-08-24; the four numbers now add up to the total, which is the check nobody had run). The two-column xfail started passing on 2026-08-08, which was its job (§7) |
-| `npm test` | **210** in `web/` as of 2026-08-21 (+15 for the theme store — the explicit choice outranking the operating system, an unrecognised stored value falling back to *system* rather than to light, and the cycle the narrow header needs; +12 for Motion 4's arithmetic, of which the sharpest is that `unknown` and `—` are never animated, because a count that turned a refusal to state a figure into a number would be the one failure that matters). **165** as of 2026-08-19 (+28 for the session store on cookies: the identity marker, the memoised snapshot `useSyncExternalStore` needs, signing out reaching the server, and the shared renewal). **137** as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
+| **The demo refuses a fabrication, watched rather than asserted** | Flipping `/demo` to the fabricating model left **all four verdicts and all three coordinate lines identical** and added exactly one struck claim — a fabrication buys nothing. Ten runs against the containers then left `llm_call_logs` at **50 rows** in `psql`, which is what separates "the demo runs the pipeline" from "the demo bills a screening" (2026-08-24) |
+| ⚠️ **The nav strip clipped the item you were on, at 375** | Only `/how-we-screen` could expose it: the second public item led to a 404 until that day and could never be lit. The fix then failed twice more, both watched — `offsetLeft` measures from the sticky header rather than the strip, and the effect ran once against a `null` ref because the header is gated on `ready` and nothing else in its dependency list moves on a public route. Setting `scrollLeft` by hand worked every time, which is what said the arithmetic was right and the timing was wrong (2026-08-24) |
+| ⚠️ **Erasing an account showed a sign-up form** | `clearSession()` empties the session, so the signed-out branch rendered before the receipt branch — somebody who had just destroyed their account was invited to make another. Every gate was green and the API had done exactly the right thing (2026-08-24) |
+| **A password change, from the account screen, on two devices** | Banner shown and the tab still signed in with `navigations: 1`; then in `curl`, the other device's token **401**, the old password **401**, the new one **200**. Signed out is not locked out, from the UI this time rather than from a script (2026-08-24) |
+| **Erasure through the UI, on a throwaway account** | The receipt reads back `1 stored file was deleted`, `localStorage` empties, and `psql` shows the account gone with **no orphaned rows**. Run twice, on two accounts created for it and destroyed by it (2026-08-24) |
+| **The postings are in the server-rendered HTML** | `curl` on `/careers` returns the posting titles, and a posting's own `<title>` and `<meta name="description">` are its own rather than the site's. The draft answers **404** while the published one answers **200** — the soft 404 closed (2026-08-24) |
+| **A late answer for a document nobody is looking at is dropped** | Forced rather than hoped for: `fetch` patched to delay one profile read by three seconds, two library rows clicked 80ms apart, the console confirming the stale answer really arrived, and the right document still on screen (2026-08-24) |
+| `pytest -q` | **734** passed, 38 skipped as of 2026-08-24 (+13 for the public demo router). **721** as of 2026-08-22. **700** passed, 38 skipped as of 2026-08-21 (+19 for the publication lifecycle, and +1 where one test about a public posting became two — a draft is not readable and a published one is, which used to be the same assertion). **680** passed, 38 skipped as of 2026-08-19 (+19 for cookie auth, +4 for its settings guard). **657** as of 2026-08-18 (+6 for the token epoch, of which one *replaces* the test that pinned the limitation it closed). **651** as of 2026-08-16 (+17 for token revocation, +1 for the other-devices limitation it could not close). **633** (+19 for the file and geometry routes). **614** (+2 for the screening `dropped` payload, +20 for the usage dashboard, +58 for character geometry). **534** passed, **no xfail** — 439 at the close of M3, plus 13 for the visibility timeout, 17 for RBAC, 39 for applications and 21 for PDPA, and 5 more from the 2026-08-13 walkthrough's fixes. The 38 skips are 5 Postgres + 12 Tesseract + 9 MinIO + 12 live-LLM, all opt-in (the first was written as 4 until 2026-08-24; the four numbers now add up to the total, which is the check nobody had run). The two-column xfail started passing on 2026-08-08, which was its job (§7) |
+| `npm test` | **292** in `web/` as of 2026-08-24 (+12 for the explainer's sample and the nav strip, +12 for the demo's two vocabularies, +8 for the account screen's copy, +11 for the document library, +17 for the server-side base and the posting metadata — of which the sharpest is that the fabricated quote in the explainer is **not** in its sample document, which is invisible on screen). **232** as of 2026-08-22. **210** in `web/` as of 2026-08-21 (+15 for the theme store — the explicit choice outranking the operating system, an unrecognised stored value falling back to *system* rather than to light, and the cycle the narrow header needs; +12 for Motion 4's arithmetic, of which the sharpest is that `unknown` and `—` are never animated, because a count that turned a refusal to state a figure into a number would be the one failure that matters). **165** as of 2026-08-19 (+28 for the session store on cookies: the identity marker, the memoised snapshot `useSyncExternalStore` needs, signing out reaching the server, and the shared renewal). **137** as of 2026-08-16 (+17 for the session store, which the `useSyncExternalStore` rewrite made reachable without a DOM). **120** (+22 for the overlay's arithmetic and its refusals). **98** (+7 for the shared dropped-claim vocabulary, +29 for the usage dashboard's wording). **62** at the 2026-08-13 walkthrough (28 at the close of M3, 43 at the close of M4): 16 for `lib/applications.ts`, 23 for `lib/api.ts` — including the table over every JSON write that would have caught the missing `Content-Type` — and 7 for `lib/requirements.ts`. Still **no DOM and no React testing library**, which is why one 2026-08-13 fix has no unit test and says so |
 | `TEST_MINIO_ENDPOINT=… pytest tests/test_minio.py` | **9 passed** against the MinIO in compose, re-run 2026-08-24 after ten days quiet |
 | `TEST_DATABASE_URL=… pytest tests/test_postgres.py` | **5 passed** against real Postgres (2026-08-15). This row read "4 passed" from M2 until then and was wrong twice over: the module has five cases, and **two of them had been failing since 2026-08-12** — `ingest_resume` gained a required `consent_version` in M4's PDPA slice and this suite was never updated. Nothing caught it, because the module is opt-in on `TEST_DATABASE_URL`: `pytest -q` skips it and CI has no database. An opt-in suite going quiet costs real coverage and shows up as neither a red tick nor a skip count — check the number, not the row. **Re-run 2026-08-24: still 5 passed.** The skip breakdown above still says "4 Postgres", which is this same row's old mistake surviving in a second place |
 | `OCR_TESSERACT_CMD=… pytest tests/test_ocr_tesseract.py` | **12 passed** against a real Tesseract, re-run 2026-08-24. This row read "6 passed" from M2 until then, while the skip breakdown three rows above had said 12 for just as long — the same species as the Postgres row below, and the reason to re-run an opt-in suite is that **nothing else moves its number** |
@@ -1232,11 +1242,43 @@ Four things fall out of it and are the ones to hold:
   company to verify anybody against, so the recorded limitation dissolved instead
   of being solved. `candidate` is the only role registration accepts.
 
-`docs/PLAN.md`'s careers section carries the per-slice status, the two departures
-from the written plan and the two things deferred with a reason. **`/how-we-screen`
-and `/demo` do not exist yet and the landing page links to the first of them** —
-that is the next slice, and it is the one loose end this run left pointing at a
-404.
+`docs/PLAN.md`'s careers section carries the per-slice status and what each slice
+decided.
+
+**The careers site is complete: all eleven slices closed on 2026-08-24**, and the
+two things that had been deferred with a reason were built rather than dropped.
+Five things from that run are worth holding:
+
+- **The public demo is live, not canned.** `GET /demo/screening` is the second
+  router that resolves no account, and the first that publishes *behaviour* rather
+  than rows: it runs the real `judge_requirements` and the real `EvidenceResolver`
+  over a committed synthetic artefact in `api/app/demo/`, with a
+  faithful/fabricating toggle. Three properties are pinned in `tests/test_demo.py`
+  and must survive any change to it — **it writes no rows, spends no model call,
+  and never touches `app.state.extractor`**, so a paid deployment cannot bill a
+  marketing page and an outage there cannot take the demo down. The sharp test is
+  that the dropped quote is genuinely absent from `document_text`; every other
+  assertion would pass against a canned refusal.
+- **The public site is Thai and the product screens are English**, so
+  `DroppedClaims` and `DocumentPane` take a `language` prop and
+  `web/lib/evidenceCopy.ts` holds both vocabularies. `lib/evidence.ts` stays the
+  definition of what the words *mean*. The coordinate line is left untranslated:
+  `p1 · chars 168–221 · exact` reads the same either way.
+- **The board is server-rendered, and `SERVER_API_BASE` is why.** It is a
+  **runtime** variable naming the API from the server's side, because inside the
+  `web` container the public base is the container itself. `npm run build` still
+  needs no running API and that is a property to keep: `web/lib/serverApi.ts`
+  answers `null` rather than throwing, and both public pages are `force-dynamic`
+  so nothing is prerendered. Measured, not assumed —
+  `SERVER_API_BASE=http://127.0.0.1:9 npm run build` succeeds.
+- **A posting that is not public answers a real 404.** `missing` and `unreachable`
+  are separate answers in `fetchPosting`; collapsing them produced a soft 404, a
+  draft's URL answering 200 with the site's default title.
+- **`/me/account` puts the PDPA routes behind a screen.** They had existed since
+  M4 and two of them had never been reachable without `curl`. The screen states
+  what each does before it happens, including the sentence that is not about the
+  person pressing the button: a **recruiter's** erasure takes every applicant's
+  history with their postings.
 
 **So there is no milestone in progress.** `useAuth`'s `useSyncExternalStore` rewrite
 landed on 2026-08-16 — the session is an external store now, `web/lib/auth.ts` is the only

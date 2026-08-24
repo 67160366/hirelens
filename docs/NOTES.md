@@ -6,21 +6,33 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-24 (latest) — slice 6 closes, and the last public link stops pointing at a 404
+## 2026-08-24 (latest) — the careers site closes: eleven of eleven, and three defects only a browser could find
 
-Two commits, and with them **eight of the careers site's eleven slices are done**. The
-loose end the last two entries both named — `/how-we-screen` linked from the public
-header on every page and from the landing hero's second button, `/demo` in
-`PUBLIC_PREFIXES`, neither route existing — is closed.
+**Eleven commits, none pushed** (your call, as always). The careers site is complete: the
+loose end the last two entries both named — `/how-we-screen` linked from the public header
+on every page and from the landing hero's second button, `/demo` in `PUBLIC_PREFIXES`,
+neither route existing — is closed, and so are the three slices behind it and the two
+things that had been deferred with a reason.
 
 | # | Commit | What it is |
 |---|---|---|
 | 1 | Give the header's second link somewhere to go | `/how-we-screen`, `lib/sample.ts`, the shared `useScrollReveal`, and a nav fix the page exposed. +12 vitest |
 | 2 | Let a stranger watch a fabrication be refused | `GET /demo/screening`, `app/demo/`, `/demo`, and a second language for two components. +13 pytest, +12 vitest |
+| 3 | Record slice 6, and write down the session that never got a note | `PLAN.md`, `CLAUDE.md`, the 08-22 backfill, `DESIGN.md` §6's stale "indigo" |
+| 4 | Run the three opt-in suites, and correct two numbers they found stale | `HANDOFF.md`'s OCR row and its skip breakdown |
+| 5 | Close the Thai fragmentation question from both ends | `HANDOFF.md` §12, and this entry |
+| 6 | Give the account routes a screen | slice 11 — `/me/account`, `lib/account.ts`. +8 vitest |
+| 7 | Record slice 11 in the careers table | `PLAN.md` |
+| 8 | Turn the upload screen into the library it was standing in for | slice 9 — `lib/documents.ts`. +11 vitest |
+| 9 | Lead the workbench with the people, not the form | slice 10, plus a `publicationNote` sentence that had become false |
+| 10 | Put the postings in the HTML, so the careers site can be found | `lib/serverApi.ts`, `lib/postingMeta.ts`, `SERVER_API_BASE`. +17 vitest |
+| 11 | Record that the careers site is complete | `CLAUDE.md`, `PLAN.md` |
 
-Gates: `pytest -q` **721 → 734**, 38 skipped; `ruff check`, `ruff format --check`,
-`mypy app` (62 files) clean; `npm run typecheck`, `lint`, vitest **232 → 256**, `build`
-clean. Driven on `LLM_PROVIDER=fake` throughout — **zero Gemini quota**.
+Gates at the end: `pytest -q` **721 → 734**, 38 skipped; `ruff check`, `ruff format
+--check`, `mypy app` (62 files) clean; `npm run typecheck`, `lint`, vitest **232 → 292**,
+`build` clean. The three opt-in suites: Postgres **5**, MinIO **9**, Tesseract **12**.
+Driven on `LLM_PROVIDER=fake` throughout except two calls — **2 of the 20/day Gemini
+quota**, spent on the fragmentation question and nothing else.
 
 ### The demo is live, and that was the whole decision
 
@@ -104,6 +116,68 @@ same text. That is a ranking question, not a guarantee one. Changing `x_toleranc
 change the stored text of every future upload, so it is a slice with a decision in it,
 and it is the owner's to make.
 
+### Then the three remaining slices, in the order you picked
+
+**Slice 11 — `/me/account`.** All three routes have existed since M4's PDPA slice and two
+of them had never been reachable without `curl`. A right to a copy and a right to be
+forgotten that need a terminal are rights the people they were written for do not have.
+The screen says what each control does *before* it does it, and the sentence that matters
+most is not about the person pressing the button: **a recruiter's erasure takes every
+applicant's history with their postings**. Role-dependent copy in `lib/account.ts`, tested
+there, watched appearing for a recruiter and not for a candidate.
+
+**Slice 9 — the CV library.** `GET /resumes` has returned every document since M1 and the
+screen showed only the newest upload, so last week's CV was reachable by uploading the
+same file again and letting deduplication find it — a feature standing in for a screen.
+`lib/documents.ts` settles the tone rule once instead of per row: `extracted` is `cited`,
+`failed` is `dropped`, `dead_lettered` is `ambiguous`, everything else neutral, because a
+queued document is a workflow state and the three colours belong to what the system found
+in a *document*.
+
+**Slice 10 — the back office.** The routes moved behind `/hire` two days ago and the
+screens inside did not, so the workbench opened with a **form**. Ranking leads now, and the
+requirement editor sits behind a disclosure whose default is **derived** — open while there
+is nothing to rank, folded once there is. Watched both ways.
+
+**And the metadata, which had been deferred with a reason.** `SERVER_API_BASE` is a runtime
+variable naming the API from the *server's* side; the two public pages are server
+components handing `initialPostings` / `initialPosting` to the existing client ones, so the
+content is in the HTML and the apply flow is untouched. **Repair #4 was measured rather
+than assumed**: `SERVER_API_BASE=http://127.0.0.1:9 npm run build` succeeds, because
+`force-dynamic` pages are never prerendered and both fetchers answer instead of throwing.
+
+### Three defects the browser found, and none of them could have failed a gate
+
+- **At 375 the public nav clipped the item you were on.** The strip is only as wide as its
+  first item, so with `/how-we-screen` open the lit item was gone edge to edge. Nothing had
+  surfaced it because the second public item led to a 404 and could never be active. The
+  fix then failed twice more, both watched rather than reasoned about: `offsetLeft` is
+  measured from the header (the bar is `position: sticky`, so it is the offset parent), and
+  the effect ran once against a `null` ref and never again, because the header is gated on
+  `ready` and on a public route nothing else in the dependency list ever changes. Setting
+  `scrollLeft` by hand worked every time — which is what said the arithmetic was right and
+  the *timing* was wrong.
+- **Erasing an account showed a sign-up form.** `clearSession()` empties the session, so
+  the signed-out branch rendered before the receipt branch and somebody who had just
+  destroyed their account was invited to make another. Order swapped; the API had been
+  doing exactly the right thing the whole time.
+- **A posting that is not public answered 200.** A soft 404 with the site's default title
+  and a spinner. `missing` and `unreachable` are separate answers now: the first calls
+  `notFound()` and renders Thai copy with a real 404, the second renders and lets the
+  browser ask again from an address that may well work.
+
+### Two sentences on screen that had quietly become false
+
+Both were found by being in the file for another reason, which is the only way this kind of
+thing is ever found:
+
+- **`publicationNote`** told a recruiter that *"anyone can register as a recruiter"* as the
+  reason an account cannot publish itself — untrue since slice 0 closed self-registration
+  on 2026-08-22. It now says a posting goes out under the company's name. Its test asserts
+  the **old** sentence is gone, not merely that a new one is there.
+- **`DESIGN.md` §6** still called the aurora indigo, written hours before `accent` moved
+  off indigo the same day.
+
 ### The two commits nobody wrote down, recorded now
 
 `369223f` and `6875c91` landed on 2026-08-22 at 10:03, six hours after that day's entry
@@ -123,11 +197,10 @@ aurora was **indigo**, written hours before `accent` moved off indigo on the sam
 
 ### Next step
 
-1. **Slices 9, 10 and 11 are what remain**, in the owner's order: `/me/account` (11),
-   the CV library (9), the `/hire` reorganisation (10), then the board's metadata and
-   server rendering. Every route slice 11 needs already exists — `POST
-   /auth/change-password`, `GET /auth/me/export`, `DELETE /auth/me` — and `web/lib/api.ts`
-   has a client method for none of them.
+1. **Push.** Eleven commits are sitting local and CI has seen none of it — the careers
+   site, the demo router, the account screen and the server-rendered board.
+   `git rev-list --count origin/main..main` says how many; no number here on purpose,
+   because this paragraph has been wrong three times for exactly that reason.
 2. ~~**The three opt-in suites have been quiet for ten days.**~~ **Run, and all three are
    green**: Postgres **5**, MinIO **9**, Tesseract **12** — against the compose stack and
    the real portable Tesseract. Nothing had rotted this time, and the run still found
@@ -137,10 +210,28 @@ aurora was **indigo**, written hours before `accent` moved off indigo on the sam
    that nothing else moves its number** — a stale row and a rotted suite look identical
    from the outside.
 3. ~~The Thai fragmentation observation needs one run on a real provider.~~ **Both halves
-   answered — see below.** The timeline's `cited evidence` badge has still never been
-   watched.
+   answered — see below.** The timeline's `cited evidence` badge has **still** never been
+   watched: no application in this database has a transition resting on a screening, and
+   producing one means moving seeded demo data through a shortlist.
 4. **`/me` still carries its own "Apply to a job" list**, which is a second board beside
-   `/careers`. Removing it is a decision about where applying belongs, not a tidy-up.
+   `/careers`. Removing it is a decision about where applying belongs, not a tidy-up — and
+   it is the last thing in this area that is a decision rather than work.
+5. **There is no milestone and no slice left in flight.** The careers site is eleven of
+   eleven. What is left is whatever you decide next; two candidates, neither urgent nor
+   named by anything: `POST /auth/logout-everywhere` (three lines on the token epoch), and
+   the `x_tolerance` question the fragmentation run opened — changing it would change the
+   stored text of every future upload, so it is a slice with a decision in it.
+
+**Left in the dev database and in the browser**, so none of it is a mystery later:
+
+- The browser is signed in as `slice1-check@example.com` again, which is where it started.
+  Two throwaway accounts (`acct-check@example.com`, `acct-check2@example.com`) were created
+  to drive the account screen's destructive halves and **both were erased through the UI**;
+  `psql` shows 36 accounts and no orphaned rows.
+- One file in the Downloads folder: `hirelens-export-a08ca42c….json`, 309 bytes, the export
+  of a throwaway account that no longer exists. Safe to delete.
+- The dev stack is up on :3000/:8000 with `LLM_PROVIDER=fake`, and the `web` image has been
+  rebuilt from the working tree — so what is in the browser is what is in the repo.
 
 ---
 
