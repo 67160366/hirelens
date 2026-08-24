@@ -111,6 +111,43 @@ export function isActiveNav(pathname: string, href: string): boolean {
 }
 
 /**
+ * Where the navigation strip has to be scrolled for the lit item to be visible.
+ *
+ * The strip is `overflow-x-auto` because a bar that wraps onto two lines pushes the
+ * page below the fold on a phone, and its comment promises that "the half-visible
+ * next item is the affordance". **At 375 that promise can fail completely.** The
+ * public bar has two items; the first one is 96px wide and `flex-1` hands the strip
+ * exactly 96px, so the second is clipped edge to edge — and when the second is the
+ * page you are on, the reader is left with no visible answer to where they are.
+ * Nothing surfaced it until `/how-we-screen` existed, because until then the second
+ * public item led to a 404 and could never be the active one.
+ *
+ * Returns the `scrollLeft` to set, or `null` when the item is already in view — so
+ * the caller can leave a strip that needs nothing untouched rather than writing a
+ * value that happens to equal the current one.
+ *
+ * `pad` keeps a few pixels of the neighbour visible, which is what tells a reader
+ * the strip scrolls at all.
+ */
+export function scrollLeftToShow(
+  item: { left: number; width: number },
+  view: { left: number; scrollLeft: number; clientWidth: number },
+  pad = 12,
+): number | null {
+  // Both boxes come from `getBoundingClientRect`, so the item's position is
+  // converted into the strip's own scroll coordinates here. `offsetLeft` was tried
+  // first and is wrong in this bar: the header is `position: sticky`, which makes
+  // it the offset parent, so the number is measured from the header rather than
+  // from the strip.
+  const start = view.scrollLeft + (item.left - view.left);
+  const left = start - pad;
+  const right = start + item.width + pad;
+  if (left < view.scrollLeft) return Math.max(0, left);
+  if (right > view.scrollLeft + view.clientWidth) return right - view.clientWidth;
+  return null;
+}
+
+/**
  * Which single item is lit, out of the ones this reader can see.
  *
  * The longest match, so a nested route belongs to its own item rather than to its

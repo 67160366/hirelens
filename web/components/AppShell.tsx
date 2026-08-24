@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -14,6 +14,7 @@ import {
   activeNavHref,
   isPublicRoute,
   navItemsFor,
+  scrollLeftToShow,
   type NavItem,
 } from "@/lib/nav";
 
@@ -53,14 +54,67 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isPublic = isPublicRoute(pathname);
 
-  const items: readonly NavItem[] = isPublic
-    ? PUBLIC_NAV_ITEMS
-    : session
-      ? navItemsFor(session.role)
-      : [];
+  // Memoised so the effect below has a dependency that changes when the *set* of
+  // links changes and not on every render — `navItemsFor` builds a new array each
+  // call, and an effect that writes `scrollLeft` on every render would fight a
+  // reader who had scrolled the strip by hand.
+  const role = session?.role ?? null;
+  const items: readonly NavItem[] = useMemo(
+    () => (isPublic ? PUBLIC_NAV_ITEMS : role ? navItemsFor(role) : []),
+    [isPublic, role],
+  );
   // One place decides, so the bar can never light two items — `/me` is a prefix of
   // `/me/documents`, and `isActiveNav` alone is true for both.
   const active = activeNavHref(pathname, items);
+
+  // Keep the lit item in view on a narrow bar. At 375 the strip is only as wide as
+  // one item, so a reader on the second one saw a bar with nothing lit in it and no
+  // sign that anything had been scrolled away. The strip's own `scrollLeft` is
+  // written, never the page's — `scrollIntoView` would move the document too.
+  //
+  // **It is re-run from a `ResizeObserver` rather than only on mount**, and that is
+  // not defensive: the Thai webfont arrives *after* the effect first runs, so the
+  // items are still narrow enough to fit, the strip reports nothing to scroll, and
+  // the adjustment that would have been needed a frame later never happens. Watched
+  // doing exactly that — the item was clipped on screen while the code was correct.
+  //
+  // `ready` is in the dependency list because the bar does not exist until it is
+  // true — the whole header is gated on it — and on a public route `items` and
+  // `active` are the same values before and after, so without it the effect ran
+  // once against a `null` ref and never again.
+  const strip = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const view = strip.current;
+    if (!view) return;
+
+    function adjust() {
+      // Found by attribute rather than through a ref on the `<Link>`: the lit item
+      // is already marked `aria-current="page"` for a screen reader, and reusing
+      // that keeps one source of truth for which item is lit rather than two that
+      // can disagree.
+      const item = view!.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!item) return;
+      const box = item.getBoundingClientRect();
+      const target = scrollLeftToShow(
+        { left: box.left, width: box.width },
+        {
+          left: view!.getBoundingClientRect().left,
+          scrollLeft: view!.scrollLeft,
+          clientWidth: view!.clientWidth,
+        },
+      );
+      if (target !== null) view!.scrollLeft = target;
+    }
+
+    adjust();
+    const observer = new ResizeObserver(adjust);
+    // The strip, because the window can be resized; the lit item, because a webfont
+    // changes its width without changing the strip's.
+    observer.observe(view);
+    const item = view.querySelector('[aria-current="page"]');
+    if (item) observer.observe(item);
+    return () => observer.disconnect();
+  }, [active, items, ready]);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -88,6 +142,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   as a rendering fault; the half-visible next item is the affordance,
                   and it is the one a reader acts on anyway. */}
               <nav
+                ref={strip}
                 aria-label="Primary"
                 className="no-scrollbar -mx-1 flex-1 overflow-x-auto px-1"
               >

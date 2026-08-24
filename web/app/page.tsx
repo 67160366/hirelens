@@ -4,16 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef } from "react";
 
 import { HeroScene } from "@/components/HeroScene";
-
-/** Does this reader want motion? Asked once per interaction rather than assumed,
- *  because `prefers-reduced-motion` neutralises CSS animation on its own but says
- *  nothing about a transform this file writes from a pointer event. */
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
+import { readsReducedMotion } from "@/lib/motion";
+import { useScrollReveal } from "@/lib/reveal";
 
 /**
  * The company's front door.
@@ -59,7 +51,7 @@ export default function Home() {
   // an event, so this is the only place that preference can be honoured.
   useEffect(() => {
     const element = stage.current;
-    if (!element || prefersReducedMotion()) return;
+    if (!element || readsReducedMotion()) return;
 
     function onMove(event: PointerEvent) {
       const box = element!.getBoundingClientRect();
@@ -81,28 +73,9 @@ export default function Home() {
     };
   }, []);
 
-  // Scroll reveal. The elements are readable until this runs and arms them, so a
-  // reader with JS disabled — or one whose observer never fires — gets the page
-  // rather than a blank column. Reduced motion skips the arming entirely.
-  useEffect(() => {
-    if (prefersReducedMotion()) return;
-    const targets = Array.from(document.querySelectorAll<HTMLElement>("[data-reveal]"));
-    for (const target of targets) target.classList.add("reveal-armed");
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          entry.target.classList.remove("reveal-armed");
-          entry.target.classList.add("reveal-in");
-          observer.unobserve(entry.target);
-        }
-      },
-      { rootMargin: "0px 0px -12% 0px" },
-    );
-    for (const target of targets) observer.observe(target);
-    return () => observer.disconnect();
-  }, []);
+  // Scroll reveal, shared with `/how-we-screen` — the elements are readable until
+  // it arms them, and reduced motion skips the arming entirely. See `lib/reveal.ts`.
+  useScrollReveal();
 
   /** The spotlight that follows the cursor inside a card. Same reasoning as the
    *  stage: two numbers, straight onto the element, no re-render. */

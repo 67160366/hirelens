@@ -7,6 +7,7 @@ import {
   isActiveNav,
   isPublicRoute,
   navItemsFor,
+  scrollLeftToShow,
 } from "./nav";
 
 describe("isActiveNav", () => {
@@ -127,5 +128,49 @@ describe("isPublicRoute", () => {
 
   it("treats a trailing slash as the same place", () => {
     expect(isPublicRoute("/careers/")).toBe(true);
+  });
+});
+
+/**
+ * The narrow bar, and the promise its comment makes.
+ *
+ * `AppShell`'s strip is `overflow-x-auto` and says the half-visible next item is
+ * the affordance. At 375 the public bar hands the strip exactly the width of its
+ * first item, so the second is clipped edge to edge — and `/how-we-screen` is the
+ * first page that can be the clipped one.
+ */
+describe("scrollLeftToShow", () => {
+  // A 96px strip sitting 90px from the left of the viewport, scrolled to the start.
+  const view = { left: 90, scrollLeft: 0, clientWidth: 96 };
+
+  it("leaves a strip alone when the item is already in view", () => {
+    expect(scrollLeftToShow({ left: 102, width: 60 }, view)).toBeNull();
+  });
+
+  // The case that was on screen: the second public item starts past the right edge.
+  it("scrolls right far enough to show an item past the edge", () => {
+    expect(scrollLeftToShow({ left: 190, width: 76 }, view)).toBe(92);
+  });
+
+  it("scrolls back left for an item behind the current position", () => {
+    expect(scrollLeftToShow({ left: 92, width: 60 }, { ...view, scrollLeft: 90 })).toBe(80);
+  });
+
+  // Never a negative scrollLeft: an item at the very start with the padding
+  // subtracted would ask for one, and the browser would clamp it silently.
+  it("never asks for a negative offset", () => {
+    expect(scrollLeftToShow({ left: 54, width: 60 }, { ...view, scrollLeft: 40 })).toBe(0);
+  });
+
+  it("keeps a margin of the neighbour visible, which is what says the strip scrolls", () => {
+    expect(scrollLeftToShow({ left: 190, width: 76 }, view, 0)).toBe(80);
+  });
+
+  // The reason the helper takes rects at all: the bar is `position: sticky`, so it
+  // is the offset parent and `offsetLeft` measures from the header instead of from
+  // the strip. Scrolling the strip must not depend on where the strip sits.
+  it("gives the same answer wherever the strip sits on the page", () => {
+    const shifted = scrollLeftToShow({ left: 490, width: 76 }, { ...view, left: 390 });
+    expect(shifted).toBe(scrollLeftToShow({ left: 190, width: 76 }, view));
   });
 });
