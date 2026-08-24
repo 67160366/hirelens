@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/AuthPanel";
+import { Badge } from "@/components/ui/Badge";
 import { Banner } from "@/components/ui/Banner";
 import { Button } from "@/components/ui/Button";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EvidenceSelectionProvider, collectEvidence } from "@/components/DocumentPane";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { ProfileView } from "@/components/ProfileView";
 import { api, type ConsentTerms, type ProfileResponse, type Resume } from "@/lib/api";
 import { errorMessage, useAuth } from "@/lib/auth";
+import { documentState, documentSummary } from "@/lib/documents";
 
 /**
  * What is happening to the resume right now, in the user's terms.
@@ -25,7 +28,27 @@ function progressMessage(resume: Resume | null): string {
   return "Queued — waiting for a worker…";
 }
 
-export default function Home() {
+/**
+ * The CV library: every document this account has uploaded, and one of them open.
+ *
+ * **This screen was an upload form at a new address until now.** `GET /resumes`
+ * has returned the whole list since M1 and the only thing on screen was whatever
+ * had just been uploaded — so a document from last week was reachable by
+ * uploading the same file again and letting deduplication find it, which is a
+ * feature standing in for a screen.
+ *
+ * Two rules carried from the screens that came before it:
+ *
+ * - **Nothing belonging to another session is ever on screen.** The list and the
+ *   open document each carry the account id they were fetched for, and the render
+ *   derives from it rather than an effect clearing state after the fact —
+ *   `useAuth`'s rewrite bought that rule, and a resume is exactly the kind of thing
+ *   that must not outlive its session.
+ * - **A late answer for a document nobody is looking at any more is dropped**, the
+ *   way the ranking's `requestedScreeningId` guard does it. Two quick clicks would
+ *   otherwise pair one document's verdicts with another's text.
+ */
+export default function DocumentsPage() {
   const { session, ready, authenticate, authorized } = useAuth();
   const [result, setResult] = useState<ProfileResponse | null>(null);
   // Which account the result on screen belongs to.
@@ -47,6 +70,15 @@ export default function Home() {
   const [consent, setConsent] = useState<ConsentTerms | null>(null);
   const [consented, setConsented] = useState(false);
 
+  // The library, carrying the account it was fetched for. One object rather than
+  // two pieces of state, so the rows and their owner cannot get out of step.
+  const [library, setLibrary] = useState<{ owner: string; resumes: Resume[] } | null>(null);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const requested = useRef<string | null>(null);
+
+  const owner = session?.id ?? null;
+
   useEffect(() => {
     // Unauthenticated, so it loads whether or not anyone is signed in.
     api
@@ -55,8 +87,38 @@ export default function Home() {
       .catch(() => setConsent(null));
   }, []);
 
+  /**
+   * Read the library into state, tagged with whose it is.
+   *
+   * The fetch is expressed as a promise chain rather than an `await` in an effect
+   * body, which is the shape `app/careers/[id]` settled on: the state is written
+   * from a callback, so the effect never sets state synchronously, and
+   * `set-state-in-effect` stays satisfied honestly rather than with a suppression.
+   */
+  const loadLibrary = useCallback(
+    (accountId: string) =>
+      authorized(() => api.listResumes())
+        .then((resumes) => {
+          setLibrary({ owner: accountId, resumes });
+          setLibraryError(null);
+        })
+        .catch((caught) => {
+          // Named rather than left as an empty list: "you have uploaded nothing"
+          // and "we could not ask" look identical on screen, and only one of them
+          // is worth pressing a button about.
+          setLibraryError(errorMessage(caught, "Your documents could not be loaded"));
+        }),
+    [authorized],
+  );
+
+  useEffect(() => {
+    if (!owner) return;
+    void loadLibrary(owner);
+  }, [owner, loadLibrary]);
+
   // Nothing is rendered unless it belongs to the session asking for it.
   const shown = result !== null && resultOwner === session?.id ? result : null;
+  const mine = library && library.owner === owner ? library.resumes : [];
 
   /** Show a result together with whose it is. Never call `setResult` directly:
    *  a result with no owner is one that outlives its session. */
@@ -65,16 +127,37 @@ export default function Home() {
     setResultOwner(value === null ? null : (session?.id ?? null));
   }
 
+  /** Open one document from the library. */
+  async function open(id: string) {
+    setError(null);
+    setOpenId(id);
+    requested.current = id;
+    try {
+      const profile = await authorized(() => api.getProfile(id));
+      // The guard the ranking table needed for the same reason: a slow answer for
+      // a document the reader has already navigated away from would otherwise
+      // land, pairing one document's claims with another's text.
+      if (requested.current !== id) return;
+      showResult(profile);
+    } catch (caught) {
+      if (requested.current !== id) return;
+      setError(errorMessage(caught, "That document could not be opened"));
+    }
+  }
+
   /** Replay a resume the worker gave up on, and wait for the new run. */
-  async function retry() {
-    if (!shown) return;
+  async function retry(id: string) {
     setError(null);
     setBusy(true);
     try {
       await authorized(async () => {
-        setProgress(await api.retryResume(shown.resume.id));
-        showResult(await api.waitForProfile(shown.resume.id, setProgress));
+        setProgress(await api.retryResume(id));
+        const profile = await api.waitForProfile(id, setProgress);
+        setOpenId(id);
+        requested.current = id;
+        showResult(profile);
       });
+      if (owner) await loadLibrary(owner);
     } catch (caught) {
       setError(errorMessage(caught, "Could not retry"));
     } finally {
@@ -96,7 +179,13 @@ export default function Home() {
         setProgress(resume);
         return api.waitForProfile(resume.id, setProgress);
       });
+      setOpenId(uploaded.resume.id);
+      requested.current = uploaded.resume.id;
       showResult(uploaded);
+      // The row has to appear in the library too, and re-reading the list is what
+      // keeps a re-upload of an existing file from adding a second row for it:
+      // the API answers with the original row, so the list is the truth here.
+      if (owner) await loadLibrary(owner);
     } catch (caught) {
       setError(errorMessage(caught, "Upload failed"));
     } finally {
@@ -108,10 +197,11 @@ export default function Home() {
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">HireLens</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Your documents</h1>
         <p className="mt-1.5 max-w-xl text-sm text-ink-muted">
-          Resume screening where every claim cites the exact text it came from. Anything the
-          model cannot point to in the document is dropped and reported instead of shown.
+          Every CV you have uploaded, and what the system could read in it. Each claim cites
+          the exact text it came from; anything the model cannot point to in the document is
+          dropped and reported instead of shown.
         </p>
       </header>
 
@@ -178,23 +268,74 @@ export default function Home() {
           {/* Live, because the API streams every state change rather than making
               the page ask. A retry waiting out its backoff says so here. */}
           {busy && <p className="text-sm text-ink-muted">{progressMessage(progress)}</p>}
-          {/* A resume the worker gave up on after retrying is kept rather than
-              discarded, so it can be run again once the cause is fixed. */}
-          {shown?.resume.can_retry && !busy && (
-            // `warn`, which is the `ambiguous` hue, and it stays: unlike the
-            // ranking's must-have gate or an edit's cost, this *is* the system
-            // saying something about a document — it could not be read, and it
-            // has not been given up on. `docs/DESIGN.md` §1 reserves the three
-            // colours for exactly that.
-            <Banner tone="warn" className="flex items-center gap-3">
-              <span>
-                Stopped after {shown.resume.attempts}{" "}
-                {shown.resume.attempts === 1 ? "attempt" : "attempts"}.
-              </span>
-              <Button onClick={() => void retry()}>Try again</Button>
-            </Banner>
-          )}
           {error && <Banner tone="danger">{error}</Banner>}
+
+          <Card>
+            <CardHeader
+              title="Library"
+              caption={
+                mine.length === 0
+                  ? "Nothing uploaded yet"
+                  : `${mine.length} ${mine.length === 1 ? "document" : "documents"}, newest first`
+              }
+            />
+            <CardBody padded={false}>
+              {libraryError ? (
+                <div className="space-y-3 px-4 py-4">
+                  <Banner tone="danger">{libraryError}</Banner>
+                  <Button onClick={() => owner && void loadLibrary(owner)}>Try again</Button>
+                </div>
+              ) : mine.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-ink-muted">
+                  Upload one above. Nothing is shared with anybody until you apply to a
+                  posting with it.
+                </p>
+              ) : (
+                <ul className="divide-y divide-line">
+                  {mine.map((resume) => {
+                    const state = documentState(resume.status);
+                    const open_ = openId === resume.id;
+                    return (
+                      <li key={resume.id}>
+                        <div
+                          className={`flex flex-wrap items-center gap-3 px-4 py-3 ${
+                            // `accent`, because being the row you opened is a
+                            // control state — never `cited`, which says something
+                            // about the document (docs/DESIGN.md §1).
+                            open_ ? "bg-accent-wash" : ""
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => void open(resume.id)}
+                            aria-expanded={open_}
+                            className="ring-focus min-w-0 flex-1 rounded-control text-left"
+                          >
+                            <span className="block truncate text-sm font-medium text-ink">
+                              {resume.filename}
+                            </span>
+                            <span className="mt-0.5 block text-micro text-ink-faint">
+                              {documentSummary(resume)}
+                            </span>
+                          </button>
+
+                          <Badge tone={state.tone} title={state.detail}>
+                            {state.label}
+                          </Badge>
+
+                          {resume.can_retry && (
+                            <Button disabled={busy} onClick={() => void retry(resume.id)}>
+                              Try again
+                            </Button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
 
           {/* The document pane only appears when there is text to point into. A
               failed parse has no offsets, so citations stay non-interactive. */}
@@ -204,6 +345,7 @@ export default function Home() {
                 <div className="grid items-start gap-5 lg:grid-cols-2">
                   <ProfileView resume={shown.resume} profile={shown.profile} />
                   <DocumentViewer
+                    key={shown.resume.id}
                     resumeId={shown.resume.id}
                     filename={shown.resume.filename}
                     text={shown.document_text}

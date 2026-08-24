@@ -1460,7 +1460,7 @@ argue with.
 | 6 | Public demo + `/how-we-screen` | L — **done 2026-08-24**, both routes; see below |
 | 7 | Migration `0013` — publication lifecycle and posting fields | L — **done** 2026-08-21 |
 | 8 | Public careers API + board + posting page + landing + metadata | L — **done 2026-08-22 except the metadata**, which is deferred with a reason |
-| 9 | `/me/documents` — the CV library | M — **route only**: the upload screen moved there, the library does not exist |
+| 9 | `/me/documents` — the CV library | M — **done 2026-08-24**: the list, its states, and any document openable |
 | 10 | `/hire` — the back office, ranking first | L — **moved, not reorganised**: the routes are behind `/hire`, the screens are unchanged inside |
 | 11 | `/me/account` — export, password, erasure | M — **done 2026-08-24**; see below |
 
@@ -1606,6 +1606,29 @@ Thai and the product screens are English (`docs/DESIGN.md` §8), so `DroppedClai
 vocabularies, with `lib/evidence.ts` still the definition of what the words mean. The
 coordinate line stays untranslated: `p1 · chars 168–221 · exact` reads the same either
 way, and translating half of it would make it less legible.
+
+### Slice 9 — the CV library (2026-08-24)
+
+`GET /resumes` has returned the whole list since M1, and the screen showed only whatever
+had just been uploaded — so a document from last week was reachable by uploading the same
+file again and letting deduplication find it, which is a feature standing in for a screen.
+Now every document is listed newest first with its size, page count and state, any of them
+opens into the evidence surface that already existed, and a retryable one carries its own
+button.
+
+`web/lib/documents.ts` holds the status vocabulary, separate from `lib/screening.ts` for
+the reason the tables are separate: a resume is never `completed` and a screening is never
+`parsed`. **The tone rule is applied there once rather than argued per row** — `extracted`
+is `cited`, `failed` is `dropped`, `dead_lettered` is `ambiguous`, and everything else is
+neutral, because a queued document is a workflow state and the three colours belong to
+what the system found in a *document*.
+
+Two guards carried from screens that already learned them, and the second was **forced
+rather than hoped for**: the list and the open document each carry the account they were
+fetched for, and a late answer for a document the reader has moved on from is dropped.
+Patching `fetch` to delay one profile read by three seconds and clicking two rows 80ms
+apart left the correct document on screen, with the console confirming the stale answer
+really arrived.
 
 ### Slice 11 — the account screen (2026-08-24)
 
