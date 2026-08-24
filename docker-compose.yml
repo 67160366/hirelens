@@ -225,6 +225,13 @@ services:
         # by `next build`. Changing it needs a rebuild, not a restart.
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
     image: hirelens-web:local
+    environment:
+      # Runtime, not build-time, and deliberately not a NEXT_PUBLIC_ name: this is
+      # the API as the *server* sees it, and the public one is the browser's view.
+      # Inside this container `localhost:8000` is this container, so a server-side
+      # fetch with the public base reaches nothing — which is why the careers board
+      # rendered empty for a crawler until it had its own address.
+      SERVER_API_BASE: ${SERVER_API_BASE:-http://api:8000}
     ports:
       - "3000:3000"
     depends_on:

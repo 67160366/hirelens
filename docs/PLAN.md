@@ -1552,13 +1552,22 @@ company's hiring side. `candidate` is the only self-selectable role now; `recrui
 
 **Deferred with a reason rather than forgotten:**
 
-- **Per-posting metadata and server-side rendering for the board.** The public pages are
-  client components like every other screen here, which is what keeps `npm run build`
-  free of the API (repair #4). `force-dynamic` on a server component would fetch from
-  *inside* the `web` container, where `NEXT_PUBLIC_API_BASE` points at the container
-  itself. The cost is real: a posting's title is not in the server-rendered HTML, so a
-  search engine sees an empty board. Fixing it needs a second API base with its own
-  container-networking failure mode — a slice, not a line smuggled into another one.
+- ~~**Per-posting metadata and server-side rendering for the board.**~~ **Done
+  2026-08-24**, as its own slice. `SERVER_API_BASE` is a runtime variable naming the API
+  from the *server's* side (`http://api:8000` in compose), falling back to the public base
+  because on a developer's machine the two really are the same address. `/careers` and
+  `/careers/[id]` are server components that fetch through `lib/serverApi` and hand the
+  rows to the existing client components as `initialPostings` / `initialPosting`, so the
+  interactive halves are untouched and the content is in the HTML. Repair #4 still holds
+  and was **measured, not assumed**: `SERVER_API_BASE=http://127.0.0.1:9 npm run build`
+  succeeds, because `force-dynamic` pages are never prerendered and the fetchers answer
+  rather than throw.
+
+  **It also closed a soft 404 nobody had named.** A draft posting's URL answered **200**
+  with the site's default title and a spinner — the shape search engines punish. The two
+  absences are separate now: `missing` calls `notFound()` and gets a real 404 with Thai
+  copy of its own, while `unreachable` renders and lets the browser ask again from an
+  address that may well work.
 - **`/me` still carries its own "Apply to a job" list**, which is now a second board
   beside `/careers`. Removing it is a decision about where applying belongs.
 
