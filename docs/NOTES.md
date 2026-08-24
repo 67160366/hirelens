@@ -71,6 +71,39 @@ holds both vocabularies. `lib/evidence.ts` stays the definition of what the word
 the new module only decides which language they are in. The coordinate line is left
 untranslated on purpose — `p1 · chars 168–221 · exact` reads the same either way.
 
+### The Thai fragmentation question, closed from both ends
+
+2026-08-22 left it open on purpose: Thai coming out of one real PDF at **44 runs, mean
+3.73**, cause unestablished, and `fake` unable to say whether it costs a real provider
+anything.
+
+**The cause needed no quota at all.** The same Thai line, rendered at increasing
+letter-spacing and parsed by our own module: **≤2.5pt** unchanged (5 runs, longest 21),
+**3.0pt** half-fragmented (10 runs, mean 5.70), **≥3.5pt** every character its own run
+(57 of 1). pdfplumber's default `x_tolerance` is 3pt, so a designer PDF letter-spaced
+around that boundary has every glyph gap read as a word space — and the owner's file at
+mean 3.73 sits between the two cases. Thai has no word spaces, so a tolerance tuned for
+Latin cannot tell letter-spacing from a break. Worth carrying: **the half that seemed to
+need the paid provider was answered by a synthetic control**, and building that control
+took ten minutes.
+
+**Then the half that did need it, for two calls.** Live `gemini-3.6-flash`, the same
+resume rendered normally and at 3.5pt — **227 Thai runs of one character each**, far
+worse than the file that raised the question. Both runs: **10 verified, 0 dropped, 1
+attempt, all 9 citations tier-1 `exact`**, every span slicing back out of
+`document_text`. The model copies the mangled text **verbatim** rather than tidying it,
+which is exactly what the guardrail needs.
+
+So it is **not** a correctness finding, and the `whitespace_stripped` tier's docstring is
+why the shape was worth checking: *"a high share of stripped matches means the PDF parser
+is injecting stray spaces."* It never fired because the model never removed them.
+
+What is left is a **legibility** cost — a human reading the document pane sees Thai with
+spaces inside words — and an unmeasured effect on `retrieval.py`, which tokenizes the
+same text. That is a ranking question, not a guarantee one. Changing `x_tolerance` would
+change the stored text of every future upload, so it is a slice with a decision in it,
+and it is the owner's to make.
+
 ### The two commits nobody wrote down, recorded now
 
 `369223f` and `6875c91` landed on 2026-08-22 at 10:03, six hours after that day's entry
@@ -103,8 +136,8 @@ aurora was **indigo**, written hours before `accent` moved off indigo on the sam
    where the module has five. Both corrected. **The reason to re-run an opt-in suite is
    that nothing else moves its number** — a stale row and a rotted suite look identical
    from the outside.
-3. Still open, unchanged: the Thai fragmentation observation from 2026-08-22 needs one
-   run on a real provider, and the timeline's `cited evidence` badge has still never been
+3. ~~The Thai fragmentation observation needs one run on a real provider.~~ **Both halves
+   answered — see below.** The timeline's `cited evidence` badge has still never been
    watched.
 4. **`/me` still carries its own "Apply to a job" list**, which is a second board beside
    `/careers`. Removing it is a decision about where applying belongs, not a tidy-up.

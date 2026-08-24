@@ -1710,11 +1710,37 @@ with both citations resolving `exact` at `p1 · chars 0–6` and `p1 · chars 7�
 re-upload matched the existing row by hash and returned it, which is also why the screen
 still showed the old failure until the retry.
 
-One thing the drive surfaced that is **not** a finding yet: the extracted Thai is
+One thing the drive surfaced that was **not** a finding yet: the extracted Thai is
 fragmented — 164 Thai characters in 44 runs, mean length 3.73, longest 10, where
 `ประวัติส่วนตัว` alone is 14. Spaces really are in `document_text` (the mono pane's
 per-cell rendering of combining marks would look like that too, but the counts are
-measured, not read off the screen). Whether that is pdfplumber inserting spaces at the
-x-gaps of a letter-spaced designer PDF, and whether it costs a real provider anything,
-is unestablished — `fake` cannot tell us. It breaks no guarantee: the offsets index into
-exactly the text that was stored, and both citations resolved.
+measured, not read off the screen).
+
+**Both halves were measured on 2026-08-24, and the answer is: real cause, no cost.**
+
+*The cause is pdfplumber's `x_tolerance`.* The same Thai line was rendered at increasing
+letter-spacing and parsed by our own module: at **≤2.5pt** nothing changes (5 runs,
+longest 21); at **3.0pt** it half-fragments (10 runs, mean 5.70); at **≥3.5pt** every
+single character becomes its own run (57 runs of 1). The default tolerance is 3pt, so a
+designer PDF whose glyph advances are letter-spaced around that boundary has every gap
+read as a word space — and the owner's file, at mean 3.73, sits exactly between the 3.0
+and 3.5 cases. Thai has no word spaces, so a tolerance tuned for Latin cannot tell
+letter-spacing from a break. **No quota was spent establishing this**; the control is
+synthetic and the measurement is repeatable.
+
+*The cost to a real provider is zero, measured rather than assumed.* Two extractions
+against live `gemini-3.6-flash` — the same synthetic resume rendered normally, and
+rendered at 3.5pt so that **227 Thai runs of one character each** came out, far worse
+than the owner's file. Both: **10 claims verified, 0 dropped, 1 attempt, all 9 citations
+tier-1 `exact`**, every span slicing back out of `document_text`. The model copies the
+fragmented text **verbatim**, spaces included, rather than tidying it — which is the
+behaviour the guardrail needs and the opposite of the risk. Two calls of the 20/day cap.
+
+What it still costs is **legibility**: a human reading the document pane sees Thai with
+spaces inside words. And `pipeline/retrieval.py` tokenizes the same text, so ordering
+quality on such a document is unmeasured — which is a ranking question, not a guarantee
+one. Fixing it means changing extraction settings, and that changes the stored text of
+every future upload, so it is a slice with a decision in it rather than a passing fix.
+The `whitespace_stripped` tier's docstring predicted this shape exactly — *"a high share
+of stripped matches means the PDF parser is injecting stray spaces"* — and the reason it
+never fired is that the model never removed the spaces.
