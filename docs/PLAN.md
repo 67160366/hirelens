@@ -1461,7 +1461,7 @@ argue with.
 | 7 | Migration `0013` — publication lifecycle and posting fields | L — **done** 2026-08-21 |
 | 8 | Public careers API + board + posting page + landing + metadata | L — **done 2026-08-22 except the metadata**, which is deferred with a reason |
 | 9 | `/me/documents` — the CV library | M — **done 2026-08-24**: the list, its states, and any document openable |
-| 10 | `/hire` — the back office, ranking first | L — **moved, not reorganised**: the routes are behind `/hire`, the screens are unchanged inside |
+| 10 | `/hire` — the back office, ranking first | L — **done 2026-08-24**: the workbench leads with people, and the editor folds away |
 | 11 | `/me/account` — export, password, erasure | M — **done 2026-08-24**; see below |
 
 **Slice 7 is done** (2026-08-21). `JobStatus` is `draft`/`published`/`closed`, and
@@ -1606,6 +1606,28 @@ Thai and the product screens are English (`docs/DESIGN.md` §8), so `DroppedClai
 vocabularies, with `lib/evidence.ts` still the definition of what the words mean. The
 coordinate line stays untranslated: `p1 · chars 168–221 · exact` reads the same either
 way, and translating half of it would make it less legible.
+
+### Slice 10 — the back office, reorganised (2026-08-24)
+
+The routes moved behind `/hire` on 2026-08-22 and the screens inside were unchanged, which
+left the workbench opening with a **form**: a recruiter with eight applicants scrolled past
+the requirement editor to reach the people. The order is now ranking → the selected
+candidate's evidence → applicants → screen a resume → requirements, and the editor sits
+behind a disclosure.
+
+**Its default is derived, not remembered and not set by an effect**: open while there is
+nothing to rank, because a posting with an empty table is a posting still being written,
+and closed once there is a ranking. A click overrides it for the visit. Watched both ways —
+the published posting with two ranked candidates opens folded, the draft with none opens
+open.
+
+Two things were fixed while in the file. The posting's **status now shows on the page where
+it is edited** (it was on the list at `/hire` and nowhere else, so an afternoon could go
+into tuning a posting no candidate can see). And `publicationNote` still told the reader
+that *"anyone can register as a recruiter"* — untrue since slice 0 closed self-registration
+two days earlier. **A reason on screen that has quietly become false is worse than no
+reason**, so it now says a posting goes out under the company's name. Its test asserts the
+old sentence is gone rather than only that the new one is there.
 
 ### Slice 9 — the CV library (2026-08-24)
 

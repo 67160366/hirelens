@@ -13,6 +13,7 @@ import { DroppedClaims } from "@/components/DroppedClaims";
 import { EvidenceStatsBar } from "@/components/EvidenceStatsBar";
 import { JudgmentView } from "@/components/JudgmentView";
 import { RankingTable } from "@/components/RankingTable";
+import { Badge } from "@/components/ui/Badge";
 import { Banner } from "@/components/ui/Banner";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
@@ -41,7 +42,11 @@ import {
 import { errorMessage, useAuth } from "@/lib/auth";
 import { STATE_LABELS, groupByState } from "@/lib/applications";
 import { BLANK_REQUIREMENT } from "@/lib/requirements";
-import { collectJudgmentEvidence, countCompletedScreenings } from "@/lib/screening";
+import {
+  collectJudgmentEvidence,
+  countCompletedScreenings,
+  publicationNote,
+} from "@/lib/screening";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -62,6 +67,22 @@ export default function JobPage() {
   const [detail, setDetail] = useState<ScreeningDetail | null>(null);
 
   const [draft, setDraft] = useState<RequirementInput>({ ...BLANK_REQUIREMENT });
+  /**
+   * Whether the requirement editor is open, or `null` for "whatever suits this
+   * posting".
+   *
+   * **Ranking leads this screen now**, and the editor is the thing that used to
+   * push it below the fold: a recruiter opening a posting with eight applicants
+   * scrolled past a form to reach the people. But a posting with nothing to rank
+   * yet is a posting being written, and folding its only useful control away
+   * would be a screen leading with an empty table.
+   *
+   * So the default is derived from what is there, and a click overrides it for
+   * the rest of the visit. Derived rather than set by an effect — the rule
+   * `useAuth`'s rewrite bought, and the reason there is no `useEffect` here
+   * reacting to the ranking arriving.
+   */
+  const [requirementsOpen, setRequirementsOpen] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyResumeId, setBusyResumeId] = useState<string | null>(null);
@@ -373,17 +394,29 @@ export default function JobPage() {
     );
   }
 
+  // Open by default while there is nothing to rank — see `requirementsOpen`.
+  const requirementsShown = requirementsOpen ?? (ranking?.ranked.length ?? 0) === 0;
+
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">
       <header className="mb-6">
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{job?.title ?? "Job"}</h1>
-          {job?.description && (
-            <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-sm text-ink-muted">
-              {job.description}
-            </p>
+          {/* Where the posting stands, on the page where it is edited. It was on
+              the list at `/hire` and nowhere else, so a recruiter could spend an
+              afternoon tuning requirements on something no candidate can see. The
+              note behind it says who publishes and why it is not them. */}
+          {job && (
+            <Badge tone="neutral" title={publicationNote(job.status)}>
+              {job.status}
+            </Badge>
           )}
         </div>
+        {job?.description && (
+          <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-sm text-ink-muted">
+            {job.description}
+          </p>
+        )}
       </header>
 
       {error && (
@@ -398,53 +431,56 @@ export default function JobPage() {
       )}
 
       <div className="space-y-6">
-        {/* Requirements ---------------------------------------------------- */}
-        <Card>
-          <CardHeader
-            title="Requirements"
-            action={
-              <p className="text-micro tabular-nums text-ink-faint">
-                {job?.requirements.length ?? 0} of {MAX_REQUIREMENTS_PER_JOB}
-              </p>
-            }
+        {/* Ranking --------------------------------------------------------- */}
+        {ranking && (
+          <RankingTable
+            ranking={ranking}
+            selectedScreeningId={selectedId}
+            onSelect={(screeningId) => void select(screeningId)}
+            onScreenAgain={(resumeId) => void screen(resumeId)}
+            busyResumeId={busyResumeId}
           />
+        )}
 
-          <div className="divide-y divide-line">
-            {job?.requirements.map((requirement: Requirement) => (
-              <RequirementEditor
-                key={requirement.id}
-                requirement={requirement}
-                onSave={(patch) => saveRequirement(requirement.id, patch)}
-                onDelete={() => removeRequirement(requirement.id)}
-                // Completed only. The raw list carries running and failed rows
-                // too, and neither costs a model call to reproduce.
-                screeningCount={countCompletedScreenings(screenings)}
-              />
-            ))}
-          </div>
-
-          <form
-            onSubmit={addRequirement}
-            className="flex items-start gap-2 border-t border-line px-4 py-3"
-          >
-            <div className="flex-1">
-              <RequirementFields value={draft} onChange={setDraft} disabled={pending} />
+        {/* The rationale, beside the document it was quoted from ------------ */}
+        {selected && (
+          // Keyed, so switching candidates remounts the whole pane rather than
+          // re-rendering it: the citation selection, the fetched PDF and its geometry
+          // all belong to one screening and none of them may outlive it. The guards
+          // inside `select` and `DocumentViewer` make each piece correct on its own;
+          // this makes the seam between them correct too, with no intermediate frame.
+          <EvidenceSelectionProvider key={selected.screening_id}>
+            <div className="grid items-start gap-5 lg:grid-cols-2">
+              <div className="space-y-4">
+                {/* The guardrail's own evidence for this screening, in the same
+                    order the resume view shows it: what the counters say, what was
+                    kept, then what was refused. A recruiter reading a rank of #1
+                    should be able to see that the judgment behind it threw a
+                    fabricated quote away. */}
+                {detail?.judgment?.stats && <EvidenceStatsBar stats={detail.judgment.stats} />}
+                <JudgmentView entry={selected} resumeName={resumeName(selected.resume_id)} />
+                <DroppedClaims dropped={detail?.judgment?.dropped ?? []} />
+              </div>
+              {detail?.document_text ? (
+                <DocumentViewer
+                  resumeId={selected.resume_id}
+                  // Served on the entry rather than joined from `GET /resumes` here,
+                  // for the reason `schemas/ranking.py` gives on the field itself: that
+                  // route returns the caller's own uploads, so the join is true only
+                  // until somebody else's resume enters the list. A null still falls
+                  // through `canRenderOriginal`, which declines the tab rather than
+                  // guessing — failing closed, since nothing here can prove it is a PDF.
+                  filename={selected.resume_filename}
+                  text={detail.document_text}
+                  references={collectJudgmentEvidence(selected.requirements)}
+                  authorized={authorized}
+                />
+              ) : (
+                <p className="text-sm text-ink-muted">Loading the document…</p>
+              )}
             </div>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={
-                pending ||
-                draft.label.trim() === "" ||
-                (job?.requirements.length ?? 0) >= MAX_REQUIREMENTS_PER_JOB
-              }
-              className="mt-0.5"
-            >
-              Add
-            </Button>
-          </form>
-        </Card>
-
+          </EvidenceSelectionProvider>
+        )}
         {/* Applicants ------------------------------------------------------ */}
         <Card>
           <CardHeader
@@ -562,56 +598,63 @@ export default function JobPage() {
           )}
         </Card>
 
-        {/* Ranking --------------------------------------------------------- */}
-        {ranking && (
-          <RankingTable
-            ranking={ranking}
-            selectedScreeningId={selectedId}
-            onSelect={(screeningId) => void select(screeningId)}
-            onScreenAgain={(resumeId) => void screen(resumeId)}
-            busyResumeId={busyResumeId}
-          />
-        )}
-
-        {/* The rationale, beside the document it was quoted from ------------ */}
-        {selected && (
-          // Keyed, so switching candidates remounts the whole pane rather than
-          // re-rendering it: the citation selection, the fetched PDF and its geometry
-          // all belong to one screening and none of them may outlive it. The guards
-          // inside `select` and `DocumentViewer` make each piece correct on its own;
-          // this makes the seam between them correct too, with no intermediate frame.
-          <EvidenceSelectionProvider key={selected.screening_id}>
-            <div className="grid items-start gap-5 lg:grid-cols-2">
-              <div className="space-y-4">
-                {/* The guardrail's own evidence for this screening, in the same
-                    order the resume view shows it: what the counters say, what was
-                    kept, then what was refused. A recruiter reading a rank of #1
-                    should be able to see that the judgment behind it threw a
-                    fabricated quote away. */}
-                {detail?.judgment?.stats && <EvidenceStatsBar stats={detail.judgment.stats} />}
-                <JudgmentView entry={selected} resumeName={resumeName(selected.resume_id)} />
-                <DroppedClaims dropped={detail?.judgment?.dropped ?? []} />
+        {/* Requirements — last, and folded away once there is a ranking ---- */}
+        <Card>
+          <CardHeader
+            title="Requirements"
+            action={
+              <div className="flex items-center gap-3">
+                <p className="text-micro tabular-nums text-ink-faint">
+                  {job?.requirements.length ?? 0} of {MAX_REQUIREMENTS_PER_JOB}
+                </p>
+                <Button
+                  onClick={() => setRequirementsOpen(!requirementsShown)}
+                  aria-expanded={requirementsShown}
+                  aria-controls="requirements-body"
+                >
+                  {requirementsShown ? "Hide" : "Edit"}
+                </Button>
               </div>
-              {detail?.document_text ? (
-                <DocumentViewer
-                  resumeId={selected.resume_id}
-                  // Served on the entry rather than joined from `GET /resumes` here,
-                  // for the reason `schemas/ranking.py` gives on the field itself: that
-                  // route returns the caller's own uploads, so the join is true only
-                  // until somebody else's resume enters the list. A null still falls
-                  // through `canRenderOriginal`, which declines the tab rather than
-                  // guessing — failing closed, since nothing here can prove it is a PDF.
-                  filename={selected.resume_filename}
-                  text={detail.document_text}
-                  references={collectJudgmentEvidence(selected.requirements)}
-                  authorized={authorized}
-                />
-              ) : (
-                <p className="text-sm text-ink-muted">Loading the document…</p>
-              )}
+            }
+          />
+
+          <div id="requirements-body" hidden={!requirementsShown} className="divide-y divide-line">
+            {job?.requirements.map((requirement: Requirement) => (
+              <RequirementEditor
+                key={requirement.id}
+                requirement={requirement}
+                onSave={(patch) => saveRequirement(requirement.id, patch)}
+                onDelete={() => removeRequirement(requirement.id)}
+                // Completed only. The raw list carries running and failed rows
+                // too, and neither costs a model call to reproduce.
+                screeningCount={countCompletedScreenings(screenings)}
+              />
+            ))}
+          </div>
+
+          <form
+            onSubmit={addRequirement}
+            hidden={!requirementsShown}
+            className="flex items-start gap-2 border-t border-line px-4 py-3"
+          >
+            <div className="flex-1">
+              <RequirementFields value={draft} onChange={setDraft} disabled={pending} />
             </div>
-          </EvidenceSelectionProvider>
-        )}
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={
+                pending ||
+                draft.label.trim() === "" ||
+                (job?.requirements.length ?? 0) >= MAX_REQUIREMENTS_PER_JOB
+              }
+              className="mt-0.5"
+            >
+              Add
+            </Button>
+          </form>
+        </Card>
+
       </div>
     </div>
   );

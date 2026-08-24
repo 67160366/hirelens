@@ -259,7 +259,11 @@ describe("what a posting's status means to the person looking at it", () => {
     // same reason the API answers 409 with one instead of a bare 403.
     const draft = publicationNote("draft");
     expect(draft).toContain("administrator");
-    expect(draft).toContain("register as a recruiter");
+    expect(draft).toContain("company's name");
+    // It said "anyone can register as a recruiter" until 2026-08-24, which stopped
+    // being true when slice 0 closed self-registration two days earlier — a reason
+    // on screen that has quietly become false is worse than no reason.
+    expect(draft).not.toContain("register as a recruiter");
   });
 
   it("distinguishes closed from draft, because they are not the same absence", () => {

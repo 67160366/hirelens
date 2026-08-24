@@ -120,8 +120,8 @@ export function publicationNote(status: JobStatus): string {
     case "draft":
       return (
         "Only you can see this. An administrator publishes it to the careers site — " +
-        "anyone can register as a recruiter, so publishing is not something an " +
-        "account can grant itself."
+        "a posting goes out under the company's name, so publishing is not something " +
+        "an account can grant itself."
       );
     case "closed":
       return "No longer accepting applications. The ones already made are unaffected.";
