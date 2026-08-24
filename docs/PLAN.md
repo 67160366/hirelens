@@ -1462,7 +1462,7 @@ argue with.
 | 8 | Public careers API + board + posting page + landing + metadata | L — **done 2026-08-22 except the metadata**, which is deferred with a reason |
 | 9 | `/me/documents` — the CV library | M — **route only**: the upload screen moved there, the library does not exist |
 | 10 | `/hire` — the back office, ranking first | L — **moved, not reorganised**: the routes are behind `/hire`, the screens are unchanged inside |
-| 11 | `/me/account` — export, password, erasure | M |
+| 11 | `/me/account` — export, password, erasure | M — **done 2026-08-24**; see below |
 
 **Slice 7 is done** (2026-08-21). `JobStatus` is `draft`/`published`/`closed`, and
 `api/app/publication.py` is the only place that decides who may move between them —
@@ -1606,6 +1606,24 @@ Thai and the product screens are English (`docs/DESIGN.md` §8), so `DroppedClai
 vocabularies, with `lib/evidence.ts` still the definition of what the words mean. The
 coordinate line stays untranslated: `p1 · chars 168–221 · exact` reads the same either
 way, and translating half of it would make it less legible.
+
+### Slice 11 — the account screen (2026-08-24)
+
+All three routes existed since M4's PDPA slice and two of them had never been reachable
+without `curl`. The screen says what each one does **before** it happens: a password
+change ends every other session and keeps this one, erasure deletes files before rows,
+and a **recruiter's** erasure takes other people's applications with their postings —
+role-dependent copy in `web/lib/account.ts`, tested there and watched appearing for a
+recruiter and not for a candidate. The export is handed over verbatim, because a summary
+would make the right to a copy decorative. It is reached from the identity in the header
+rather than a sixth nav item, since that bar already does not fit at 375.
+
+**The defect the browser found**: erasing clears the session, so `session` was null on
+the next render and the signed-out branch put a **sign-in form** in front of somebody who
+had just destroyed their account. The receipt branch is ahead of it now. Driven on two
+throwaway accounts — password change verified from a second device in `curl` (other
+token 401, old password 401, new password 200), the export landing on disk, and `psql`
+showing the account gone with no orphaned rows.
 
 **Refused, so they read as decisions:**
 
