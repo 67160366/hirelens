@@ -26,9 +26,10 @@ file was **relaxed on 2026-08-22 for the public marketing surface only** — the
 page may have a background and movement — and the three things that did *not* relax are
 written there beside it.
 
-**The careers site is the work in progress: eight of its eleven slices are done**
-(`docs/PLAN.md` has the per-slice status, and says plainly which two are "route only" and
-"moved, not reorganised" rather than ticking them). The half that is built is the founding
+**The careers site is complete: all eleven slices are done** (2026-08-24)
+(`docs/PLAN.md` has the per-slice status and what each one decided; the two that were
+deferred with a reason — the public demo and the board's metadata — were built rather
+than dropped). The half that is built is the founding
 half — an applicant reads `GET /applications/{id}/screening` at `/me` and sees the same
 verdicts the recruiter read, on their own document, at the same offsets. Two rules fall
 out. **`recruiter` is no longer self-selectable**: with one employer there is nobody to
@@ -48,7 +49,16 @@ three properties if the route is ever changed, and read the docstring before add
 session to it. The public pages are Thai and the product screens are English, so
 `DroppedClaims` and `DocumentPane` take a `language` prop and `web/lib/evidenceCopy.ts`
 holds both vocabularies — `lib/evidence.ts` stays the definition of what the words mean.
-Slices 9, 10 and 11 are what remain of the careers site.
+**Slices 9, 10 and 11 closed the same day**, and with them the careers site: the CV
+library lists every document and opens any of them, `/me/account` puts export, password
+and erasure behind a screen instead of `curl`, and the workbench leads with the ranking
+with the requirement editor folded away behind a **derived** default. The board is
+**server-rendered** now — `SERVER_API_BASE` is a runtime variable naming the API from the
+server's side, because inside the `web` container the public base is the container itself
+— and a posting that is not public answers a real 404 rather than 200 with a spinner.
+`npm run build` still needs no running API, which is a property to keep: the fetchers in
+`web/lib/serverApi.ts` answer `null` instead of throwing, and both public pages are
+`force-dynamic` so nothing is prerendered.
 
 `useAuth` was rewritten onto `useSyncExternalStore` on 2026-08-16, so **the session is
 an external store and no component copies it into state** — `web/lib/auth.ts` is the

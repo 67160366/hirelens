@@ -1447,7 +1447,9 @@ Explicitly **not** a vendor marketing site, and **not** a careers site whose scr
 invisible — the second is Greenhouse, and is exactly the ATS this project was founded to
 argue with.
 
-**Eleven slices, in dependency order.** Sizes are the original estimates.
+**Eleven slices, in dependency order.** Sizes are the original estimates. **All eleven are
+done as of 2026-08-24**, and the two things that were deferred with a reason — the board's
+metadata, and the public demo — were built rather than dropped.
 
 | # | Slice | |
 |---|---|---|
@@ -1459,7 +1461,7 @@ argue with.
 | 5 | Design tokens, the three declared typefaces, primitives | L — **done**, and the migration above is what cashed it |
 | 6 | Public demo + `/how-we-screen` | L — **done 2026-08-24**, both routes; see below |
 | 7 | Migration `0013` — publication lifecycle and posting fields | L — **done** 2026-08-21 |
-| 8 | Public careers API + board + posting page + landing + metadata | L — **done 2026-08-22 except the metadata**, which is deferred with a reason |
+| 8 | Public careers API + board + posting page + landing + metadata | L — **done**: the site 2026-08-22, the metadata and server rendering 2026-08-24 |
 | 9 | `/me/documents` — the CV library | M — **done 2026-08-24**: the list, its states, and any document openable |
 | 10 | `/hire` — the back office, ranking first | L — **done 2026-08-24**: the workbench leads with people, and the editor folds away |
 | 11 | `/me/account` — export, password, erasure | M — **done 2026-08-24**; see below |
