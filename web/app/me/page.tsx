@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { ApplicationActions } from "@/components/ApplicationActions";
@@ -14,9 +15,7 @@ import {
   type Application,
   type ApplicationEvent,
   type ApplicationState,
-  type Job,
   type Receipt,
-  type Resume,
 } from "@/lib/api";
 // One neutral tone for every state, which is the decision here.
 //
@@ -35,18 +34,25 @@ import { STATE_EXPLANATIONS, STATE_LABELS, isTerminal } from "@/lib/applications
 import { errorMessage, useAuth } from "@/lib/auth";
 
 /**
- * The candidate's half of M4: apply to a posting, and watch what happens to it.
+ * The candidate's half of M4: watch what happened to what you sent.
  *
  * The screen the milestone was for. Everything here already worked over HTTP after
  * slice 3, and a state machine nobody can see is the situation M3 slice 5 was
  * written to stop repeating.
+ *
+ * **Applying happens at `/careers`, and only there** (owner's decision, 2026-08-26).
+ * This screen used to carry a job board of its own, listing every posting from
+ * `GET /jobs` with a resume picker beside each — which was the only way to apply
+ * until the careers site shipped a public board, and a second board afterwards. Two
+ * lists of the same postings under two different shells is a question the reader has
+ * to answer before they can act, and the shells disagree about what the page is for:
+ * `/careers` is the company advertising, `/me` is the receipt of what you already
+ * sent. The link below is what replaced it.
  */
 export default function ApplicationsPage() {
   const { session, ready, authenticate, authorized } = useAuth();
   const [me, setMe] = useState<Account | null>(null);
   const [applications, setApplications] = useState<Application[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [resumes, setResumes] = useState<Resume[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   /**
    * The audit log, **keyed by the application it belongs to**.
@@ -80,13 +86,11 @@ export default function ApplicationsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [account, mine, allJobs, myResumes] = await authorized(async () =>
-        Promise.all([api.me(), api.listMyApplications(), api.listJobs(), api.listResumes()]),
+      const [account, mine] = await authorized(async () =>
+        Promise.all([api.me(), api.listMyApplications()]),
       );
       setMe(account);
       setApplications(mine);
-      setJobs(allJobs);
-      setResumes(myResumes);
     } catch (caught) {
       setError(errorMessage(caught, "Could not load your applications"));
     }
@@ -147,19 +151,6 @@ export default function ApplicationsPage() {
     }
   }
 
-  async function apply(jobId: string, resumeId: string) {
-    setError(null);
-    setBusy(true);
-    try {
-      await authorized(() => api.applyToJob(jobId, resumeId));
-      await load();
-    } catch (caught) {
-      setError(errorMessage(caught, "Could not apply"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function move(applicationId: string, to: ApplicationState, reason?: string) {
     setError(null);
     setBusy(true);
@@ -179,10 +170,6 @@ export default function ApplicationsPage() {
     }
   }
 
-  const appliedJobIds = new Set(applications.map((a) => a.job_id));
-  const openTo = jobs.filter((job) => !appliedJobIds.has(job.id));
-  const extracted = resumes.filter((resume) => resume.status === "extracted");
-
   if (!ready) return null;
   if (!session) {
     return (
@@ -198,7 +185,14 @@ export default function ApplicationsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Your applications</h1>
           <p className="mt-1.5 text-sm text-ink-muted">
-            Every move is recorded with who made it and what it rested on.
+            Every move is recorded with who made it and what it rested on.{" "}
+            <Link
+              href="/careers"
+              className="ring-focus rounded-control text-accent underline underline-offset-2"
+            >
+              Open roles
+            </Link>{" "}
+            is where a new application starts.
           </p>
         </div>
       </header>
@@ -212,68 +206,21 @@ export default function ApplicationsPage() {
         </p>
       ) : null}
 
-      <section className="card mb-8">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold">Apply to a job</h2>
-        </div>
-        <div className="px-4 py-3">
-          {extracted.length === 0 ? (
-            <p className="text-xs text-ink-muted">
-              Upload a resume first — a document with no extracted text cannot be screened, so
-              applying with one would only promise work that must fail.
-            </p>
-          ) : openTo.length === 0 ? (
-            <p className="text-xs text-ink-muted">
-              Nothing open that you have not already applied to.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {openTo.map((job) => (
-                <li
-                  key={job.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line px-3 py-2"
-                >
-                  <span className="text-sm font-medium">{job.title}</span>
-                  <span className="flex items-center gap-2">
-                    <select
-                      aria-label={`Resume to apply to ${job.title} with`}
-                      defaultValue={extracted[0]?.id}
-                      id={`resume-for-${job.id}`}
-                      className="field py-1 text-xs"
-                    >
-                      {extracted.map((resume) => (
-                        <option key={resume.id} value={resume.id}>
-                          {resume.filename}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        const select = document.getElementById(
-                          `resume-for-${job.id}`,
-                        ) as HTMLSelectElement | null;
-                        if (select) void apply(job.id, select.value);
-                      }}
-                      className="btn btn-primary ring-focus"
-                    >
-                      Apply
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
       <section className="card">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold">Applied ({applications.length})</h2>
         </div>
         {applications.length === 0 ? (
-          <p className="px-4 py-6 text-xs text-ink-muted">Nothing yet.</p>
+          <p className="px-4 py-6 text-xs text-ink-muted">
+            Nothing yet. Applications start at{" "}
+            <Link
+              href="/careers"
+              className="ring-focus rounded-control text-accent underline underline-offset-2"
+            >
+              open roles
+            </Link>
+            , where a posting is read before it is applied to.
+          </p>
         ) : (
           <ul className="divide-y divide-line">
             {applications.map((application) => (
