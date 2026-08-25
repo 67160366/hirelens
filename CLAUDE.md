@@ -37,7 +37,11 @@ verify a recruiter against, so `candidate` is the only role registration accepts
 other two are granted out of band. And **which shell a page gets is decided by its route,
 not by the session** (`web/lib/nav.ts`) — `/`, `/careers` and the other public pages carry
 the company's header and never the application's, because a signed-in applicant reading a
-job advertisement must not be shown the back office's navigation.
+job advertisement must not be shown the back office's navigation. **`/careers` is the only
+job board** (decided 2026-08-26): `/me` carried one of its own until then, and two lists of
+the same postings under two shells made the reader decide which page they were on before
+they could act. `/me` is the receipt of what you already sent — do not put postings back
+on it.
 
 **Slice 6 closed that on 2026-08-24**: `/how-we-screen` explains locate-then-keep and
 `/demo` runs it. The demo is **live rather than canned** — `GET /demo/screening` (the

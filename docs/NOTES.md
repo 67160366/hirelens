@@ -6,7 +6,138 @@ advice for the owner. Newest entry first. The detailed records stay in
 
 ---
 
-## 2026-08-24 (latest) — the careers site closes: eleven of eleven, and three defects only a browser could find
+## 2026-08-26 (latest) — the twelve commits leave the machine, and the last unwatched badge is watched
+
+**Consolidation, not new capability.** Three things the docs had named and not finished:
+twelve commits that had never reached CI, a badge nobody had ever seen, and a second job
+board parked twice as a decision. All three are closed. **One commit, and it is pushed** —
+along with the twelve.
+
+Gates: `pytest -q` **734** passed / 38 skipped, `ruff check`, `ruff format --check`,
+`mypy app` (62 files) clean; `npm run typecheck`, `lint`, vitest **292**, `build` clean.
+Driven on `LLM_PROVIDER=fake` throughout — **one model call, zero Gemini quota**,
+confirmed in `llm_call_logs` (`fake` / `rule-based-faithful`, 1 row in the hour).
+
+### The push, and what CI actually proved
+
+`origin/main` had been at `6875c91` since 2026-08-22. Twelve commits went up and **both
+jobs went green** — `web` in 34s, `api` in 1m36s.
+
+The one thing worth having watched: this was CI's **first** run containing
+`web/lib/serverApi.ts`, which fetches during server rendering, and CI has no API and sets
+neither `SERVER_API_BASE` nor `NEXT_PUBLIC_API_BASE`. It passed for the reason the
+2026-08-24 run measured locally — both fetchers answer `null` / `unreachable` instead of
+throwing, and both public pages are `force-dynamic`, so `next build` never asks. The local
+build confirms the shape on the route table: `/careers` and `/careers/[id]` are the only
+two `f` (dynamic) entries and everything else is static.
+
+### The badge, produced rather than found
+
+`docs/NOTES.md` said no application in this database had a transition resting on a
+screening. **That was out of date** — nine did, and one was already `SHORTLISTED` with
+three such events. The note was written when it was true and nothing moved it since; the
+same species as the opt-in-suite rows corrected on 2026-08-24, and the same lesson:
+*a stale claim and a real absence look identical from the outside.*
+
+It was produced live anyway, which is the stronger check — old rows prove the column was
+written once, not that this build still writes it. `slice1-check@example.com` is both the
+recruiter who owns *Data Engineer (history check)* and the applicant on it, so one account
+drove both sides. Screening `resume_en.pdf` from `/hire` moved the application with nobody
+asking (`application 29dc2b9a...: screening -> screened by system` in the arq log, 1/1 met,
+0 dropped), and the timeline went from **one row and no badge** to **four rows and three
+badges**.
+
+**Checked against `psql`, not against itself.** Positions 1, 2 and 3 carry a
+`screening_id` and position 0 does not — which is exactly where the badge is and is not.
+The recruiter's shortlist rests on the *same* screening id the system's own moves
+recorded, so the decision is anchored to the screening rather than merely near one. A
+green badge over a row whose `screening_id` was null would have been the instrument
+agreeing with itself, which is the failure this project keeps writing down.
+
+Both call sites render it identically (`/hire/jobs/[id]` and `/me`), in both themes, at
+371 / 764 / 1440. At 371 the badge wraps under its event rather than overflowing, and
+`documentElement.scrollWidth` is 356 against a 371px viewport — no sideways scroll. The
+badge computes to `rgb(52, 211, 153)`, the `cited` token itself. `Shortlisted` stays
+neutral grey beside it, which is the rule holding under pressure: a workflow state is not
+a claim about a document.
+
+### One board, and the route that had to survive it
+
+The owner made the call the last two entries had parked. `/me` carried an "Apply to a job"
+list — every posting from `GET /jobs` with a resume picker — which was the only way to
+apply until the public board shipped, and a duplicate afterwards. **Two lists of the same
+postings under two shells that disagree about what the page is for**: `/careers` is the
+company advertising, `/me` is the receipt of what you already sent.
+
+Removing it meant `/careers/[id]` became the single route in, so it was **driven end to
+end rather than inferred**: a posting opened from the public board, `resume_th.pdf`
+chosen, the form replaced by *"สมัครตำแหน่งนี้ไปแล้ว ดูใบสมัคร"*, and the row in `psql`.
+
+Two smaller things the change is really about. The **"Open roles" link navigates
+client-side and lands on the public Thai shell** — ร่วมงานกับเรา / วิธีที่เราคัด /
+ใบสมัครของฉัน — although the viewer is a signed-in recruiter; `web/lib/nav.ts` decides the
+shell by route, and this is that rule paying off on a link written today. And the
+**"Applied (0)" empty state** now points somewhere: it read "Nothing yet." and was a
+brand-new applicant's first screen. Watched on a throwaway `candidate` registered for it,
+which also showed the sign-up form offering **no role selector** at all.
+
+### The browser found nothing, and that is the entry
+
+Every walkthrough since 2026-08-13 has found at least one defect no gate could. This one
+found none. The rule is unchanged and was never "browser checks always find defects" — it
+is that nothing else can tell you either way, and this time the answer was clean.
+
+Two instrument faults were caught before they could be reported as defects:
+
+- **`ref`-based clicks silently did nothing, twice.** `find` returned a live ref for
+  **History** and for **Sign out**; both clicks reported success and neither fired, while
+  a click at the same coordinates worked every time. The ref goes stale across a
+  re-render and the click lands on a detached node — which reports exactly the same
+  success as a real one. One step from filing "the History button does not work". The
+  2026-08-21 `getComputedStyle` row in a new costume: **the cruder instrument was the
+  truthful one.**
+- **`Page.captureScreenshot` timed out at 30s on roughly half of the first attempts** and
+  succeeded on retry every time. Nothing to do with the page.
+
+And one **known residual, seen on a second route**: at 371 the nav strip clipped the item
+you were on — "Applications" showing as "Appl". That is `PLAN.md`'s recorded residual (an
+item wider than the strip is anchored at its start and clipped at its end), which had only
+ever been observed on `/careers`. The signed-in shell is worse for it, because the header
+also carries the role badge, Sign out and the theme control.
+
+### Next step
+
+1. **The `x_tolerance` question is the one open decision.** Both halves were measured on
+   2026-08-24: pdfplumber's default 3pt tolerance reads letter-spacing as word spaces in
+   Thai, it is **not** a correctness finding (the model copies the mangled text verbatim
+   and every citation still resolves `exact`), and what is left is a legibility cost in
+   the document pane plus an unmeasured effect on `retrieval.py`'s tokenizer. Changing it
+   rewrites the stored text of every future upload, so it is a slice with a decision
+   inside it and the decision is the owner's.
+2. **`POST /auth/logout-everywhere` stays unbuilt.** Three lines on the token epoch, and
+   still nothing asking for the route. It is recorded as a decision, not a gap — do not
+   pick it up as a quick win.
+3. **The 375 nav residual is the one open piece of UI work**, and it is now known to
+   affect the signed-in shell as well as `/careers`. It needs a header that reflows rather
+   than a scroll position; no arithmetic fixes an item wider than its container.
+4. **There is still no milestone and no slice in flight.**
+
+**Left in the dev database and in the browser**, so none of it is a mystery later:
+
+- The browser is signed in as `slice1-check@example.com` again, which is where it started.
+  Its password is in this file (2026-08-24 entry) and was needed today.
+- **`board-check@example.com` / `board-check-pw`** was registered to watch the empty state
+  and **was left in place**, not erased — it holds no documents and no applications, and
+  leaving it is cheaper to explain than a deletion. 37 accounts now.
+- Three new rows: an application on *Backend Engineer (Python)* with `resume_th.pdf`
+  (`9be7351d...`), the screening `74e78d78...` behind *Data Engineer (history check)*, and
+  that application now `SHORTLISTED`.
+- The dev stack is up on :3000/:8000 with `LLM_PROVIDER=fake`, and the `web` image was
+  rebuilt from the working tree — so what is in the browser is what is in the repo.
+
+---
+
+## 2026-08-24 — the careers site closes: eleven of eleven, and three defects only a browser could find
 
 **Eleven commits, none pushed** (your call, as always). The careers site is complete: the
 loose end the last two entries both named — `/how-we-screen` linked from the public header

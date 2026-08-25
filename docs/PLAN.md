@@ -1570,8 +1570,16 @@ company's hiring side. `candidate` is the only self-selectable role now; `recrui
   absences are separate now: `missing` calls `notFound()` and gets a real 404 with Thai
   copy of its own, while `unreachable` renders and lets the browser ask again from an
   address that may well work.
-- **`/me` still carries its own "Apply to a job" list**, which is now a second board
-  beside `/careers`. Removing it is a decision about where applying belongs.
+- ~~**`/me` still carries its own "Apply to a job" list**, which is now a second board
+  beside `/careers`.~~ **Decided and removed 2026-08-26.** The owner made the call the
+  two previous entries had parked: `/careers` is the only board, and `/me` is the receipt
+  of what you already sent. The list was the only way to apply until the public board
+  shipped, and a duplicate of it afterwards — two lists of the same postings under two
+  shells that disagree about what the page is for. `api.applyToJob` is untouched;
+  `PostingScreen` on `/careers/[id]` is now the single route in, and it was driven end to
+  end to prove it. What replaced the section is a link, which is also what the "Applied
+  (0)" empty state gained — a brand-new applicant's first screen used to be a dead end
+  reading "Nothing yet."
 
 **And the design rule that moved.** The owner asked on 2026-08-22 for a landing page that
 looks like a technology company's, which is a direct conflict with `docs/DESIGN.md` §6.
