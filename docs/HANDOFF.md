@@ -180,6 +180,12 @@ timeline's **cited evidence** chip, the OCR **recognition** notice, and the dash
 **unattributed calls** banner. The test the rule turns out to be is not "is this
 important?" but **"is this the system saying something about a *document*?"**
 
+Of those three, the **cited evidence** chip had been kept on an argument rather than a
+sighting — nobody had ever seen it render. **Watched 2026-08-26**, and the argument holds
+on screen: it appears on exactly the three events carrying a `screening_id` and not on the
+one that does not, while `Shortlisted` sits beside it in neutral grey. A workflow state
+and a claim about a document, told apart by colour, in one view.
+
 ### Verified by running it, not only by tests
 
 | Check | Result |
@@ -332,15 +338,20 @@ important?" but **"is this the system saying something about a *document*?"**
 
 ### Repository state
 
-`main` is on GitHub at <https://github.com/67160366/hirelens>. **Everything through M5 —
-the whole milestone — is pushed and green on CI** (run `31904311200`, 2026-08-16: both
-the `api` and `web` jobs, **0 annotations**, read through the API rather than off the
-tick). That push carried **8 commits**, four of them slice 4's, and it was worth making
-before anything else: CI had never run slice 4's `pdfjs-dist` install or the `prebuild`
-hook that copies pdf.js's worker into `web/public/` — a directory that is gitignored in
-its entirety, so a clean runner was the only thing that could tell us. It passed.
+`main` is on GitHub at <https://github.com/67160366/hirelens>. **Everything is pushed and
+green on CI as of 2026-08-26** — runs `32877048200` (the twelve careers-site commits) and
+`32880277472` (the consolidation), both jobs green in each.
 
-A local run reports **651 passed, 38 skipped** plus **137** vitest cases in `web/`, and
+That first push is worth remembering for the same reason M5's was: **CI had never built a
+page that fetches during server rendering.** `web/lib/serverApi.ts` landed on 2026-08-24
+and the runner sets neither `SERVER_API_BASE` nor `NEXT_PUBLIC_API_BASE`, so a clean
+machine with no API was the only thing that could prove repair #4 — that `npm run build`
+never needs one. It passed, which retires the risk rather than restating it. The same
+shape as slice 4's `pdfjs-dist` install and its `prebuild` hook copying pdf.js's worker
+into a wholly gitignored `web/public/`: **the things CI has never run are the things a
+batch of unpushed commits is hiding.**
+
+A local run reports **734 passed, 38 skipped** plus **292** vitest cases in `web/`, and
 the runner — no Tesseract, no database, no MinIO, no API key — reports the same, which is
 the opt-in test design doing its job.
 
@@ -1286,6 +1297,56 @@ Five things from that run are worth holding:
   what each does before it happens, including the sentence that is not about the
   person pressing the button: a **recruiter's** erasure takes every applicant's
   history with their postings.
+
+**And on 2026-08-26 the three things the docs had named and not finished were closed.**
+Not a milestone and not a slice — consolidation, and the shape of it is worth keeping
+because it is what a project looks like when there is nothing in flight:
+
+- **Twelve commits reached CI**, which had been at `6875c91` since 2026-08-22 and had
+  therefore never compiled the careers site, the demo router, `/me/account`, the CV
+  library or the server-rendered board. Both jobs green. The run that mattered is the one
+  containing `web/lib/serverApi.ts`: CI has no API and sets neither `SERVER_API_BASE` nor
+  `NEXT_PUBLIC_API_BASE`, so it was the first clean-machine proof of repair #4 — the
+  fetchers answer `null`/`unreachable` instead of throwing, and `force-dynamic` means
+  `next build` never asks.
+- **The `cited evidence` badge was watched**, which was the last piece of UI on the wrong
+  side of *a slice is done when somebody has used it*. It was **produced live** rather
+  than found among old rows, because an old row proves the column was written once and
+  not that this build still writes it. §Verified has the numbers.
+- **`/me` stopped carrying a job board.** `/careers` is the only one, and the rule is in
+  `CLAUDE.md` so nothing puts postings back.
+
+**The finding worth carrying out of it is about the docs, not the code.** `NOTES.md` said
+no application in this database had a transition resting on a screening; **nine did**, one
+of them already `SHORTLISTED`. The note was true when it was written and nothing moved it
+since — the same species as the opt-in-suite rows corrected on 2026-08-24, and the same
+lesson in a third costume: **a stale claim and a real absence look identical from the
+outside.** The habit that catches it is the one that caught this: check the claim against
+the system before building on it, not after.
+
+It is also the **first browser run since 2026-08-13 that found no defect**. That does not
+weaken the rule — the rule was never "browser checks always find defects", it is that
+nothing else can tell you either way, and this time the answer was clean.
+
+**What is actually left, in order.** One decision, one piece of UI work, and one standing
+refusal:
+
+1. **`x_tolerance` — the owner's decision, not a task.** Both halves were measured on
+   2026-08-24: pdfplumber's 3pt default reads Thai letter-spacing as word spaces, and it
+   is **not** a correctness finding, because the model copies the mangled text verbatim
+   and every citation still resolves `exact`. What is left is a legibility cost in the
+   document pane and an unmeasured effect on `retrieval.py`'s tokenizer. Changing it
+   rewrites the stored text of every future upload, which `CLAUDE.md`'s verbatim rule
+   makes a decision rather than a tuning.
+2. **The 375 nav residual is the one open piece of UI work.** An item wider than the strip
+   is anchored at its start and clipped at its end. Recorded on `/careers` since
+   2026-08-24 and now known to hit the **signed-in** shell too, which is worse for it
+   because the header also carries the role badge, Sign out and the theme control. It
+   needs a header that reflows; no scroll arithmetic fixes an item wider than its
+   container.
+3. **`POST /auth/logout-everywhere` stays unbuilt.** Three lines on the token epoch and
+   still nothing asking for the route. It is a recorded decision, not a gap — do not pick
+   it up as a quick win.
 
 **So there is no milestone in progress.** `useAuth`'s `useSyncExternalStore` rewrite
 landed on 2026-08-16 — the session is an external store now, `web/lib/auth.ts` is the only
