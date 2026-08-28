@@ -1,7 +1,11 @@
 # HireLens — คู่มือทำความเข้าใจโปรเจค (ภาษาไทย)
 
 > **เอกสารนี้ไม่ใช่แหล่งอ้างอิงที่เป็นทางการ** — เป็นคำอธิบายสำหรับเจ้าของโปรเจค
-> เขียน 2026-08-15 · ปรับปรุงใหญ่ **2026-08-22** จากสภาพ repo ณ commit `a431d60`
+> เขียน 2026-08-15 · ปรับปรุงใหญ่ **2026-08-29** จากสภาพ repo ณ commit `0ba27cd`
+>
+> รอบนี้แก้เพราะไฟล์บอกว่า **ยังไม่เสร็จ** ในสิ่งที่เสร็จไปแล้ว — `/how-we-screen`, `/demo`,
+> คลัง CV, หน้าบัญชี และการตัดบอร์ดที่สองออกจาก `/me` ล้วนลงมาระหว่าง 2026-08-24 ถึง 08-26
+> เอกสารที่บอกว่าของที่มีอยู่ยังไม่มี ทำให้คนอ่านไปสร้างซ้ำ ซึ่งแพงกว่าเอกสารที่เงียบไปเฉย ๆ
 >
 > ลำดับที่ `CLAUDE.md` กำหนดให้เซสชันใหม่อ่านคือ `CLAUDE.md` → `docs/HANDOFF.md` §3 →
 > `docs/PLAN.md` **สถานะรายข้อที่ถูกต้องอยู่ในตารางของ `docs/PLAN.md` เท่านั้น**
@@ -40,7 +44,7 @@
 |---|---|---|
 | **API / REST** | โปรแกรมคุยกันด้วย HTTP โดยมี "ที่อยู่" (path) และ "กริยา" (GET/POST/PATCH/DELETE) | `api/app/api/routes/` ทั้ง 7 ไฟล์ ดูรายการเต็มที่ `http://localhost:8000/docs` |
 | **Status code** | ตัวเลขที่บอกว่าเกิดอะไรขึ้น | 200 สำเร็จ · 201 สร้างแล้ว · 202 รับเข้าคิว · 204 สำเร็จแต่ไม่มีเนื้อ · 401 ยังไม่ล็อกอิน · **403 บทบาทไม่ถึง** · **404 ไม่ใช่ของคุณ (หรือไม่มีจริง)** · 409 ท่านี้ทำไม่ได้ตอนนี้ · 422 ข้อมูลที่ส่งมาผิดรูป |
-| **Router** | กลุ่ม route ที่รวมไว้ด้วยกัน | `auth` · `resumes` · `jobs` · `screenings` · `applications` · `metrics` · `careers` |
+| **Router** | กลุ่ม route ที่รวมไว้ด้วยกัน | `auth` · `resumes` · `jobs` · `screenings` · `applications` · `metrics` · `careers` · `demo` — **สองตัวหลังไม่ resolve บัญชีเลย** |
 | **Dependency injection** | บอกว่า "ฟังก์ชันนี้ต้องการ X" แล้วเฟรมเวิร์กหามาให้ก่อนเข้าฟังก์ชัน | `SessionDep` (session ของ DB), `CandidateDep` (บัญชีที่ล็อกอินอยู่), `RecruiterDep` — ทั้งหมดใน `api/app/api/deps.py` |
 | **ORM** | เขียน Python แล้วได้ SQL | SQLAlchemy 2 แบบ async ใน `api/app/models/` |
 | **Migration** | สคริปต์เปลี่ยนโครงตารางทีละขั้น ย้อนได้ | `api/migrations/versions/` — ตอนนี้ `0001` → **`0013`** |
@@ -124,6 +128,7 @@ parse (เก็บ char offset) → ถามโมเดลเอาแค่ 
 | M4 | **state ของใบสมัคร เป็น projection ของ append-only event log** ไม่ใช่คอลัมน์ที่ใครก็เซ็ตได้ |
 | M5 | **ทุกตัวเลขบน dashboard คือ query จากแถวที่ระบบเขียนไว้แล้ว** และบอกได้ว่ามาจากแถวไหน |
 | careers | **สิ่งที่ผู้สมัครเห็นคือ judgment ที่เก็บไว้** ไม่ใช่การ join ประกาศงานฉบับปัจจุบันมาเล่าใหม่ |
+| demo | **พฤติกรรมที่หน้าการตลาดโฆษณา คือพฤติกรรมที่รันจริงตอนนั้น** ไม่ใช่ภาพที่วาดไว้ล่วงหน้า |
 
 หลักคิดร่วมกันคือ: *อะไรก็ตามที่เป็นคำกล่าวอ้างเกี่ยวกับ "ตัวคน" ต้องอนุมานจากสิ่งที่ตรวจสอบได้
 ไม่ใช่ประกาศออกมาเฉย ๆ*
@@ -140,7 +145,7 @@ parse (เก็บ char offset) → ถามโมเดลเอาแค่ 
 
 | ของ | ใช้ทำอะไร |
 |---|---|
-| Python 3.11 + **FastAPI** | REST API, OpenAPI ที่ `/docs` (ตอนนี้ 34 path) |
+| Python 3.11 + **FastAPI** | REST API, OpenAPI ที่ `/docs` (ตอนนี้ 35 path) |
 | **SQLAlchemy 2 (async) + Alembic** | ORM + migration (ปัจจุบันถึง **`0013`**) |
 | **PostgreSQL 17** (pgvector image) | DB ของ dev/prod — ใช้ JSONB |
 | **SQLite** | fallback และ **test suite ทั้งชุดรันบนนี้** |
@@ -158,18 +163,20 @@ parse (เก็บ char offset) → ถามโมเดลเอาแค่ 
 api/app/
 ├── api/
 │   ├── deps.py              ← dependency ทั้งหมด: session, บัญชี, require_role, CSRF guard
-│   └── routes/              ← 7 router
+│   └── routes/              ← 8 router
 │       ├── auth.py          ← ลงทะเบียน/ล็อกอิน/refresh/logout/เปลี่ยนรหัส/export/ลบบัญชี
 │       ├── resumes.py       ← อัปโหลด, สถานะ, SSE, ไฟล์ต้นฉบับ, geometry, retry
 │       ├── jobs.py          ← ประกาศงาน + requirement + publication
 │       ├── screenings.py    ← สั่งคัดกรอง, ranking, รายชื่อผู้สมัครที่คัดได้
 │       ├── applications.py  ← สมัคร, state machine, **receipt ของผู้สมัคร**
 │       ├── metrics.py       ← dashboard
-│       └── careers.py       ← **route สาธารณะ ไม่ต้องมีบัญชี**
+│       ├── careers.py       ← **สาธารณะ: เผยแพร่ "แถวที่บริษัทเขียน"**
+│       └── demo.py          ← **สาธารณะ: เผยแพร่ "พฤติกรรม"** — ข้อ 7.9
 ├── pipeline/                ← parse → extract → judge → evidence → rank → retrieve
 ├── services/                ← ตรรกะที่แตะ DB (resume, screening, application, privacy, token)
 ├── models/                  ← ตาราง
 ├── schemas/                 ← รูปข้อมูลของ pydantic (โมเดลคืนอะไร vs เราเก็บอะไร)
+├── demo/                    ← เอกสารสังเคราะห์ + requirement ที่ `demo.py` ตัดสิน (commit ไว้)
 ├── llm/                     ← seam ของ provider: fake (ค่าตั้งต้น) / gemini / anthropic (raise)
 ├── applications.py          ← pure: state machine ของใบสมัคร
 ├── publication.py           ← pure: state machine ของประกาศงาน
@@ -221,8 +228,11 @@ git clone && pytest -q   →  ผ่านทันที  (ไม่ต้อ�
 ```
                     ┌────────────────────────────────────────────┐
    ไม่มีบัญชี  ─────►│ Next.js  /  /careers  /careers/{id}         │
-                    │          (shell สาธารณะ)                    │
-   มีบัญชี   ─────►│          /me  /me/documents  /hire  /usage  │
+                    │          /how-we-screen  /demo              │
+                    │          (shell สาธารณะ — เลือกด้วย route)  │
+                    │                                             │
+   มีบัญชี   ─────►│          /me  /me/documents  /me/account    │
+                    │          /hire  /usage                      │
                     └───────────────┬────────────────────────────┘
                                     │  REST (fetch, credentials: include) + SSE
                                     ▼
@@ -283,6 +293,7 @@ git clone && pytest -q   →  ผ่านทันที  (ไม่ต้อ�
 |---|---|---|
 | **careers** | `GET /careers/postings` | **ทุกคน ไม่ต้องมีบัญชี** |
 | | `GET /careers/postings/{id}` | **ทุกคน** (draft = 404) |
+| **demo** | **`GET /demo/screening`** | **ทุกคน** — ไม่เขียน row ไม่เสีย model call (ข้อ 7.9) |
 | **auth** | `POST /auth/register` · `/login` · `/refresh` · `/logout` | ทุกคน |
 | | `POST /auth/change-password` | เจ้าของบัญชี (ล้างทุก session ทุกเครื่อง) |
 | | `GET /auth/me` · `GET /auth/me/export` · `DELETE /auth/me` | เจ้าของบัญชี (PDPA) |
@@ -366,6 +377,10 @@ git clone && pytest -q   →  ผ่านทันที  (ไม่ต้อ�
 
 **read-only เป็นขอบเขต ไม่ใช่เฟส** — การสมัคร การอัปโหลด และทุกการเปลี่ยนสถานะยังอยู่หลัง
 `CandidateDep` ทั้งหมด คนแปลกหน้าอ่านสิ่งที่บริษัทประกาศได้ และไม่ได้อะไรอย่างอื่นเลย
+
+ตั้งแต่ 2026-08-24 มี router ตัวที่สองที่ไม่ resolve บัญชี คือ `demo.py` และมันเป็นคนละชนิดกัน:
+`careers.py` เผยแพร่ **แถวที่บริษัทเขียนไว้** ส่วน `demo.py` เผยแพร่ **พฤติกรรม** — มันรัน
+guardrail ให้ดูสด ๆ โดยไม่มีแถวไหนถูกเขียนเลย ดูข้อ 7.9
 
 ### 5.3 CSRF ตอบเฉพาะจุดที่ cookie เป็น credential
 
@@ -740,7 +755,46 @@ match kind), `dropped[]`, `document_text`, `state`, `reason`, `screened_at`,
   = row หายแต่ object ค้างใน bucket โดยไม่มีอะไรชี้ถึงมัน → หาไม่เจอ = ลบไม่ได้ตลอดกาล ส่วน
   "row ที่ไฟล์หาย" เป็นสถานะที่ pipeline จัดการได้อยู่แล้ว
 - **`services/privacy_service.py` คือที่ที่จุดยืนเรื่อง receipt ถูกเขียนไว้ก่อนแล้ว** —
-  verdict ที่พูดถึงคุณเป็นของคุณ มัน export ได้มาตั้งแต่ M4 เพียงแต่ยังไม่มีหน้าจอให้ดู
+  verdict ที่พูดถึงคุณเป็นของคุณ มัน export ได้มาตั้งแต่ M4
+- **และตั้งแต่ 2026-08-24 ทั้งสามเส้นมีหน้าจอแล้ว** (`/me/account`) ก่อนหน้านั้นสองในสามเส้น
+  ไปถึงได้ทาง `curl` ทางเดียว — *สิทธิ์ในการขอสำเนาและสิทธิ์ที่จะถูกลืม ที่ต้องใช้เทอร์มินัล
+  คือสิทธิ์ที่คนซึ่งมันถูกเขียนขึ้นเพื่อเขาไม่มี* เป็นเหตุผลรูปเดียวกับ receipt พอดี
+
+### 7.9 ★ `/demo` — router ตัวที่สองที่ไม่ resolve บัญชี (2026-08-24)
+
+`GET /demo/screening` — และมันเป็นคนละชนิดกับ `careers.py` ในแบบที่ควรอ่านให้ชัด
+**`careers.py` เผยแพร่แถวที่บริษัทเขียนไว้ ส่วนอันนี้เผยแพร่ *พฤติกรรม*** คนที่ยังไม่ได้สมัคร
+อะไรเลยกดดูได้ว่า quote ถูกหาเจอในเอกสารยังไง และ quote ที่กุขึ้นมาถูกปฏิเสธยังไง
+บน code path เดียวกับที่ screening จริงเดิน
+
+**สามคุณสมบัติที่ต้องรักษาไว้ถ้าจะแก้ route นี้** — `tests/test_demo.py` pin ไว้สองข้อครึ่ง:
+`test_it_logs_no_model_call` นับแถวใน `LLMCallLog` ก่อน/หลัง และ
+`test_it_does_not_depend_on_the_configured_provider` ยัด sentinel ใส่ `app.state.extractor`
+แล้วยืนยันว่าไม่มีใครแตะ ส่วน "ไม่เขียนตารางอื่นเลย" **ยังเป็น docstring ไม่ใช่ assertion** —
+รู้ไว้ก่อนจะเชื่อว่ามันถูกกันไว้แล้ว
+
+| คุณสมบัติ | ทำไม |
+|---|---|
+| **ไม่เขียนอะไรเลย** | ไม่มี session ไม่มี row ไม่มี `llm_call_logs` — demo ไม่ใช่การคัดกรอง ไม่มีใครสมัคร ไม่มีใครถูกตัดสิน และคนแปลกหน้าต้องเพิ่มแถวลง DB ด้วยการกด refresh ไม่ได้ |
+| **ไม่เสียเงินเลย** | extractor เป็น `FakeExtractor` ที่ **สร้างขึ้นตรงนี้ ไม่ได้หยิบจาก `app.state`** — deployment ที่ตั้ง provider แบบเสียเงินไว้จึงคิดเงินหน้าการตลาดไม่ได้ และผลลัพธ์นิ่งพอจะเขียน copy รอบมันได้ |
+| **กุผ่านเส้นทางจริง** | `FakeMode.HALLUCINATING` แนบ quote ที่ไม่มีในเอกสาร แล้ว `judge_requirements` ทิ้งมันผ่าน `EvidenceResolver` ตัวเดียวกับที่ทุก verdict ในระบบนี้ยืนอยู่ — คำว่า "นี่คือหน้าตาของการปฏิเสธ" ที่ hard-code ไว้ จะเป็นหน้าจอเดียวในผลิตภัณฑ์นี้ที่กล่าวอ้างสิ่งที่ตัวเองไม่ได้ตรวจ |
+
+รายละเอียดที่ตั้งใจ
+
+- **หนึ่ง model call ไม่ใช่สองแบบ production** — เส้นทางจริงถามซ้ำรอบสองเรื่อง quote ที่ถูกทิ้ง
+  (`max_attempts=2`) แต่ fake backend นิ่ง การถามซ้ำจะกุ quote เดิมเป๊ะ เหลือแค่ตัวเลข call
+  ที่ไม่มีใครตีความได้ **หน้าเว็บจึงเขียนเป็นตัวหนังสือว่าเส้นทางจริงถามซ้ำ**
+- **`mode` ที่ไม่รู้จักคือ 422 ไม่ใช่ fallback เงียบ ๆ ไป faithful** — คนที่ขอดูโมเดลที่กุ
+  แล้วถูกโชว์โมเดลที่ซื่อสัตย์ จะกลับไปพร้อมข้อสรุปตรงข้ามกับที่หน้านี้ต้องการพูด
+- **`DemoRequirementOut` ไม่มี score / rank / weight** — ฟิลด์ชุดเดียวกับ `ReceiptOut` เป๊ะ
+  และด้วยเหตุผลเดียวกัน (ข้อ 7.6): demo ที่โชว์เปอร์เซ็นต์คือการสอนตัวเลขที่ระบบนี้ปกป้องไม่ได้
+- **`dropped_count` แยกจาก `dropped[]`** — เลขศูนย์คือผลลัพธ์ที่ควรพูดออกมา ส่วน list ว่าง
+  บนหน้าเว็บอ่านได้เป็น "ส่วนนี้โหลดไม่ขึ้น"
+- เอกสารกับ requirement ที่ใช้อยู่ใน `api/app/demo/` — **สังเคราะห์และ commit ไว้** ตามกฎ
+  test data ของโปรเจค
+
+**ผลข้างเคียงที่มีค่าตอน deploy จริง**: หน้าสาธารณะทั้งหมดทำงานต่อได้แม้โควตาของ provider
+จะหมดเกลี้ยง เพราะไม่มีหน้าไหนในนั้นเรียกโมเดลเลย (ดู `docs/RUNBOOK.md` §9)
 
 ---
 
@@ -818,17 +872,22 @@ process ให้ตั้ง cron
 ```
 web/app/
 ├── page.tsx                  /                   หน้าแรกของบริษัท (สาธารณะ, ไทย)
-├── careers/page.tsx          /careers            กระดานประกาศงาน (สาธารณะ)
+├── how-we-screen/page.tsx    /how-we-screen      อธิบาย locate-then-keep (สาธารณะ)
+├── demo/page.tsx             /demo               รัน guardrail ให้ดูสด ๆ (สาธารณะ) — ข้อ 7.9
+├── careers/page.tsx          /careers            กระดานประกาศงาน — **server-rendered**
 ├── careers/[id]/page.tsx     /careers/{id}       ประกาศหนึ่งใบ + requirement (สาธารณะ)
 ├── me/page.tsx               /me                 ใบสมัครของฉัน + **receipt**
-├── me/documents/page.tsx     /me/documents       อัปโหลดเอกสาร + ผลที่ verify แล้ว
+├── me/documents/page.tsx     /me/documents       คลัง CV: ทุกเอกสาร เปิดดูได้ทุกใบ
+├── me/account/page.tsx       /me/account         export · เปลี่ยนรหัส · ลบบัญชี
 ├── hire/page.tsx             /hire               หลังบ้าน: รายการประกาศ + สร้างใหม่
-├── hire/jobs/[id]/page.tsx   /hire/jobs/{id}     requirement + คัดกรอง + ranking + verdict
+├── hire/jobs/[id]/page.tsx   /hire/jobs/{id}     ranking นำ · requirement พับเก็บ · verdict
 └── usage/page.tsx            /usage              dashboard การใช้งานและคุณภาพ
 ```
 
-**ยังไม่มี: `/how-we-screen` และ `/demo`** — และหน้าแรกลิงก์ไปหาอันแรก นี่คือปลายเปิดข้อเดียว
-ของโปรเจคตอนนี้ (ดูข้อ 12)
+**`/careers` เป็นกระดานประกาศ *เพียงอันเดียว*** (ตัดสินใจ 2026-08-26) ก่อนหน้านั้น `/me`
+มีลิสต์ "Apply to a job" ของตัวเองอยู่ด้วย และประกาศชุดเดียวกันสองลิสต์ใต้ shell สองอัน
+บังคับให้คนอ่านตัดสินก่อนว่าตัวเองอยู่หน้าไหน ถึงจะลงมือทำอะไรได้ — **`/me` คือใบเสร็จของสิ่งที่
+คุณส่งไปแล้ว อย่าเอาประกาศกลับไปวางบนนั้น**
 
 ### 9.2 shell ถูกเลือกด้วย **route** ไม่ใช่ session
 
@@ -867,9 +926,15 @@ isPublicRoute(path)  // "/" ก็นับด้วย
 ### 9.4 หลักการฝั่ง client ที่เหลือ
 
 - **`lib/` ถือ logic บริสุทธิ์ทั้งหมด** (`screening.ts`, `applications.ts`, `evidence.ts`,
-  `metrics.ts`, `requirements.ts`, `api.ts`, `auth.ts`, `nav.ts`, `theme.ts`, `overlay.ts`,
-  `countUp.ts`) เพื่อให้ `npm test` **ไม่ต้องมี DOM และไม่ต้องมี React testing library** —
-  ด้วยเหตุผลเดียวกับที่ Python suite ไม่ต้องมี server
+  `evidenceCopy.ts`, `metrics.ts`, `requirements.ts`, `documents.ts`, `account.ts`,
+  `postingMeta.ts`, `sample.ts`, `api.ts`, `serverApi.ts`, `auth.ts`, `nav.ts`, `theme.ts`,
+  `overlay.ts`, `countUp.ts`, `motion.ts`, `reveal.ts`, `cn.ts`) เพื่อให้ `npm test`
+  **ไม่ต้องมี DOM และไม่ต้องมี React testing library** — ด้วยเหตุผลเดียวกับที่ Python suite
+  ไม่ต้องมี server
+- **`lib/evidence.ts` คือนิยามว่าคำพวกนั้นแปลว่าอะไร ส่วน `lib/evidenceCopy.ts` คือมันอยู่ใน
+  ภาษาไหน** — แยกเป็นสองโมดูลเพราะถูกอ่านด้วยคำถามคนละข้อ **หน้าสาธารณะเป็นไทย หน้าผลิตภัณฑ์
+  เป็นอังกฤษ** (`DESIGN.md` §8) `DroppedClaims` กับ `DocumentPane` จึงรับ prop `language`
+  และครึ่งอังกฤษถูก import มาจาก `evidence.ts` ไม่ได้พิมพ์ซ้ำ — สำเนาชุดที่สองคือชุดที่ drift
 - `lib/applications.ts` ตัดสินว่าจะ **เสนอ** ท่าไหนให้กด แต่ **จงใจไม่ตัดสินว่าอะไรทำได้** —
   server เป็นคนตัดสิน สำเนาชุดที่สองของกฎคือชุดที่จะ drift โดยไม่มีใครสังเกต
 - `DocumentPane` รับ `references: EvidenceRef[]` **ไม่ใช่ profile** — นี่คือสิ่งที่ทำให้
@@ -886,19 +951,34 @@ isPublicRoute(path)  // "/" ก็นับด้วย
   (id, email, role) ไม่ใช่ credential — มีไว้เพราะ React ต้องมีอะไรอ่านแบบ synchronous เพื่อ
   render และเพราะ **cookie ไม่ยิง `storage` event**
 
-### 9.5 `npm run build` ต้องไม่พึ่ง API — และสิ่งที่ต้องแลก
+### 9.5 `npm run build` ต้องไม่พึ่ง API — และการแลกที่ได้คืนมาแล้ว
 
-- `fetch` ที่นี่ไม่ถูก cache โดยค่าตั้งต้น และหน้า public ที่ดึงข้อมูลยังใส่
+**กระดานถูก server-render ตั้งแต่ 2026-08-24** เอกสารรุ่นก่อนบันทึกไว้ว่าคุณสมบัตินี้ถูกแลกทิ้ง
+อย่างมีเหตุผล — ตอนนั้นจริง ตอนนี้ไม่จริงแล้ว มันถูกซื้อคืนมาเป็น slice ของตัวเอง
+
+- ปัญหาเดิม: ทุกหน้าจอที่นี่เป็น client component postings ถูก fetch ใน effect และ effect
+  ไม่ทำงานตอน server render → **search engine เห็นกระดานว่างเปล่า** บนหน้าเดียวที่มีอยู่
+  เพื่อให้ถูกค้นเจอ
+- ที่มันแพงกว่าที่เห็น: `NEXT_PUBLIC_API_BASE` ถูก inline ตอน `next build` และเขียนจาก
+  **มุมมองของเบราว์เซอร์** ข้างใน container `web` ที่อยู่นั้นคือตัวมันเอง การ fetch ฝั่ง server
+  ด้วยค่านี้จึงไปไม่ถึงไหน จึงต้องมี **`SERVER_API_BASE` ซึ่งเป็นตัวแปร *runtime*** ตั้งชื่อ API
+  จากมุมของ server (`http://api:8000` ใน compose) และ **จงใจไม่ใช่ชื่อขึ้นต้น `NEXT_PUBLIC_`**
+  เพราะไม่มีอะไรในเบราว์เซอร์ควรอ่านมันได้
+- **`web/lib/serverApi.ts` ไม่ throw เลย มันคืน `null`** — ฟังก์ชันในนั้นถูกเรียกจาก
+  `generateMetadata` และจาก body ของ page ซึ่งทั้งคู่รันตอน `next build` การ build ที่ต้องมี
+  API มีชีวิตคือสิ่งที่กฎข้อนี้ห้าม → API ที่ติดต่อไม่ได้ให้หน้าที่มี empty state ของตัวเอง
+  *กระดานที่ว่างคือหน้าที่แย่ลง ส่วน build ที่ล้มคือ deploy ที่พัง*
+- `fetch` ที่นี่ไม่ถูก cache โดยค่าตั้งต้น และหน้า public ทั้งสองยังใส่
   `export const dynamic = "force-dynamic"` (ใช้ได้ตราบที่ `cacheComponents` ปิดอยู่ใน
-  `next.config.ts`) — ไม่มี `sitemap.ts` ที่ไล่ประกาศทั้งหมด ไม่มี `generateStaticParams`
-- **สิ่งที่ต้องแลก ซึ่ง `PLAN.md` บันทึกไว้ว่าเลื่อนอย่างมีเหตุผล ไม่ใช่ลืม**: หน้า public
-  เป็น client component เหมือนทุกหน้าจอที่นี่ ดังนั้น **ชื่อประกาศไม่อยู่ใน HTML ที่ server
-  เรนเดอร์ → search engine เห็นกระดานว่างเปล่า** การแก้ต้องมี API base ตัวที่สองพร้อม failure
-  mode เรื่อง container networking ของตัวเอง — เป็น slice ไม่ใช่บรรทัดที่แอบใส่ไปกับ slice อื่น
-  (`force-dynamic` บน server component จะ fetch จาก *ข้างใน* container `web` ซึ่ง
-  `NEXT_PUBLIC_API_BASE` ชี้กลับมาที่ตัวมันเอง)
-- อีกเรื่องที่ค้างไว้: **`/me` ยังมีลิสต์ "Apply to a job" ของตัวเอง** ซึ่งตอนนี้เป็นกระดาน
-  ประกาศใบที่สองข้าง ๆ `/careers` การเอาออกเป็นการตัดสินใจว่า "การสมัคร" ควรอยู่ที่ไหน
+  `next.config.ts`) — ไม่มีอะไรถูก prerender และ `npm run build` **ยังไม่ต้องมี API ที่รันอยู่**
+  ซึ่งเป็นคุณสมบัติที่ต้องรักษาไว้
+- และ **ประกาศที่ไม่ public ตอบ 404 ของจริง** ไม่ใช่ 200 พร้อม spinner ที่หมุนแล้วไม่เจออะไร
+
+> ตอน deploy จริงเรื่องนี้กลับมาอีกรอบในรูปอื่น: ถ้า `NEXT_PUBLIC_API_BASE` ถูกตั้งเป็น path
+> แบบ relative (`/api` — ท่าที่ `docker-compose.demo.yml` ใช้) **`SERVER_API_BASE` จะกลาย
+> เป็นของบังคับ ไม่ใช่ของอำนวยความสะดวก** เพราะลำดับ fallback ใน `serverApi.ts` คือ
+> `SERVER_API_BASE` → `NEXT_PUBLIC_API_BASE` → localhost และตัวกลางไม่ใช่ที่อยู่ที่ dial ได้
+> ดู `docs/RUNBOOK.md` §9
 
 ### 9.6 เรื่องดีไซน์ — ย่อหน้าเดียว
 
@@ -906,8 +986,11 @@ isPublicRoute(path)  // "/" ก็นับด้วย
 กฎข้อเดียวที่ต้องรู้: **สีสื่อความหมายก่อนสื่อสไตล์** — `cited`, `ambiguous`, `dropped`
 พูดถึงสิ่งที่ระบบพบใน *เอกสาร* และห้ามเอาไปใช้กับ control, ค่าใช้จ่าย หรือสถานะ workflow
 (ตอนย้ายเจอ 5 ที่ที่ทำผิดข้อนี้) ธีมเป็น `data-theme` ที่ผู้อ่านเลือกเอง ไม่ใช่ media query
-เพราะ **ธีมที่ไม่มีใครเลือกได้คือธีมที่ไม่มีใครตรวจได้** รายละเอียดที่เหลือทั้งหมดอยู่ใน
-`docs/DESIGN.md`
+เพราะ **ธีมที่ไม่มีใครเลือกได้คือธีมที่ไม่มีใครตรวจได้**
+
+§6 ของ `DESIGN.md` ถูก **ผ่อนเมื่อ 2026-08-22 เฉพาะหน้าการตลาดสาธารณะ** — หน้าแรกมีพื้นหลัง
+และมีการเคลื่อนไหวได้ ส่วนสามข้อที่ *ไม่* ผ่อนเขียนกำกับไว้ข้าง ๆ ในไฟล์นั้น อย่าอ่านย่อหน้า
+ข้างบนเข้มกว่าที่มันเป็น รายละเอียดที่เหลือทั้งหมดอยู่ใน `docs/DESIGN.md`
 
 ---
 
@@ -947,11 +1030,11 @@ latency, prompt family และตัวเลขคุณภาพ ซึ่�
 
 ## 11. Test / CI / คุณภาพ
 
-ตัวเลขด้านล่าง **รันเองเมื่อ 2026-08-22** ไม่ได้คัดลอกมาจากเอกสารรุ่นก่อน
+ตัวเลขด้านล่าง **รันเองเมื่อ 2026-08-29** ไม่ได้คัดลอกมาจากเอกสารรุ่นก่อน
 
-- `pytest -q` → **721 ผ่าน / 38 skip** ใน 57 วินาที (skip คือ opt-in: Postgres + Tesseract +
+- `pytest -q` → **734 ผ่าน / 38 skip** ใน 65 วินาที (skip คือ opt-in: Postgres + Tesseract +
   MinIO + live-LLM)
-- `npm test` → **232 เคส / 11 ไฟล์** ใน ~1 วินาที (vitest ไม่มี DOM)
+- `npm test` → **292 เคส / 17 ไฟล์** ใน ~2 วินาที (vitest ไม่มี DOM)
 - gate ที่บังคับใน CI: `ruff check`, `ruff format --check`, `mypy app` (strict), `pytest -q`,
   แล้ว `npm ci` / `typecheck` / `lint` / `build` + **migration up/down round-trip บน SQLite**
 
@@ -989,11 +1072,16 @@ latency, prompt family และตัวเลขคุณภาพ ซึ่�
 slice ไม่ใช่หลัง slice** — และ run วันที่ 2026-08-22 (careers site 7 commit) ทำแบบนั้นเป็น
 *เงื่อนไขก่อนเริ่ม commit ถัดไป* ไม่ใช่การตรวจปิดท้าย
 
+**ข้อยกเว้นที่ยังค้างอยู่ และเขียนไว้ตรงนี้แทนที่จะปล่อยผ่าน**: การ deploy demo ผ่าน
+Cloudflare tunnel (2026-08-28, `RUNBOOK.md` §9) ถูกไล่ครบทั้งเส้นด้วย cookie ล้วนผ่าน URL
+สาธารณะจริงบน Gemini จริง — แต่ **ยังไม่มีใครคลิกดูในเบราว์เซอร์** เพราะ extension ต่อไม่ติด
+ตามกฎข้างบนนั่นแปลว่ามันยังไม่นับว่าเสร็จ ไม่ใช่ว่าเสร็จแบบมีข้อแม้
+
 ---
 
 ## 12. ตอนนี้โปรเจคถึงไหนแล้ว
 
-*(ข้อมูล ณ 2026-08-22 — `docs/PLAN.md` คือสถานะที่เป็นทางการ)*
+*(ข้อมูล ณ 2026-08-29 — `docs/PLAN.md` คือสถานะที่เป็นทางการ)*
 
 ### มิลสโตน
 
@@ -1020,7 +1108,8 @@ slice ไม่ใช่หลัง slice** — และ run วันที�
 ไม่ใช่คำกล่าวอ้างเกี่ยวกับเอกสาร (แถวที่เลือกในตาราง ranking, must-have gate ที่ไม่ผ่าน,
 panel "Not in the ranking", โน้ตค่าใช้จ่าย, และสถานะใบสมัครทุกอัน)
 
-**Careers site — 7 จาก 11 slice**
+**Careers site — ครบทั้ง 11 slice** (ปิดจบ 2026-08-24) สองอันที่เคยถูกเลื่อนพร้อมเหตุผล —
+demo สาธารณะ และ metadata ของกระดาน — **ถูกสร้าง ไม่ใช่ถูกตัดทิ้ง**
 
 | # | Slice | สถานะ |
 |---|---|---|
@@ -1030,16 +1119,19 @@ panel "Not in the ranking", โน้ตค่าใช้จ่าย, แล�
 | 3 | receipt route `GET /applications/{id}/screening` | ✅ 2026-08-22 |
 | 4 | `/me` — ใบสมัคร, เหตุผล, receipt บนหน้าจอ | ✅ 2026-08-22 |
 | 5 | design token + typeface + primitive | ✅ (การย้ายข้างบนคือการใช้มัน) |
-| 6 | **`/how-we-screen` + demo สาธารณะ** | ⛔ **ยังไม่เริ่ม และ `/` ลิงก์ไปหามัน** |
+| 6 | `/how-we-screen` + demo สาธารณะ | ✅ **2026-08-24** — ทั้งสอง route ดูข้อ 7.9 |
 | 7 | migration `0013` — publication lifecycle | ✅ 2026-08-21 |
-| 8 | careers API + board + หน้า posting + landing | ✅ 2026-08-22 **ยกเว้น metadata** ซึ่ง defer พร้อมเหตุผล |
-| 9 | `/me/documents` — คลัง CV | ⚠️ **route เท่านั้น** — หน้าจออัปโหลดย้ายมาแล้ว แต่ "คลัง" ยังไม่มี |
-| 10 | `/hire` — หลังบ้าน | ⚠️ **ย้ายแล้ว ยังไม่จัดใหม่** — route อยู่หลัง `/hire` แล้ว แต่ข้างในหน้าจอเหมือนเดิม |
-| 11 | `/me/account` — export, เปลี่ยนรหัส, ลบบัญชี | ⛔ ยังไม่เริ่ม |
+| 8 | careers API + board + หน้า posting + landing + metadata | ✅ เว็บ 2026-08-22 · **metadata + server rendering 2026-08-24** |
+| 9 | `/me/documents` — คลัง CV | ✅ **2026-08-24** — ลิสต์ทุกเอกสาร สถานะของมัน และเปิดดูได้ทุกใบ |
+| 10 | `/hire` — หลังบ้าน เอา ranking ขึ้นนำ | ✅ **2026-08-24** — workbench นำด้วยคน ฟอร์ม requirement พับเก็บหลัง default ที่ **derive มา** |
+| 11 | `/me/account` — export, เปลี่ยนรหัส, ลบบัญชี | ✅ **2026-08-24** — ข้อ 7.8 |
 
-### ปลายเปิดข้อเดียวที่ชี้ไปที่ 404
+### สองการตัดสินใจหลังจากนั้น
 
-**`/how-we-screen` และ `/demo` ยังไม่มี และหน้าแรกลิงก์ไปหาอันแรก** — นี่คือ slice ถัดไป
+- **`/careers` เป็นกระดานเดียว** (2026-08-26) — `/me` เคยมีของตัวเองอยู่ การเอาออกคือคำตอบว่า
+  "การสมัคร" อยู่ที่ไหน ดูข้อ 9.1
+- **deploy demo แบบ origin เดียวหลัง Cloudflare tunnel** (2026-08-28) — `RUNBOOK.md` §9
+  ยังไม่มีใครคลิกดูในเบราว์เซอร์ ดูหมายเหตุท้ายข้อ 11
 
 ### สิ่งที่ถูก "ปฏิเสธ" ไว้ ให้อ่านเป็นการตัดสินใจ
 
@@ -1051,7 +1143,7 @@ panel "Not in the ranking", โน้ตค่าใช้จ่าย, แล�
 
 ### สถานะ repo
 
-- gate ล่าสุด (รันเอง 2026-08-22): pytest **721 ผ่าน / 38 skip**, vitest **232**
+- gate ล่าสุด (รันเอง 2026-08-29): pytest **734 ผ่าน / 38 skip**, vitest **292 / 17 ไฟล์**
 - จำนวน commit ที่ยังไม่ push **ให้ดูด้วย `git rev-list --count origin/main..main`**
   อย่าเชื่อบรรทัดนี้ — เอกสารในโปรเจคนี้เคยบอกเลขผิดมาแล้วสองครั้ง
 
@@ -1100,6 +1192,11 @@ panel "Not in the ranking", โน้ตค่าใช้จ่าย, แล�
 20. **shell เลือกด้วย route ไม่ใช่ session**
 21. **สีสงวน (`cited` / `ambiguous` / `dropped`) ใช้กับคำกล่าวอ้างเกี่ยวกับเอกสารเท่านั้น**
     ห้ามใช้กับ control, ค่าใช้จ่าย หรือสถานะ workflow
+22. **`/demo` ต้องไม่เขียน row ไม่เสีย model call และไม่แตะ `app.state.extractor`** — สาม
+    ข้อนี้คือเหตุผลที่ deployment ที่คิดเงินได้ ไม่มีทางถูกหน้าการตลาดเผาโควตา อ่าน docstring
+    ของ `demo.py` ก่อนจะเติม session เข้าไป (ข้อ 7.9)
+23. **`/careers` เป็นกระดานประกาศเดียว** — `/me` คือใบเสร็จของสิ่งที่ส่งไปแล้ว ห้ามเอาประกาศ
+    กลับไปวางบนนั้น (ข้อ 9.1)
 
 ---
 
@@ -1116,6 +1213,11 @@ docker compose logs -f worker
 docker compose exec api sh -c 'echo $LLM_PROVIDER $FAKE_MODE'   # เชื่อคอนเทนเนอร์ ไม่ใช่ .env
 ```
 
+อยากให้คนนอกเข้าถึงได้จริง (demo หลัง Cloudflare tunnel) อ่าน **`docs/RUNBOOK.md` §9** —
+เป็น stack ของ §1 บวกความคิดข้อเดียวคือ **เบราว์เซอร์ต้องเห็น origin เดียว** และมีกับดักสองอัน
+บันทึกไว้: `-p hirelens-demo` ที่ไม่ใช่ทางเลือก และ `CORS_ORIGINS` ที่ต้องรู้จักชื่อ host ที่
+tunnel แจกมา ไม่งั้นทุก write จะโดน 403 จาก `_refuse_cross_site_write` (ข้อ 5.3)
+
 - เปิดเว็บที่ **`http://localhost:3000`** เท่านั้น
 - อยากเห็นเส้นทาง **dropped-claims**: ตั้ง `FAKE_MODE=hallucinating` ใน `.env` รีสตาร์ท
   api + worker แล้วอัปโหลดใหม่ (แล้วอย่าลืมตั้งกลับเป็น `faithful`)
@@ -1128,6 +1230,11 @@ docker compose exec api sh -c 'echo $LLM_PROVIDER $FAKE_MODE'   # เชื่�
 curl -s http://localhost:8000/careers/postings | head -c 400
 curl -s http://localhost:8000/careers/postings/<id>
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/careers/postings/<draft-id>  # 404
+
+# demo — ไม่เขียน row ไม่เสีย model call ทำงานได้แม้โควตา provider หมด (ข้อ 7.9)
+curl -s 'http://localhost:8000/demo/screening?mode=faithful'    | head -c 400
+curl -s 'http://localhost:8000/demo/screening?mode=fabricating' | head -c 400   # dropped >= 1
+curl -s -o /dev/null -w '%{http_code}\n' 'http://localhost:8000/demo/screening?mode=nonsense'  # 422 ไม่ใช่ fallback เงียบ ๆ
 ```
 
 ### ลองเส้นทาง receipt
