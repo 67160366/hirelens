@@ -423,7 +423,141 @@ Then confirm dev is untouched — `docker compose ps`, and its row counts.
 
 ---
 
-## 9. Things that have lied here before
+## 9. The public demo — one origin behind a Cloudflare tunnel
+
+Run on 2026-08-28. Everything quoted below is what it actually printed.
+
+This is the prod stack of §1 with **one idea added**: the browser sees a single origin.
+`docker-compose.demo.yml` puts a Caddy in front of both halves, and `deploy/Caddyfile`
+carries the full reasoning. Bring it up as **its own compose project**:
+
+```bash
+docker compose -p hirelens-demo --env-file .env.prod \
+  -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.demo.yml \
+  up -d --build
+```
+
+### Why one origin, and not two tunnels
+
+A quick tunnel hands out a random `*.trycloudflare.com` name. **`trycloudflare.com` is on
+the Public Suffix List**, so two of them are two *sites* — which is §5.4 of
+`docs/WALKTHROUGH-th.md` again in a new costume: the login returns 200 and every request
+after it 401s, because the cookie is withheld with nothing said. Behind one origin the
+session cookie is same-origin, `COOKIE_SAMESITE` stays `lax`, and the CSRF protection
+`lax` gives is kept rather than traded for `none`.
+
+It also removes a rebuild. `NEXT_PUBLIC_API_BASE` is inlined by `next build`, so naming a
+tunnel URL there means rebuilding the web image every time the tunnel restarts. The demo
+overlay builds it as the **relative** `/api`, which is true at every hostname. The only
+thing that still learns the hostname is `CORS_ORIGINS`, and that one is runtime.
+
+### `-p hirelens-demo` is not optional
+
+Without it this stack adopts the dev project's volumes, and `postgres_data` was
+initialised by the dev file with the password `hirelens` hard-coded in it. **Postgres only
+reads `POSTGRES_PASSWORD` when it initialises an empty data directory**, so the prod
+secret is ignored in silence and `migrate` dies at:
+
+```
+migrate-1 | asyncpg.exceptions.InvalidPasswordError: password authentication failed for user "hirelens"
+```
+
+which names the secret — correct — and not the volume, which is the cause. It cost a
+teardown to find. Its own project gives the demo its own volumes and leaves the dev stack
+untouched beside it; the image tags (`:prod`) were already distinct.
+
+### The order, and the one step that comes after the tunnel
+
+```bash
+# 1. the stack (web is deliberately NOT published: on :3000 alone its bundle asks
+#    /api/... of a server that has no API, and a door onto a subtly wrong page is
+#    worse than no door)
+docker compose -p hirelens-demo --env-file .env.prod \
+  -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.demo.yml up -d --build
+
+# 2. the tunnel, at the edge and nothing else
+cloudflared tunnel --no-autoupdate --url http://localhost:8080
+
+# 3. take the hostname it prints, put it in CORS_ORIGINS, and recreate the two
+#    services that read it. A recreate, not a rebuild.
+docker compose -p hirelens-demo --env-file .env.prod \
+  -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.demo.yml up -d api worker
+```
+
+`CORS_ORIGINS` is load-bearing here beyond CORS: with `SameSite=lax` cookies it is what
+`_refuse_cross_site_write` tests an `Origin` against, so a stale value in it does not
+merely fail preflight — it 403s every write from the real site.
+
+### A healthy demo stack
+
+```
+SERVICE    STATUS                    PORTS
+api        Up (healthy)              127.0.0.1:8100->8000/tcp
+edge       Up (healthy)              127.0.0.1:8080->8080/tcp
+minio      Up (healthy)              9000/tcp
+postgres   Up (healthy)              5432/tcp
+redis      Up (healthy)              6379/tcp
+web        Up (healthy)              3000/tcp
+worker     Up
+```
+
+`web` shows a bare container port and no `->`. That is the overlay's `ports: !reset []`,
+and it is the row to read: if `web` is published, the demo overlay is not in the layer
+list and the bundle is asking an absolute `localhost:8000` nobody outside can reach.
+
+### Seeding, because an empty board is not a demo
+
+`recruiter` and `admin` are not self-selectable, so the role is granted the way
+`tests/conftest.py::set_role` does it — in SQL. The enum is stored as the **name**, upper
+case; `'admin'` matches no row and says nothing:
+
+```bash
+docker compose -p hirelens-demo ... exec -T postgres \
+  psql -U hirelens -d hirelens \
+  -c "UPDATE candidates SET role='ADMIN' WHERE email='...' RETURNING email, role;"
+```
+
+`ADMIN` rather than `RECRUITER` because only an admin may publish (§7.4 of the
+walkthrough), and one demo operator wants both halves.
+
+### What was verified through the public URL, not against localhost
+
+The whole journey was driven end to end over the tunnel on **real Gemini**, cookie-only —
+no `Authorization` header anywhere in it, since that is the half a `curl` in this file
+never exercises and the half a tunnelled deployment breaks:
+
+| Check | Result |
+|---|---|
+| `POST /auth/login` sets the session cookies | `hirelens_access`, `hirelens_refresh`, both `Secure` |
+| `GET /auth/me` on the cookie alone | 200, the right account |
+| A foreign `Origin` on a cookie-authenticated write | **403**, `"Cookie authentication is not accepted for a request from another origin."` |
+| `GET /careers/postings` and `GET /demo/screening` with no account | 200; the fabricating mode drops 1 claim through the real resolver |
+| Upload of the two-column Thai sample → extraction | `extracted`, **16/16 claims verified, 0 dropped**, 13 exact + 3 whitespace-collapsed, 1 attempt |
+| Screening → ranking | 7/7 requirements met, score 1.0, gate passed, 20 s |
+| `GET /applications/{id}/screening` as the applicant | 200, and it carries **no** score, rank, cost, attempts or weight |
+
+**Two things this did not check**, and they are named rather than implied: nobody has
+clicked through it in a browser — the extension would not connect this session, and
+`docs/HANDOFF.md` §1 is the standing argument for why that is not the same as done — and
+the deck's screenshots have not been re-taken against it.
+
+### The quota, which is the demo's real limit
+
+`.env.prod` runs `LLM_PROVIDER=gemini` on a **free-tier key: 20 calls a day**. An upload
+costs one call and a screening costs one more, so roughly ten visitor journeys exhaust it
+for the day. Past that, uploads fail transiently, use up the retry budget and land at
+`dead_lettered` — replayable from `POST /resumes/{id}/retry`, which is the honest
+behaviour but not a good look mid-presentation.
+
+**The public surface survives it.** `/`, `/careers`, `/how-we-screen` and `/demo` spend
+nothing: `demo.py` builds its own `FakeExtractor` rather than taking `app.state.extractor`,
+so the marketing pages keep working with the quota at zero. If the day's screenings matter
+more than live judging, switch `LLM_PROVIDER=fake` in `.env.prod` and recreate `api` and
+`worker` — the guardrail is identical, because `fake.py` quotes the real document.
+
+---
+
+## 10. Things that have lied here before
 
 `docs/HANDOFF.md` §10 keeps the full list. The four that matter when operating this stack:
 

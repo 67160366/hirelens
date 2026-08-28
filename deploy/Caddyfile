@@ -1,0 +1,56 @@
+# The demo edge: one origin in front of both halves of the stack.
+#
+# Why this exists, and why it is not two tunnels
+# ----------------------------------------------
+# A Cloudflare quick tunnel hands out a random `*.trycloudflare.com` hostname.
+# `trycloudflare.com` is on the Public Suffix List, so two of them are two
+# *sites*, not two ports of one — which is exactly the same-site trap
+# `docs/WALKTHROUGH-th.md` §5.4 measured on `127.0.0.1:3000` → `localhost:8000`:
+# the login succeeds and every request after it 401s, because the cookie is
+# withheld with nothing said. Serving both halves through one hostname makes the
+# session cookie same-origin, so COOKIE_SAMESITE stays `lax` and the CSRF
+# protection `lax` gives is kept rather than traded away for `none`.
+#
+# It also removes a rebuild. NEXT_PUBLIC_API_BASE is inlined by `next build`, so
+# naming a tunnel URL there would mean rebuilding the web image every time the
+# tunnel restarts and the random hostname changes. Behind this file the browser's
+# base is the relative `/api`, which is true at every hostname — the URL is
+# resolved by the page it was loaded from. Only CORS_ORIGINS still names the
+# hostname, and that one is runtime: a recreate, not a rebuild.
+{
+	admin off
+	# cloudflared runs on the host and reaches this through the published port, so
+	# it arrives from the Docker gateway — a private address. Trusting it is what
+	# lets `X-Forwarded-Proto: https` survive the hop; without this Caddy would
+	# overwrite it with its own scheme (`http`) and anything the API builds from it
+	# would be an http:// URL on an https:// page.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:8080 {
+	# The API, with its own prefix stripped: /api/auth/login → /auth/login.
+	# `handle_path` is the stripping form; plain `handle` would forward /api intact
+	# and every route would 404.
+	handle_path /api/* {
+		reverse_proxy api:8000 {
+			# Unbuffered. `GET /resumes/{id}/events` is an SSE stream that emits on
+			# change and may say nothing for seconds; a buffering proxy would hold
+			# those frames and the upload would look stalled rather than pending.
+			flush_interval -1
+		}
+	}
+
+	# Everything else is the Next.js server: the public pages, the product screens,
+	# and pdf.js's worker out of `public/`.
+	handle {
+		reverse_proxy web:3000
+	}
+
+	encode zstd gzip
+	log {
+		output stderr
+		format console
+	}
+}

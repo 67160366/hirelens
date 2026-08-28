@@ -1,0 +1,78 @@
+# Demo overlay — the public face of the production stack.
+#
+#   docker compose -p hirelens-demo --env-file .env.prod \
+#     -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.demo.yml \
+#     up -d --build
+#
+# **`-p hirelens-demo` is not optional**, and it was learned the expensive way rather
+# than chosen. `docker-compose.yml` sets `name: hirelens`, so without it this stack
+# adopts the development project's volumes — and `postgres_data` was initialised by
+# the dev file with the password `hirelens` hard-coded there. Postgres only reads
+# POSTGRES_PASSWORD when it initialises an *empty* data directory, so the prod secret
+# is silently ignored and `migrate` dies at `InvalidPasswordError: password
+# authentication failed for user "hirelens"` — a message that names the secret, which
+# is correct, and not the volume, which is the cause. Its own project gives the demo
+# its own volumes: a database that really was created with the prod password, and a
+# development stack left untouched beside it. The image tags are already distinct
+# (`:prod`), so nothing crosses over there either.
+#
+# Layered *on top of* the prod overlay, never instead of it: everything that makes
+# prod prod — APP_ENV, the secrets with no defaults, the unpublished data services,
+# the restart policies — still applies. This file adds exactly one idea, and it is
+# the one a tunnelled deployment turns on:
+#
+#   **The browser sees one origin.**
+#
+# `deploy/Caddyfile` carries the reasoning. The short version: a Cloudflare quick
+# tunnel gives out one hostname, `trycloudflare.com` is a public suffix so two of
+# them would be cross-site, and cross-site here costs COOKIE_SAMESITE=none plus a
+# web rebuild on every tunnel restart. One origin costs a 50 MB proxy.
+#
+# See docs/RUNBOOK.md §8 for bringing this up, and for the one thing that still has
+# to be told the hostname after the tunnel prints it.
+
+services:
+  # The only door. Loopback only, like everything else in the prod overlay — what
+  # faces the network is cloudflared on the host, which dials out rather than
+  # listening, so nothing here is exposed by a firewall rule anybody forgot.
+  edge:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${EDGE_PORT:-8080}:8080"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  web:
+    build:
+      args:
+        # The whole point, and the reason this is a build arg and not a variable in
+        # .env.prod: `next build` inlines it, and a *relative* base is the only one
+        # that stays true when the tunnel hands out a different hostname tomorrow.
+        # `lib/api.ts` reads it as `process.env.NEXT_PUBLIC_API_BASE ?? …`, and it
+        # concatenates — `/api` + `/auth/login` is the request the Caddyfile strips
+        # back to `/auth/login`.
+        NEXT_PUBLIC_API_BASE: /api
+    # Not published. Behind this overlay the web container alone is a broken app:
+    # its bundle asks for `/api/...` and nothing on :3000 answers that. A door that
+    # serves a subtly wrong page is worse than no door — the same reasoning that
+    # makes an unpublished posting a real 404 rather than a 200 with a spinner.
+    ports: !reset []
+    environment:
+      # Now REQUIRED rather than a convenience. The fallback chain in
+      # `lib/serverApi.ts` is SERVER_API_BASE → NEXT_PUBLIC_API_BASE → localhost,
+      # and the middle link is now `/api`, which is not an address a server-side
+      # fetch can dial. Unset, the careers board would render empty for a crawler
+      # and say nothing about why. Named here so it cannot go missing.
+      SERVER_API_BASE: ${SERVER_API_BASE:-http://api:8000}
