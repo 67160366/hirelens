@@ -37,6 +37,11 @@ Render startup สร้าง schema `hirelens` และเพิกถอน�
 หากตรวจสอบใบรับรอง TLS ไม่ผ่าน ให้ตรวจ hostname/pooler และ root CA ที่ Supabase
 ให้มา ไม่ปิด certificate validation
 
+Render ใช้ `DATABASE_SSL_CA_FILE=/app/certs/supabase-prod-ca-2021.crt`
+เพื่อเพิ่ม Supabase Root CA ใน trust store โดยยังตรวจ hostname และ certificate
+ไฟล์ CA เป็น public certificate จาก URL ที่ Supabase dashboard ใช้:
+https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt
+
 ## 2. Render
 
 1. Login https://dashboard.render.com แล้วสร้าง Blueprint จาก repository

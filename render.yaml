@@ -15,6 +15,8 @@ services:
         sync: false
       - key: DATABASE_SSL
         value: "true"
+      - key: DATABASE_SSL_CA_FILE
+        value: /app/certs/supabase-prod-ca-2021.crt
       - key: DATABASE_SCHEMA
         value: hirelens
       - key: QUEUE_BACKEND

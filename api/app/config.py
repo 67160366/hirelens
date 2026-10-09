@@ -121,6 +121,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://hirelens:hirelens@localhost:5432/hirelens"
     database_ssl: bool = False
+    database_ssl_ca_file: str | None = None
     database_schema: str | None = None
     redis_url: str = "redis://localhost:6379/0"
 
