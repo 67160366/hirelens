@@ -6,7 +6,9 @@ const config: NextConfig = {
   // reached, so the runtime image needs no node_modules at all. Without this the
   // image has to carry the full dev tree — Next 15 pulls in sharp and the whole
   // TypeScript toolchain, none of which a running server uses.
-  output: "standalone",
+  // Vercel's adapter packages the server itself. Next 16.3's standalone
+  // finalizer expects a trace file that adapter builds do not emit.
+  output: process.env.VERCEL ? undefined : "standalone",
   async rewrites() {
     const upstream = process.env.API_PROXY_BASE;
     if (!upstream) return [];
