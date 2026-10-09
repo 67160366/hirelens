@@ -41,6 +41,9 @@ class QueueBackend(StrEnum):
     ARQ = "arq"
     """Hand the job to an ARQ worker over Redis. The real thing."""
 
+    DATABASE = "database"
+    """Process persisted pending rows in the API process, without Redis."""
+
 
 class OCREngineName(StrEnum):
     NONE = "none"
@@ -117,6 +120,8 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-haiku-4-5"
 
     database_url: str = "postgresql+asyncpg://hirelens:hirelens@localhost:5432/hirelens"
+    database_ssl: bool = False
+    database_schema: str | None = None
     redis_url: str = "redis://localhost:6379/0"
 
     storage_backend: StorageBackend = StorageBackend.LOCAL
@@ -169,6 +174,19 @@ class Settings(BaseSettings):
     """Left unset so the cookie is host-only, which is what a single-host deploy
     wants. Setting it shares the cookie with every subdomain, including any that is
     not yours to trust."""
+
+    cookie_path_prefix: str = ""
+
+    @field_validator("cookie_path_prefix")
+    @classmethod
+    def _cookie_prefix(cls, value: str) -> str:
+        if value and (
+            not value.startswith("/")
+            or value.endswith("/")
+            or any(char in value for char in "?;#\\\r\n")
+        ):
+            raise ValueError("COOKIE_PATH_PREFIX must be empty or a path such as /api")
+        return value
 
     # OCR for pages with no text layer. Off by default for the same reason the
     # extractor defaults to `fake`: Tesseract is a system binary, CI will never

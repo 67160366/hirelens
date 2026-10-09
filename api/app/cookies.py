@@ -78,7 +78,7 @@ def set_session(
         ACCESS_COOKIE,
         access_token,
         max_age=settings.jwt_access_ttl_minutes * 60,
-        path=ACCESS_COOKIE_PATH,
+        path=settings.cookie_path_prefix + ACCESS_COOKIE_PATH,
         domain=settings.cookie_domain,
         secure=settings.cookie_secure,
         httponly=True,
@@ -88,7 +88,7 @@ def set_session(
         REFRESH_COOKIE,
         refresh_token,
         max_age=settings.jwt_refresh_ttl_days * 24 * 60 * 60,
-        path=REFRESH_COOKIE_PATH,
+        path=settings.cookie_path_prefix + REFRESH_COOKIE_PATH,
         domain=settings.cookie_domain,
         secure=settings.cookie_secure,
         httponly=True,
@@ -106,7 +106,7 @@ def clear_session(response: Response, *, settings: Settings) -> None:
     """
     response.delete_cookie(
         ACCESS_COOKIE,
-        path=ACCESS_COOKIE_PATH,
+        path=settings.cookie_path_prefix + ACCESS_COOKIE_PATH,
         domain=settings.cookie_domain,
         secure=settings.cookie_secure,
         httponly=True,
@@ -114,7 +114,7 @@ def clear_session(response: Response, *, settings: Settings) -> None:
     )
     response.delete_cookie(
         REFRESH_COOKIE,
-        path=REFRESH_COOKIE_PATH,
+        path=settings.cookie_path_prefix + REFRESH_COOKIE_PATH,
         domain=settings.cookie_domain,
         secure=settings.cookie_secure,
         httponly=True,

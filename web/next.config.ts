@@ -7,6 +7,16 @@ const config: NextConfig = {
   // image has to carry the full dev tree — Next 15 pulls in sharp and the whole
   // TypeScript toolchain, none of which a running server uses.
   output: "standalone",
+  async rewrites() {
+    const upstream = process.env.API_PROXY_BASE;
+    if (!upstream) return [];
+    const url = new URL(upstream);
+    if (url.protocol !== "https:" || url.username || url.password ||
+        url.search || url.hash || url.pathname !== "/") {
+      throw new Error("API_PROXY_BASE must be an HTTPS origin without credentials or a path");
+    }
+    return [{ source: "/api/:path*", destination: `${url.origin}/:path*` }];
+  },
   // There is deliberately no `eslint` block. Next 16 removed the option along with
   // the `next lint` command, and `next build` no longer lints at all — so the
   // "lint is a separate CI step" intent that block carried is now the default and

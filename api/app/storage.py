@@ -206,6 +206,10 @@ def build_minio_client(settings: Settings) -> S3Client:
         # dependency should fail the job and let the retry policy decide, not hold
         # a worker open indefinitely.
         config=Config(
+            s3={"addressing_style": "path"},
+            # Supabase S3 does not implement AWS's optional checksum extensions.
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
             connect_timeout=5,
             read_timeout=30,
             retries={"max_attempts": 2, "mode": "standard"},

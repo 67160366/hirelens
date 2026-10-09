@@ -132,3 +132,9 @@ async def build_queue(settings: Settings, context: JobContext) -> JobQueue:
             return InlineQueue(context)
         case QueueBackend.ARQ:
             return await ArqQueue.connect(settings)
+        case QueueBackend.DATABASE:
+            from app.database_queue import DatabaseQueue
+
+            queue = DatabaseQueue(context)
+            queue.start()
+            return queue

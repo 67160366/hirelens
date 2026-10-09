@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: hirelens-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    dockerCommand: sh deploy-render.sh
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: prod
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: DATABASE_SCHEMA
+        value: hirelens
+      - key: QUEUE_BACKEND
+        value: database
+      - key: STORAGE_BACKEND
+        value: minio
+      - key: MINIO_ENDPOINT
+        sync: false
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_REGION
+        sync: false
+      - key: MINIO_BUCKET
+        value: hirelens-resumes
+      - key: JWT_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: COOKIE_PATH_PREFIX
+        value: /api
+      - key: CORS_ORIGINS
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: OCR_ENGINE
+        value: tesseract
+      - key: OCR_LANGUAGES
+        value: tha+eng
