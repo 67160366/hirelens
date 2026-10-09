@@ -1,5 +1,9 @@
 # HireLens
 
+Free hosted deployment (Vercel + Render + Supabase):
+[setup and verification](docs/DEPLOY-MANAGED-th.md). Cloud deployment is pending
+account connections; local tests and production build have been verified.
+
 Resume screening where **every claim the system makes cites the exact text it came
 from** — and anything it cannot cite is dropped and reported rather than shown.
 

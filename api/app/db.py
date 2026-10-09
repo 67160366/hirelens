@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import ssl
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Any
@@ -29,9 +31,31 @@ def build_engine(settings: Settings) -> AsyncEngine:
         # Verify a connection before handing it out: a container restart otherwise
         # surfaces as a stale-connection error on the next request.
         pool_pre_ping=True,
+        connect_args=database_connect_args(settings),
     )
     enforce_foreign_keys(engine)
     return engine
+
+
+def database_connect_args(settings: Settings) -> dict[str, Any]:
+    """Verified TLS and a private schema for hosted PostgreSQL, also used by Alembic."""
+    options: dict[str, Any] = {}
+    if not settings.database_url.startswith("postgresql+asyncpg://"):
+        if settings.database_ssl or settings.database_ssl_ca_file or settings.database_schema:
+            raise ValueError("DATABASE_SSL and DATABASE_SCHEMA require PostgreSQL/asyncpg")
+        return options
+    if settings.database_ssl:
+        tls = ssl.create_default_context()
+        if settings.database_ssl_ca_file:
+            tls.load_verify_locations(cafile=settings.database_ssl_ca_file)
+        options["ssl"] = tls
+    elif settings.database_ssl_ca_file:
+        raise ValueError("DATABASE_SSL_CA_FILE requires DATABASE_SSL=true")
+    if settings.database_schema:
+        if not re.fullmatch(r"[a-z_][a-z0-9_]*", settings.database_schema):
+            raise ValueError("DATABASE_SCHEMA must be a lowercase SQL identifier")
+        options["server_settings"] = {"search_path": settings.database_schema}
+    return options
 
 
 def enforce_foreign_keys(engine: AsyncEngine) -> None:

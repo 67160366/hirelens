@@ -28,6 +28,13 @@ COPY . .
 RUN uv sync --locked --no-dev
 
 
+# --- test ------------------------------------------------------------------
+# Explicit test target; runtime remains last so managed hosts build production.
+FROM builder AS test
+RUN uv sync --locked --extra dev
+CMD ["uv", "run", "--no-sync", "pytest", "-q"]
+
+
 # --- runtime ---------------------------------------------------------------
 FROM python:3.11-slim AS runtime
 
@@ -68,13 +75,3 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=40s --retries=6 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-
-# --- test ------------------------------------------------------------------
-# Adds the dev extra so the suite can run against the image itself. Not part of
-# the runtime image and not built by `docker compose up`; Docker only builds the
-# stages a target needs. Build it explicitly:
-#   docker build --target test -t hirelens-api-test ./api && docker run --rm hirelens-api-test
-FROM builder AS test
-RUN uv sync --locked --extra dev
-CMD ["uv", "run", "--no-sync", "pytest", "-q"]

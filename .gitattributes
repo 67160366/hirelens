@@ -11,6 +11,7 @@
 # Normalize text in the repository, and never touch binaries.
 
 * text=auto
+*.sh text eol=lf
 
 *.pdf   binary
 *.docx  binary
